@@ -203,7 +203,56 @@ trap_bet = req(my_id=1, my_chips=19500, my_cards=[45, 21],
 a = act(trap_bet, aggressive())
 check("check-raise:对手中计下注后强牌加注", a.get("act") in ("raise", "allin"), str(a))
 
-# ---------- 6. 偷盲档（对手疑似锁胜 → 关闭诈唬+高频小额偷盲）----------
+# ---------- 6. 公对风险规避（弱两对保护）----------
+from strategy import should_avoid_risk   # noqa: E402
+
+
+def state_board(st):
+    return "board=%s hole=%s" % ([c // 4 for c in st.board],
+                                 [c // 4 for c in st.hole])
+
+
+def turn_history():
+    """翻前 500 开池/跟注，翻牌 check/check，转牌对手 check 给我的标准历史。"""
+    return [{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+            {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+            {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+            {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+            {"round": 2, "player_id": 1, "action": 0, "action_type": "check"}]
+
+
+# 规则1+2：公对 Q♠8♠2♦8♥ + 手牌 2♣7♠ → 底部两对，踢脚 7 < Q → 弱两对
+pair_risk = parse_request(req(my_id=0, my_chips=19500, my_cards=[3, 22],
+                              public_cards=[42, 26, 1, 24],
+                              history=turn_history()))
+check("公对规则:弱两对识别", should_avoid_risk(pair_risk) is True, str(state_board(pair_risk)))
+# 顶两对：手牌 Q♥7♠ + 公对 8 → 高对是手牌对 → 不触发
+top_pair = parse_request(req(my_id=0, my_chips=19500, my_cards=[40, 22],
+                             public_cards=[42, 26, 1, 24],
+                             history=turn_history()))
+check("公对规则:顶两对不触发", should_avoid_risk(top_pair) is False, str(state_board(top_pair)))
+# 无公对：不触发
+no_pair = parse_request(req(my_id=0, my_chips=19500, my_cards=[3, 22],
+                            public_cards=[51, 36, 13, 7],
+                            history=turn_history()))
+check("公对规则:无公对不触发", should_avoid_risk(no_pair) is False, str(state_board(no_pair)))
+
+# 规则3联动：领先(6000) + 弱两对 + 对手转牌全下 → 直接弃牌
+lead_allin = req(my_id=0, my_chips=1000, my_cards=[3, 22],
+                 public_cards=[51, 28, 1, 31], hand=45, max_hand=70,
+                 total_win_chips=[6000, -6000],
+                 history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                          {"round": 0, "player_id": 1, "action": 500, "action_type": "call"},
+                          {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                          {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                          {"round": 2, "player_id": 1, "action": -2, "action_type": "allin"}])
+a = act(lead_allin)
+check("公对规则:领先弱两对弃牌(对手全下)", a == {"act": "fold"}, str(a))
+# 正常档 + 弱两对 + 无人下注 → 降级为普通一对评估，绝不当强牌全下
+a = decide(pair_risk, OpponentModel())  # total_win 默认 [0,0] → 正常档
+check("公对规则:弱两对不触发全下", a.get("act") != "allin", str(a))
+
+# ---------- 6b. 偷盲档（对手疑似锁胜 → 关闭诈唬+高频小额偷盲）----------
 from match_ctx import MatchContext   # noqa: E402
 
 lock_ctx = MatchContext()

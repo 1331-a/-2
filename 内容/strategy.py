@@ -52,6 +52,12 @@ MC_ITERATIONS = 1000       # 蒙特卡洛最大抽样数
 TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，预留充足余量
 
 
+# ---- 公对风险规避（弱两对保护）----
+RISK_LEAD_CALL_FRAC = 0.50   # 领先时弱两对最多跟注 50% 底池
+RISK_ALLIN_EQ_FLOOR = 0.25   # 大幅落后时跟全下的胜率数学底线
+RISK_BEHIND_LIMIT = -4000    # 大幅落后阈值（累计净赢）
+RISK_HANDS_LEFT = 20         # 落后场景的剩余局数上限
+
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 
@@ -67,11 +73,112 @@ def decide(state, model, ctx=None):
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
-    if state.stage == "preflop":
+    # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
+    if should_avoid_risk(state):
+        action = _risk_avoid_route(state, model)
+    elif state.stage == "preflop":
         action = _preflop_decide(state, model)
     else:
         action = _postflop_decide(state, model)
     return _normalize(state, action)
+
+
+# ================================================================
+#  公对风险规避（弱两对保护）
+# ================================================================
+def _find_board_pair(board):
+    """返回公共牌面最大公对点数（无对返回 0）。"""
+    counts = {}
+    for c in board:
+        r = c // 4
+        counts[r] = counts.get(r, 0) + 1
+    for r in range(14, 1, -1):
+        if counts.get(r, 0) >= 2:
+            return r
+    return 0
+
+
+def should_avoid_risk(state):
+    """
+    公对风险规避前置检查：公共牌有对子且我的手牌构成「底部两对」时
+    返回 True，提示本手应走保守路线。
+
+    【业务说明（供算法文档）】
+    规则1 公对风险识别：公对面上（如 Q-8-2-8），若我的两对中「较小的一对」
+      由手牌配对公共牌单张构成（如手牌 2-7 → 2 与公 2 配成 22），这是经典的
+      底部两对（bottom two pair）——对手任意一张 8/Q 配对即成三条或更高两对，
+      我的牌实际处于被统治地位。顶两对（手牌配成高对）不在此列。
+    规则2 踢脚被压制：两对中高对是公对（我手里没有公对牌），且我的踢脚
+      （第五张牌）小于公共牌面存在的任何高张（Q/K/A）→ 标记「弱两对」。
+    规则3 见 _risk_avoid_route（与累计盈亏联动）。
+    """
+    board = state.board
+    if len(board) < 3 or len(board) >= 5:
+        return False                      # 只有翻牌/转牌（3~4 张）才可能判定公对
+    pair_rank = _find_board_pair(board)   # 规则1：公对点数
+    if pair_rank == 0:
+        return False
+    hr = sorted((c // 4 for c in state.hole), reverse=True)
+    # 手牌配成的对：手牌某张 = 公共牌非公对点数（构成两对中的「手牌对」）
+    board_other = [c // 4 for c in board if c // 4 != pair_rank]
+    hand_pair = None
+    for h in hr:
+        if h in board_other:
+            hand_pair = h
+            break
+    if hand_pair is None:
+        return False                      # 没有第二对 → 不是两对结构
+    if hand_pair >= pair_rank:
+        return False                      # 手牌对 ≥ 公对 = 顶两对（强牌，不触发）
+    # 规则2：踢脚 = 我手牌中除配对牌外最大的一张（反映我的真实牌力；
+    # 公共牌高张双方都能用，真正威胁是「对手更高两对/三条」）。
+    # 若我的踢脚小于公面高张（Q/K/A），说明极易被更高两对统治 → 弱两对
+    hand_kickers = [r for r in hr if r != hand_pair]
+    kicker = max(hand_kickers, default=0)
+    high_board = max(board_other, default=0)   # 公面可能压制踢脚的高张（Q/K/A）
+    if kicker < high_board:
+        return True                       # 弱两对：踢脚被压制
+    return False
+
+
+def _risk_avoid_route(state, model):
+    """
+    公对弱两对的保守路线（规则3：与累计盈亏联动）。
+    领先时保护筹码、落后时按数学底线拼、中间档降级为普通一对评估。
+    """
+    pnl = state.total_win_chips[state.my_id]
+    hands_left = state.max_hand - state.hand_num
+    to_call = state.to_call
+
+    if pnl > 0:
+        # 领先状态：屏蔽 allin/raise，仅过牌或跟注小注（≤50% 底池）；
+        # 对手全下 → 直接弃牌（弱两对没必要拿领先去赌）
+        if to_call <= 0:
+            return {"act": "check"}
+        if state.opp_is_allin or to_call >= state.my_left:
+            return {"act": "fold"}
+        if to_call <= RISK_LEAD_CALL_FRAC * state.pot:
+            return {"act": "call"}
+        return {"act": "fold"}
+
+    if pnl < RISK_BEHIND_LIMIT and hands_left < RISK_HANDS_LEFT:
+        # 大幅落后且剩余局数少：允许跟全下，但胜率必须 > 25%（纯数学底线）
+        eq = monte_carlo_equity(
+            state.hole, state.board, iterations=MC_ITERATIONS,
+            opp_range_pct=_opp_range_pct(model, _opp_raised_preflop(state)),
+            deadline=time.time() + TIME_BUDGET)
+        if to_call <= 0:
+            return {"act": "check"}
+        if eq > RISK_ALLIN_EQ_FLOOR:
+            return {"act": "call"}
+        return {"act": "fold"}
+
+    # 正常/小幅落后（0 ~ -4000）：按「普通一对」评估 ——
+    # 走正常路径，但 _postflop_decide 的 strong 判定已排除弱两对，
+    # 该手最多按 good/medium 处理，不会因「两对」触发全下/大注
+    if state.stage == "preflop":
+        return _preflop_decide(state, model)
+    return _postflop_decide(state, model)
 
 
 def _fold_out_active(state):
@@ -419,7 +526,11 @@ def _postflop_decide(state, model):
     outs = _count_outs(state.hole, state.board)
 
     # ---- 强度分层（牌型 × 胜率 双口径）----
-    strong = category >= TWO_PAIR or eq >= 0.75   # 两对及以上 / 压制性胜率
+    # 【修复】公对底部两对（should_avoid_risk）即使 category=TWO_PAIR 也
+    # 不算 strong——否则会在小优势下全下被对手三条/葫芦/更高两对统治，
+    # 这正是「AI 喜欢小优势 allin 输得很惨」的主要根因之一。
+    weak_pair = should_avoid_risk(state)
+    strong = ((category >= TWO_PAIR and not weak_pair) or eq >= 0.78)   # 两对及以上（非弱两对）/ 压制性胜率
     good = (not strong) and eq >= 0.60            # 顶对好踢脚级别
     medium = (not good) and eq >= 0.50            # 中等成牌
     big_draw = (not is_river) and outs >= 8       # 同花/两头顺
@@ -556,7 +667,9 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         elif adj in ("desperate", "doomed"):
             thr = eff_req - 0.08
         else:
-            thr = eff_req + 0.02
+            # 常规档跟全下需要胜率 > 赔率要求的边际（margin≥0.02），
+            # 避免「小优势就接全下」的高方差打法
+            thr = eff_req + margin
         if strong or eq >= thr or (big_draw and eq >= eff_req):
             return {"act": "allin"}
         return {"act": "fold"}
