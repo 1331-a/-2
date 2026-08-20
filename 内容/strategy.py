@@ -111,6 +111,12 @@ ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总
 LEAD_NO_ALLIN = 2000         # 优势阈值：超过则进入锁定模式
 LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
 
+# ---- 加注增量上限（全局，用户规则）----
+# 我方任何加注的「增量」（跟平之外额外下注）≤ MAX_RAISE_INCR，避免
+# 一次加注把大筹码打进去（风控）。注意与 LEAD_LOCK 区别：本规则全局生效，
+# LEAD_LOCK（总注额≤1000）在优势时更严格。
+MAX_RAISE_INCR = 1000         # 我方加注最大增量（10BB）
+
 # ---- 对手突袭大注（单次加注增量 > 此前对手本手总投入的 N 倍）----
 # 【规则】当对手一次加注的增量 > 对手之前本手累计投入的 OPP_JUMP_RATIO 倍
 # 时，判定为「突袭大注」——往往代表对手强牌（两对+/听牌/全下前奏），
@@ -1274,6 +1280,11 @@ def _normalize(state, action):
             num = 0
         min_r = state.min_raise()
         max_r = state.max_raise()
+        # 【全局规则】我方加注增量 ≤ MAX_RAISE_INCR：总注额 ≤ 跟平后注额 + 1000。
+        # 跟平后注额 = 我方本轮已投 + 需跟注额（再往上加才是「增量」）。
+        after_call = state.curbet[state.my_id] + state.to_call
+        if num > after_call + MAX_RAISE_INCR:
+            num = after_call + MAX_RAISE_INCR
         if _LEAD_LOCK:
             # 优势锁定：单次注码 ≤ LEAD_MAX_BET；若最小加注已超上限
             # （对手注已很大），则无法合法加注 → 降级 call/check
