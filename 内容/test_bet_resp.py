@@ -122,5 +122,33 @@ m5 = OpponentModel.from_json(s)
 check("序列化:事件往返保留", m5.bet_resp_events == m4.bet_resp_events,
       "%s vs %s" % (m5.bet_resp_events, m4.bet_resp_events))
 
+# ---------- 8. 学习优先：翻前开池尺寸（学习覆盖常规 2.5BB） ----------
+m6 = OpponentModel()
+# 对手对翻前小注(≤2.5BB)全跟、对大注(>4BB)全弃 → 学习选 pf_s → 开池 2.2BB
+for h in (10, 11, 12):
+    m6._add_bet_resp(h, True, "pf_s", "call")
+    m6._add_bet_resp(h, True, "pf_l", "fold")
+btn = req(hand=13, my_id=0, my_chips=19950, my_cards=[48, 51], history=[])   # 按钮 SB 已投 50，AA 开池
+a = decide(parse_request(btn), m6)
+check("学习优先:翻前开池用学习尺寸(2.2BB=220)", a == {"act": "raise", "num": 220}, str(a))
+a0 = decide(parse_request(btn), OpponentModel())
+check("学习优先:无数据常规开池(2.5BB=250)", a0 == {"act": "raise", "num": 250}, str(a0))
+
+# ---------- 9. 学习优先：面对下注强牌加注（学习覆盖 fishy/常规） ----------
+m7 = OpponentModel()
+# 对手对翻后小注(≤0.4池)全跟、对大注(>0.75池)全弃 → 学习选 sf_s → 加注 0.35 池
+for h in (14, 15, 16):
+    m7._add_bet_resp(h, False, "sf_s", "call")
+    m7._add_bet_resp(h, False, "sf_l", "fold")
+aa_bet2 = req(hand=16, my_id=0, my_chips=19500, my_cards=[48, 50],
+              public_cards=[46, 6, 1],
+              history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                       {"round": 1, "player_id": 1, "action": 300, "action_type": "raise"}])
+a = decide(parse_request(aa_bet2), m7)
+check("学习优先:面对下注加注用学习尺寸(0.35池≈860)", a == {"act": "raise", "num": 860}, str(a))
+a0 = decide(parse_request(aa_bet2), OpponentModel())
+check("学习优先:无数据常规加注(0.75池≈1500)", a0 == {"act": "raise", "num": 1500}, str(a0))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

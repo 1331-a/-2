@@ -263,10 +263,16 @@ def _match_adjust(state):
         if _CTX is not None:
             lead += _CTX.threshold_offset(state) * bb
 
+        # 劣势冲刺（doomed）——随时计算，不设「剩 15 手」闸门：
+        # 若本局失败（lead 再降 2×大盲，弃牌级最坏损失）后，对手用剩余
+        # hands_left-1 手全程弃牌即可锁胜（对手每手弃牌净赚 2×大盲领先差，
+        # 2.5 倍余量兜底），则立即转入「放开一切豪赌」的冲刺模式。
+        # 数学上比「最后十几把」的拍脑袋闸门更早、更准——只要对手锁胜
+        # 条件在本局失败后成立，就该放弃稳健、全力搏翻盘。
+        if lead - 2 * bb <= -2.5 * bb * max(hands_left - 1, 1):
+            return "doomed"
+
         if hands_left <= 15:
-            # 落后到对手可用「全程弃牌」锁胜的量级：数学上已不可追，放开豪赌
-            if lead <= -2.5 * bb * hands_left:
-                return "doomed"
             if lead >= 30 * bb and state.opp_chips <= 0.7 * state.my_chips:
                 return "pressure"
             if lead >= 30 * bb:
@@ -370,10 +376,14 @@ def _preflop_decide(state, model):
 
 
 def _button_open(state, model, pct, arch, adj):
-    """庄家位开池：范围随对手原型伸缩。"""
+    """庄家位开池：范围随对手原型伸缩；开池尺寸学习优先。"""
     # 偷盲档：对手疑似锁胜 → 任何牌都小额开池（高频偷盲，无需大注吓唬）
     if adj == "steal":
         return _raise_to(state, OPEN_SIZE_VS_STATION * state.big_blind)
+    # 【学习优先】对手对翻前下注的反应数据充分时，选「弃牌率最低」的开池
+    # 尺寸（实证覆盖原型假设）——比如对手对大注弃牌率远低，说明他爱跟，
+    # 用大注开池也能被跟；反之对手对小注弃牌率最低，用小注钓更宽范围。
+    lf, learned = _learned_size(model, state, None, is_preflop=True)
     open_pct = BTN_OPEN_PCT
     if arch == "rock":
         open_pct = 0.92     # 岩石不惩罚宽开池 → 更激进偷盲
@@ -388,6 +398,9 @@ def _button_open(state, model, pct, arch, adj):
         open_pct = 1.0
 
     if pct <= open_pct:
+        if learned:
+            # lf 翻前为「大盲倍数」（2.2/3.0/4.0）
+            return _raise_to(state, lf * state.big_blind)
         size = OPEN_SIZE_VS_STATION if arch == "station" else OPEN_SIZE_BB
         return _raise_to(state, size * state.big_blind)
 
@@ -667,15 +680,16 @@ def _fishy(model):
     return model.archetype() == "station" or model.eff_fold_to_bet() < FISH_FOLD_BB
 
 
-def _learned_size(model, state, default_frac):
-    """对手响应学习的价值注尺寸（翻后）。
+def _learned_size(model, state, default_frac, is_preflop=False):
+    """对手响应学习的下注尺寸（学习优先于常规打法）。
 
     【优化思路】对手行为学习模块记录「我下注 X 后对手的反应」（最近 20 手、
-    按尺寸分桶）。价值注应避开对手爱弃的尺寸、选弃牌率最低的桶——
-    弃牌率低 = 跟注范围宽 = 同样下注能榨更多价值。
-    样本 < 3 时返回 (default_frac, False) 回退现有逻辑。
+    按尺寸分桶）。只要样本 ≥ 3，就用「对手弃牌率最低的桶」的代表尺寸
+    覆盖常规策略（原型假设/固定阈值）——实证永远优先于先验猜测。
+    翻前返回大盲倍数（2.2/3.0/4.0），翻后返回底池比例（0.35/0.55/0.80）。
+    样本不足时返回 (default_frac, False) 回退现有逻辑。
     """
-    res = model.learned_value_bucket(False, cur_hand=state.hand_num)
+    res = model.learned_value_bucket(is_preflop, cur_hand=state.hand_num)
     if res is None:
         return default_frac, False
     bucket, _ = res
@@ -853,11 +867,19 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         if is_river and (category >= STRAIGHT or eq >= 0.80) and \
                 state.is_button and arch != "rock":
             return _bet_fraction(state, OVERBET)
+        # 【学习优先】对手反应数据充分时用学习尺寸加注（实证覆盖 fishy 原型）
+        lf, learned = _learned_size(model, state, None)
+        if learned:
+            return _raise_pot(state, category, adj, frac=lf)
         return _raise_pot(state, category, adj, fish=_fishy(model))
 
     # ---- 良好成牌：价值加注或赔率跟注 ----
     if good:
         if state.is_button and eq >= 0.68 and arch != "rock":
+            # 【学习优先】同上：学习尺寸优先于原型假设
+            lf, learned = _learned_size(model, state, None)
+            if learned:
+                return _raise_pot(state, category, adj, frac=lf)
             return _raise_pot(state, category, adj, fish=_fishy(model))  # 位置+明显领先 → 克制加注
         if eq >= eff_req + margin:
             return {"act": "call"}
@@ -915,7 +937,7 @@ def _bet_fraction(state, fraction):
     return _raise_to(state, target)
 
 
-def _raise_pot(state, category=None, adj=None, fish=False):
+def _raise_pot(state, category=None, adj=None, fish=False, frac=None):
     """
     面对下注的加注（克制版）。
     【修复】原实现做「底池大小加注」——深筹码时一次加注会把 60~70% 筹码
@@ -924,14 +946,16 @@ def _raise_pot(state, category=None, adj=None, fish=False):
     仅坚果级（顺子+）或劣势追分（desperate/doomed）才满池加注。
     【钓鱼】fish=True（跟注型对手）时只加注到 0.45 底池——大加注会把
     他们的差牌吓跑，小加注钓更宽跟注范围（坚果仍满池，站点对坚果照跟）。
+    【学习优先】frac 显式传入（对手响应学习的尺寸）时完全覆盖 fish 默认——
+    实证数据优先于原型假设。
     """
     to_call = state.to_call
     if (category is not None and category >= STRAIGHT) or \
             adj in ("desperate", "doomed"):
         base = state.curbet[state.my_id] + to_call + (state.pot + to_call)
     else:
-        frac = FISH_RAISE if fish else 0.75
-        base = state.curbet[state.my_id] + to_call + int(frac * (state.pot + to_call))
+        f = frac if frac is not None else (FISH_RAISE if fish else 0.75)
+        base = state.curbet[state.my_id] + to_call + int(f * (state.pot + to_call))
     return _raise_to(state, base)
 
 

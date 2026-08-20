@@ -141,6 +141,20 @@ desp_bb = req(my_id=1, my_chips=19800, my_cards=[23, 2], hand=45, max_hand=50,
               history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"}])
 a = act(desp_bb)
 check("desperate档:BB劣势72o不弃牌", a.get("act") in ("raise", "call", "allin"), str(a))
+# doomed 随时触发（不再等最后 15 手）：剩 40 手时落后 -10000，
+# 本局失败后（lead 再降 200）对手用 39 手全程弃牌即可锁胜
+# （-10200 ≤ -2.5×100×39=-9750）→ 立即进入冲刺：BB 72o 面对加注也 3-bet
+doom_early = req(my_id=1, my_chips=19900, my_cards=[23, 2], hand=30, max_hand=70,
+                 total_win_chips=[5000, -5000], total_win_games=[15, 30],
+                 history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"}])
+a = act(doom_early)
+check("doomed档:剩40手也冲刺(72o 3bet/跟注)", a.get("act") in ("raise", "call", "allin"), str(a))
+# 对照组：同样剩 40 手但落后不足锁胜线（-5000）→ 不 doomed，正常防守
+not_doom = req(my_id=1, my_chips=19900, my_cards=[23, 2], hand=30, max_hand=70,
+               total_win_chips=[2500, -2500], total_win_games=[15, 30],
+               history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"}])
+a = act(not_doom)
+check("doomed档:未到锁胜线正常防守(72o弃牌)", a == {"act": "fold"}, str(a))
 
 # 大幅领先+临近终局：锁胜弃牌（lead 16000 > 2.5×200×5=2500 → 直接弃牌稳赢）
 ahead_air = req(my_id=0, my_chips=19500, my_cards=[24, 17],
