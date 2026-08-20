@@ -5,7 +5,7 @@
   1. 翻前范围决策（开池/3bet/防守/弃牌）合理；
   2. 原型剥削（对站点不诈唬、对高弃牌对手诈唬）生效；
   3. 听牌半诈唬、强牌价值线正常；
-  4. 对局状态调整（protect/catchup）生效；
+  4. 对局状态调整（protect/desperate/doomed/诱敌深入）生效；
   5. 所有输出经 _normalize 后天然合法。
 """
 import sys
@@ -124,13 +124,23 @@ a = act(two_pair)
 check("两对面对下注加注/全下", a.get("act") in ("raise", "allin"), str(a))
 
 # ---------- 4. 对局状态调整 ----------
-# 大幅落后+临近终局：庄家开池范围应加宽（catchup）
+# 大幅落后+临近终局：庄家开池范围应加宽（doomed/desperate 极限激进）
 behind = req(my_id=0, my_chips=19900, my_cards=[23, 2],
              hand=45, max_hand=50,
              total_win_chips=[-8000, 8000], total_win_games=[10, 35])
 a = act(behind)
-check("落后追分:72o至少不保守弃牌(开池/溜入)",
-      a.get("act") in ("raise", "call", "allin"), str(a))
+check("落后追分:72o全开池(raise)", a.get("act") in ("raise", "call", "allin"), str(a))
+# 纯 desperate 档（落后但未到锁胜线）：72o 在庄家位也应全开
+desp = req(my_id=0, my_chips=19900, my_cards=[23, 2], hand=45, max_hand=50,
+           total_win_chips=[-4000, 4000], total_win_games=[15, 30])
+a = act(desp)
+check("desperate档:72o全开池", a.get("act") in ("raise", "call", "allin"), str(a))
+# 大盲劣势防守：几乎任何牌都 3-bet 或跟注（defend_pct=1.0, threebet=0.35）
+desp_bb = req(my_id=1, my_chips=19800, my_cards=[23, 2], hand=45, max_hand=50,
+              total_win_chips=[4000, -4000], total_win_games=[30, 15],
+              history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"}])
+a = act(desp_bb)
+check("desperate档:BB劣势72o不弃牌", a.get("act") in ("raise", "call", "allin"), str(a))
 
 # 大幅领先+临近终局：锁胜弃牌（lead 16000 > 2.5×200×5=2500 → 直接弃牌稳赢）
 ahead_air = req(my_id=0, my_chips=19500, my_cards=[24, 17],
@@ -160,7 +170,40 @@ mid70 = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=10, max_hand=70,
 a = act(mid70)
 check("中期大领先不触发(AA正常开池)", a == {"act": "raise", "num": 500}, str(a))
 
-# ---------- 5. 耗时 ----------
+# ---------- 5. 诱敌深入（反制激进对手）----------
+def aggressive():
+    """激进对手画像（疯子类）：翻前常加注 + 翻后疯狂下注。"""
+    m = OpponentModel()
+    for _ in range(12):
+        m.update("raise", True)
+    for _ in range(10):
+        m.update("raise", False, street=2)
+    for _ in range(4):
+        m.update("check", False)
+    return m
+
+
+# OOP 两对（K♦7♦ + K♠7♠3♦）vs 疯子：过牌设陷阱，诱其下注后再加注
+trap = req(my_id=1, my_chips=19500, my_cards=[45, 21],
+           public_cards=[46, 22, 5],
+           history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                    {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                    {"round": 1, "player_id": 0, "action": 0, "action_type": "check"}])
+a = act(trap, aggressive())
+check("诱敌深入:OOP两对vs疯子过牌设陷阱", a == {"act": "check"}, str(a))
+# 对照组：同样牌 vs 被动站点 → 正常价值下注
+a = act(trap, station())
+check("对照组:vs被动对手正常价��下注", a.get("act") == "raise", str(a))
+# 诱敌成功后对手下注 → 大额加注（check-raise）
+trap_bet = req(my_id=1, my_chips=19500, my_cards=[45, 21],
+               public_cards=[46, 22, 5],
+               history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                        {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                        {"round": 1, "player_id": 0, "action": 300, "action_type": "raise"}])
+a = act(trap_bet, aggressive())
+check("check-raise:对手中计下注后强牌加注", a.get("act") in ("raise", "allin"), str(a))
+
+# ---------- 6. 耗时 ----------
 t0 = time.time()
 for _ in range(10):
     act(air_flop, station())

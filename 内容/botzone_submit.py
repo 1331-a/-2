@@ -1054,23 +1054,27 @@ def _clamp(x, lo, hi):
 def _match_adjust(state):
     """
     max_hand 手定胜负的比赛中，根据领先量与剩余手数调整风险偏好：
-      protect  —— 大幅领先且临近终局：降波动（少诈唬、跟注更严）；
-      pressure —— 领先且对手短码：ICM 压力下放宽全下/加注（对手弃牌率高）；
-      catchup  —— 大幅落后且临近终局：加波动（多诈唬、宽跟注）；
-      normal   —— 常规。
+      protect   —— 大幅领先且临近终局：降波动（少诈唬、跟注更严）；
+      pressure  —— 领先且对手短码：ICM 压力下放宽全下/加注（对手弃牌率高）；
+      desperate —— 大幅落后且临近终局：极限激进追分，阻止对手锁胜；
+      doomed    —— 落后到数学上不可追（对手同款锁胜逻辑已成立）：放开一切豪赌；
+      normal    —— 常规。
     """
     try:
         hands_left = state.max_hand - state.hand_num
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
+        bb = state.big_blind
         if hands_left <= 15:
-            # 领先且对手是短码：我的全下带来淘汰压力，弃牌权益高于理论值
-            if lead >= 30 * state.big_blind and state.opp_chips <= 0.7 * state.my_chips:
+            # 落后到对手可用「全程弃牌」锁胜的量级：数学上已不可追，放开豪赌
+            if lead <= -2.5 * bb * hands_left:
+                return "doomed"
+            if lead >= 30 * bb and state.opp_chips <= 0.7 * state.my_chips:
                 return "pressure"
-            if lead >= 30 * state.big_blind:
+            if lead >= 30 * bb:
                 return "protect"
-            if lead <= -30 * state.big_blind:
-                return "catchup"
+            if lead <= -30 * bb:
+                return "desperate"
     except Exception:
         pass
     return "normal"
@@ -1090,7 +1094,7 @@ def _preflop_decide(state, model):
         return _button_vs_3bet(state, model, pct, arch, adj)
     else:
         if state.to_call <= 0:                # 庄家溜入，我有选项
-            return _bb_option(state, model, pct, arch)
+            return _bb_option(state, model, pct, arch, adj)
         return _bb_defend(state, model, pct, arch, adj)
 
 
@@ -1105,16 +1109,17 @@ def _button_open(state, model, pct, arch, adj):
         open_pct = 0.75     # 疯子爱反加 → 略收紧避免被掀翻
     if adj == "protect":
         open_pct = min(open_pct, 0.85)
-    elif adj == "catchup":
-        open_pct = min(0.97, open_pct + 0.15)  # 落后追分：大幅加宽开池
+    elif adj in ("desperate", "doomed"):
+        # 劣势追分：所有牌全开池（含垃圾牌），最大化底池波动博翻盘
+        open_pct = 1.0
 
     if pct <= open_pct:
         size = OPEN_SIZE_VS_STATION if arch == "station" else OPEN_SIZE_BB
         return _raise_to(state, size * state.big_blind)
 
-    # 垃圾牌：对手极少主动加注时补齐溜入看翻牌；落后追分时绝不弃庄家位
-    limp_max = 1.0 if adj == "catchup" else 0.96
-    if pct <= limp_max and (model.eff_pfr() < 0.25 or adj == "catchup"):
+    # 垃圾牌：对手极少主动加注时补齐溜入看翻牌；劣势追分时绝不弃庄家位
+    limp_max = 1.0 if adj in ("desperate", "doomed") else 0.96
+    if pct <= limp_max and (model.eff_pfr() < 0.25 or adj in ("desperate", "doomed")):
         return {"act": "call"}
     return {"act": "fold"}
 
@@ -1137,12 +1142,15 @@ def _button_vs_3bet(state, model, pct, arch, adj):
     value_pct = SB_4BET_VALUE_PCT if arch != "maniac" else 0.08
     if adj == "pressure":              # ICM 压力：价值 4-bet 放宽
         value_pct = min(0.15, value_pct + 0.06)
+    elif adj in ("desperate", "doomed"):
+        value_pct = min(0.20, value_pct + 0.12)  # 劣势追分：4-bet 价值范围大幅放宽
     if pct <= value_pct:
         return _raise_to(state, SB_4BET_MULT * state.curbet[state.opp_id])
 
     # 诈唬 4-bet：Axs 阻挡牌，仅在对手有一定弃牌率或 ICM 压力下使用
     opp_fold = model.eff_fold_to_bet()
-    if _is_4bet_bluff(state.hole) and (opp_fold >= 0.40 or adj == "pressure"):
+    if _is_4bet_bluff(state.hole) and (
+            opp_fold >= 0.40 or adj in ("pressure", "desperate", "doomed")):
         return _raise_to(state, SB_4BET_MULT * state.curbet[state.opp_id])
 
     # 跟注范围：赔率越好越宽；原型修正
@@ -1155,20 +1163,23 @@ def _button_vs_3bet(state, model, pct, arch, adj):
         call_pct = max(0.08, call_pct - 0.12)   # 岩石反加=大牌，弃
     if adj == "protect":
         call_pct -= 0.05
-    elif adj == "catchup":
-        call_pct += 0.05
+    elif adj in ("desperate", "doomed"):
+        # 劣势追分：反加注也几乎全接（要翻盘必须先留在局里）
+        call_pct = min(0.90, call_pct + 0.30)
     if pct <= call_pct:
         return {"act": "call"}
     return {"act": "fold"}
 
 
-def _bb_option(state, model, pct, arch):
+def _bb_option(state, model, pct, arch, adj):
     """大盲面对溜入：强牌隔离加注，其余免费看牌。"""
     iso_pct = 0.40
     if arch == "station":
         iso_pct = 0.30     # 对站点隔离靠价值范围
     elif arch == "rock":
         iso_pct = 0.55     # 多惩罚岩石的溜入
+    if adj in ("desperate", "doomed"):
+        iso_pct = 0.80     # 劣势追分：隔离加注范围翻倍（抢底池搏翻盘）
     if pct <= iso_pct:
         return _raise_to(state, ISO_SIZE_BB * state.big_blind)
     return {"act": "check"}
@@ -1184,8 +1195,8 @@ def _bb_defend(state, model, pct, arch, adj):
     defend_pct = _clamp(1.15 - 1.8 * required, 0.22, 0.90)
     if arch == "maniac":
         defend_pct = min(0.95, defend_pct + 0.12)
-    if adj == "catchup":
-        defend_pct += 0.05
+    if adj in ("desperate", "doomed"):
+        defend_pct = 1.0   # 劣势追分：任何牌都防守（含垃圾牌），留在局里搏翻盘
 
     # 3-bet 范围：对手面对加注弃牌率高 → 宽（诈唬）；
     #             跟注站 → 窄（纯价值，线性化）
@@ -1194,14 +1205,14 @@ def _bb_defend(state, model, pct, arch, adj):
         threebet_pct = BB_3BET_BLUFFY
     if arch == "station":
         threebet_pct = 0.10
-    if adj == "catchup":
-        threebet_pct += 0.05
+    if adj in ("desperate", "doomed"):
+        threebet_pct = 0.35  # 劣势追分：3-bet 范围大幅加宽（含大量诈唬）
 
     if pct <= threebet_pct:
         return _raise_to(state, 3.0 * state.curbet[state.opp_id])
     if pct <= defend_pct:
-        # 很贵的跟注只防守范围上半区（反向隐含赔率保护）
-        if required > 0.45 and pct > defend_pct * 0.7:
+        # 很贵的跟注只防守范围上半区（反向隐含赔率保护）；劣势追分时放弃该保护
+        if required > 0.45 and pct > defend_pct * 0.7 and adj not in ("desperate", "doomed"):
             return {"act": "fold"}
         return {"act": "call"}
     return {"act": "fold"}
@@ -1357,23 +1368,28 @@ def _fold_equity(model, adj):
     fe = model.eff_fold_to_bet()
     if adj == "protect":
         fe *= 0.5      # 领先保收益：诈唬大幅压缩
-    elif adj == "catchup":
-        fe *= 1.3      # 落后追分：诈唬加码
+    elif adj in ("desperate", "doomed"):
+        fe *= 1.6      # 劣势追分：把弃牌权益打到顶（激进诈唬搏翻盘）
     return _clamp(fe, 0.0, 0.9)
 
 
 # ---------------- 无人下注（可过牌）----------------
 def _check_side(state, model, eq, category, strong, good, medium, big_draw,
                 draw, tex, arch, adj, is_river, i_aggressor):
-    """主动下注侧：价值 / 保护 / 半诈唬 / 纯诈唬（EV 门控 + 阻挡牌）。"""
+    """主动下注侧：价值 / 诱敌深入 / 保护 / 半诈唬 / 纯诈唬（EV 门控+阻挡牌）。"""
     fold_eq = _fold_equity(model, adj)
     spr = state.effective_stack / max(state.pot, 1)
     # 有利位置 + 翻前主动方 = 标准 C-Bet 场景，诈唬门槛下调
     cbet_spot = i_aggressor and state.is_button
-    fold_eq = _fold_equity(model, adj)
-    spr = state.effective_stack / max(state.pot, 1)
 
     if strong:
+        # 诱敌深入：OOP 强牌 + 对手激进（爱下注）→ 过牌让其下注，
+        # 其出手后由 _face_bet 做大额加注（check-raise 陷阱），
+        # 专门反制「翻后自动持续下注」的激进对手
+        if (not state.is_button) and (not is_river) and \
+                (category >= TWO_PAIR or eq >= 0.85) and \
+                model.eff_bet_freq() >= 0.45:
+            return {"act": "check"}
         # 河牌坚果优势 + 对手非岩石：超池下注榨取最大价值
         if is_river and (category >= STRAIGHT or eq >= 0.80) and arch != "rock":
             return _bet_fraction(state, OVERBET)
@@ -1396,7 +1412,7 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
     if big_draw:
         # 半诈唬优先级高于控池：强听牌即使当前胜率中等，
         # 也要么积累底池要么直接赢下（弃牌权益 + 成牌双重收益）
-        if fold_eq >= 0.30 or state.is_button:
+        if fold_eq >= 0.30 or state.is_button or adj in ("desperate", "doomed"):
             return _bet_fraction(state, CBET)
         return {"act": "check"}
 
@@ -1419,11 +1435,12 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer = max(0.0, buffer - 0.05)     # 有利位置 C-Bet 诈唬门槛下调
     if adj == "protect":
         buffer += 0.15                       # 领先保收益：少诈唬
-    elif adj == "catchup":
-        buffer = max(0.0, buffer - 0.06)     # 落后追分：放宽诈唬
+    elif adj in ("desperate", "doomed"):
+        buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
     if fold_eq >= breakeven + buffer:
         # 无位置时只诈唬非激进对手（避免被 check-raise 掀翻）
-        if state.is_button or model.eff_bet_freq() < 0.45:
+        if state.is_button or model.eff_bet_freq() < 0.45 or \
+                adj in ("desperate", "doomed"):
             # 河牌诈唬额外要求：对手在河牌有弃牌倾向（避免诈唬被站点抓死）
             if (not is_river) or (fold_eq >= 0.45 and
                                   model.river_fold_rate() >= 0.35):
@@ -1456,21 +1473,26 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         eff_req += 0.05
     if adj == "protect":
         margin += 0.06       # 领先时只打好赔率
-    elif adj == "catchup":
-        margin -= 0.03       # 落后时多看几张牌
+    elif adj in ("desperate", "doomed"):
+        margin -= 0.06       # 劣势追分：跟注门槛大幅放宽（多看牌搏翻盘）
 
     # ---- 对手全下 / 需跟注额 ≥ 剩余筹码：纯赔率决策 ----
     if state.opp_is_allin or to_call >= state.my_left:
-        # ICM 压力：领先且对手短码，放宽跟注（对手全下范围更紧）
-        thr = eff_req - 0.05 if adj == "pressure" else eff_req + 0.02
+        # ICM 压力/劣势追分：放宽跟注（对手范围更紧或我们需要赌博）
+        if adj == "pressure":
+            thr = eff_req - 0.05
+        elif adj in ("desperate", "doomed"):
+            thr = eff_req - 0.08
+        else:
+            thr = eff_req + 0.02
         if strong or eq >= thr or (big_draw and eq >= eff_req):
             return {"act": "allin"}
         return {"act": "fold"}
 
-    # ---- 强牌：加注求价值；浅筹码或 ICM 压力直接全下 ----
+    # ---- 强牌：加注求价值；浅筹码 / ICM 压力 / 劣势追分直接全下 ----
     if strong:
         spr = state.effective_stack / max(pot, 1)
-        if spr <= 2.0 or adj == "pressure":
+        if spr <= 2.0 or adj in ("pressure", "desperate", "doomed"):
             return {"act": "allin"}
         # 河牌坚果 + 有位置：超池加注榨取
         if is_river and (category >= STRAIGHT or eq >= 0.80) and \
@@ -1484,8 +1506,8 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             return _raise_pot(state)          # 位置+明显领先 → 加注
         if eq >= eff_req + margin:
             return {"act": "call"}
-        if eq >= eff_req and arch == "maniac":
-            return {"act": "call"}            # 疯子的下注不可全信
+        if eq >= eff_req and (arch == "maniac" or adj in ("desperate", "doomed")):
+            return {"act": "call"}            # 疯子下注不可信/劣势追分宽接
         return {"act": "fold"}
 
     # ---- 强听牌：半诈唬加注或按（隐含）赔率抽牌（优先于中等成牌：
@@ -1495,26 +1517,27 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             return _raise_pot(state)          # 半诈唬加注（弃牌权益+成牌双收益）
         if eq >= eff_req:
             return {"act": "call"}
-        if eq >= required * 0.75:
-            return {"act": "call"}            # 隐含赔率勉强支撑
+        if eq >= required * 0.75 or adj in ("desperate", "doomed"):
+            return {"act": "call"}            # 隐含赔率勉强支撑 / 劣势追分硬接
         return {"act": "fold"}
 
     # ---- 中等成牌：只打好赔率 ----
     if medium:
         if eq >= eff_req + margin + 0.03:
             return {"act": "call"}
-        if eq >= eff_req and arch == "maniac":
+        if eq >= eff_req and (arch == "maniac" or adj in ("desperate", "doomed")):
             return {"act": "call"}
         return {"act": "fold"}
 
-    # ---- 弱听牌：只在很便宜时跟 ----
+    # ---- 弱听牌：只在很便宜时跟；劣势追分时便宜就抽 ----
     if draw:
-        if required <= 0.20 and eq >= required * 0.9:
+        if required <= 0.20 and (eq >= required * 0.9 or adj in ("desperate", "doomed")):
             return {"act": "call"}
         return {"act": "fold"}
 
-    # ---- 空气：罕见反诈唬（对手高弃牌 + 我有位置 + 便宜）----
-    if model.eff_fold_to_bet() >= 0.60 and required <= 0.30 and state.is_button:
+    # ---- 空气：罕见反诈唬（对手高弃牌 + 我有位置 + 便宜；劣势追分时也尝试）----
+    if (model.eff_fold_to_bet() >= 0.60 and required <= 0.30 and state.is_button) \
+            or adj in ("desperate", "doomed"):
         return _raise_pot(state)
     return {"act": "fold"}
 
