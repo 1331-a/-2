@@ -300,6 +300,36 @@ check("偷盲档:空气牌不诈唬", a == {"act": "check"}, str(a))
 a = decide(st, foldy())
 check("对照���:正常档空气诈唬恢复", a.get("act") == "raise", str(a))
 
+# ---------- 6c. 翻前对手全下：按累计盈亏动态分档（盈利越多越不跟）----------
+def allin_req(my_cards, pnl_me, hand=30, max_hand=70):
+    """我方按钮开池后对手 BB 全下：my_id=0, my_chips=19500（跟注即全下）。"""
+    return req(my_id=0, my_chips=19500, my_cards=my_cards, hand=hand,
+               max_hand=max_hand, total_win_chips=[pnl_me, -pnl_me],
+               history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                        {"round": 0, "player_id": 1, "action": -2, "action_type": "allin"}])
+
+# 大幅领先(+6000) + AA：eq≈0.85，超过 0.75 门槛且满足第四步 → 跟全下
+a = act(allin_req([48, 50], 6000))
+check("全下分档:大幅领先AA跟全下", a == {"act": "allin"}, str(a))
+# 大幅领先(+6000) + 72o：eq≈0.30 → 弃（保住领先优势）
+a = act(allin_req([23, 2], 6000))
+check("全下分档:大幅领先72o弃牌", a == {"act": "fold"}, str(a))
+# 小幅领先(+2000) + KK：eq≈0.72 > 0.65 门槛 → 跟全下
+a = act(allin_req([44, 46], 2000))
+check("全下分档:小幅领先KK跟全下", a == {"act": "allin"}, str(a))
+# 均势 + TT：eq≈0.60 > 0.55 门槛 → 跟全下
+a = act(allin_req([32, 33], 0))
+check("全下分档:均势TT跟全下", a == {"act": "allin"}, str(a))
+# 均势 + 72o：eq≈0.30 < 0.55 → 弃
+a = act(allin_req([23, 2], 0))
+check("全下分档:均势72o弃牌", a == {"act": "fold"}, str(a))
+# 大幅落后(-6000) + A5s：eq≈0.45 > 0.40 → 跟全下搏翻盘
+a = act(allin_req([48, 12], -6000))
+check("全下分档:大幅落后A5s跟全下搏翻盘", a == {"act": "allin"}, str(a))
+# 大幅落后(-6000) + 72o：eq≈0.30 < 0.40 → 仍弃（赌博也有底线）
+a = act(allin_req([23, 2], -6000))
+check("全下分档:大幅落后72o仍弃牌", a == {"act": "fold"}, str(a))
+
 # ---------- 7. 耗时 ----------
 t0 = time.time()
 for _ in range(10):

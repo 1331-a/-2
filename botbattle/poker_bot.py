@@ -1163,6 +1163,22 @@ BLOCKER = 0.45             # 中等牌有位置的小注施压
 MC_ITERATIONS = 1000       # 蒙特卡洛最大抽样数
 TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，预留充足余量
 
+# ---- 翻前全下决策（按累计盈亏动态分档，防止「优势下跟 all-in 比运气」）----
+ALLIN_MC = 600             # 全下决策蒙特卡洛抽样数（翻前只需 5 张公共牌，速度快）
+ALLIN_TIME_BUDGET = 0.30   # 全下决策软时限（秒）
+ALLIN_BAND_PCT = 0.10      # 第四步：极端赔率带宽（必要胜率 ±10% 无条件跟/弃，防反向剥削）
+ALLIN_LEAD_BB = 50         # 大幅领先/落后阈值（单位大盲，50BB=+5000）
+ALLIN_SMALL_BB = 10        # 小幅领先/落后阈值（10BB=+1000）
+# 各盈亏档位的跟注胜率门槛（0~1）：盈利越多越不跟（保收益），落后越多越敢跟（搏翻盘）
+ALLIN_THR = {              # key 见 _preflop_allin_decide 档位说明
+    "big_lead": 0.75,      # 大幅领先：只跟 AA/KK 级
+    "lead": 0.65,          # 小幅领先：TT+、AK 级
+    "even": 0.55,          # 均势：77+、AT+、KQ 级
+    "behind": 0.50,        # 小幅落后：任何对子、A/K 高张
+    "big_behind": 0.40,    # 大幅落后：放宽到任何有潜力的牌
+}
+ALLIN_ENDGAME_SHIFT = 0.03  # 终局（剩≤15手）修正：领先更严 / 落后更宽
+
 
 # ---- 公对风险规避（弱两对保护）----
 RISK_LEAD_CALL_FRAC = 0.50   # 领先时弱两对最多跟注 50% 底池
@@ -1365,10 +1381,83 @@ def _match_adjust(state):
 # ================================================================
 #  翻牌前：百分位范围决策
 # ================================================================
+def _preflop_allin_decide(state, model):
+    """翻前对手全下（或需跟注额 ≥ 我方筹码，跟注即全下）时的独立决策。
+
+    【业务逻辑——按用户方案三要素 + 第四步防反向剥削】
+      第一步 胜率：我方手牌 vs 对手「all-in 范围」的胜率。
+             对手敢全下说明牌力更强，范围比随机牌紧（按对手原型收紧：
+             岩石 all-in≈AA/KK 级，疯子≈宽范围），比固定映射更准。
+      第二步 必要胜率：跟注额 / (跟注后总底池)，跟注额 = min(我方筹码, 对手下注量)。
+      第三步 按累计盈亏分档（核心）：盈利越多跟注门槛越高（保收益），
+             落后越多门槛越低（搏翻盘）——避免「优势下跟 all-in 比运气」。
+      第四步 极端赔率优先（防反向剥削）：eq ≥ 必要+10% 无条件跟、
+             eq ≤ 必要-10% 无条件弃，中间地带才由第三步分档决定——
+             防对手用「极小全下白嫖领先者」（好赔率不能弃）、
+             或「超大全下诱杀落后者」（差赔率不能接）。
+    注：有人全下后平台规则只允许 -1/-2，本函数只返回 fold / allin。
+    """
+    # ---- 第一步：胜率（对手 all-in 范围收紧）----
+    arch = model.archetype()
+    base_rp = _opp_range_pct(model, True)      # 对手翻前主动加注的基准范围
+    factor = {"maniac": 0.90, "station": 0.70, "tag": 0.60, "rock": 0.35}.get(arch, 0.60)
+    rp = _clamp(base_rp * factor, 0.02, 1.0)   # all-in 宣告 → 范围再收紧
+    eq = monte_carlo_equity(
+        state.hole, [], iterations=ALLIN_MC, opp_range_pct=rp,
+        deadline=time.time() + ALLIN_TIME_BUDGET)
+
+    # ---- 第二步：必要胜率（底池赔率）----
+    call_amt = min(state.my_left, state.to_call)
+    total_pot = state.pot + call_amt
+    required = call_amt / total_pot if total_pot > 0 else 1.0
+
+    # ---- 第四步：极端赔率优先（防反向剥削）----
+    if eq >= required + ALLIN_BAND_PCT:
+        return {"act": "allin"}    # 赔率极好：任何状态都跟（弃掉才是 -EV）
+    if eq <= required - ALLIN_BAND_PCT:
+        return {"act": "fold"}     # 赔率极差：任何状态都不接
+
+    # ---- 第三步：按累计盈亏分档（核心）----
+    lead = (state.total_win_chips[state.my_id]
+            - state.total_win_chips[state.opp_id])
+    bb = state.big_blind
+    big_bb = ALLIN_LEAD_BB * bb      # 50BB = +5000
+    small_bb = ALLIN_SMALL_BB * bb   # 10BB = +1000
+    if lead > big_bb:
+        thr = ALLIN_THR["big_lead"]       # 大幅领先：只跟 AA/KK 级
+    elif lead > small_bb:
+        thr = ALLIN_THR["lead"]           # 小幅领先：TT+、AK 级
+    elif lead > -small_bb:
+        thr = ALLIN_THR["even"]           # 均势：77+、AT+、KQ 级
+    elif lead > -big_bb:
+        thr = ALLIN_THR["behind"]         # 小幅落后：任何对子、A/K 高张
+    else:
+        thr = ALLIN_THR["big_behind"]     # 大幅落后：放宽到任何有潜力的牌
+
+    # 终局修正：剩 ≤15 手时，领先保护更严、落后搏命更凶（对手没时间翻盘）
+    hands_left = state.max_hand - state.hand_num
+    if hands_left <= 15:
+        thr = thr + ALLIN_ENDGAME_SHIFT if lead > 0 else thr - ALLIN_ENDGAME_SHIFT
+
+    # 领先者至少要过赔率底线（防止 -EV 的接注）；落后者允许 -EV 搏翻盘
+    if lead > 0:
+        thr = max(thr, required)
+
+    if eq >= thr:
+        return {"act": "allin"}
+    return {"act": "fold"}
+
+
 def _preflop_decide(state, model):
     pct = hand_percentile(state.hole)   # 起手牌百分位（越小越强）
     arch = model.archetype()
     adj = _match_adjust(state)
+
+    # 翻前对手全下 / 跟注即全下：走「累计盈亏动态分档」专用决策
+    # （原逻辑只按底池赔率 + protect 减 5%，缺少「领先收紧到 75%+」的硬保护，
+    #   这正是「优势下也跟 all-in 比运气」的直接来源）
+    if state.opp_is_allin or state.to_call >= state.my_left:
+        return _preflop_allin_decide(state, model)
 
     if state.is_button:
         if state.to_call <= state.blind:      # 面对大盲（含无人加注）
