@@ -1418,30 +1418,95 @@ RIVER_TRAP_WARN_MARGIN = 0.15 # warning 档跟全下所需的额外胜率门槛
 # 「领先但未锁胜时的全下保护」。
 ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总盈利 + 此值
 
+# ---- 对手突袭大注（单次加注增量 > 此前对手本手总投入的 N 倍）----
+# 【规则】当对手一次加注的增量 > 对手之前本手累计投入的 OPP_JUMP_RATIO 倍
+# 时，判定为「突袭大注」——往往代表对手强牌（两对+/听牌/全下前奏），
+# 慎重量考：跟全下/大注时收紧对手范围估计、抬跟注门槛。
+OPP_JUMP_RATIO = 4.0            # 增量阈值倍数
+OPP_JUMP_FAC_MARGIN = 0.10       # 检测到突袭大注时，跟全下阈值额外抬高量
+
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
+
+
+def _opp_bet_jumped(state):
+    """对手「突袭大注」检测：最近一次主动加注的增量 > 对手之前本手累计投入的
+    OPP_JUMP_RATIO 倍。
+
+    【业务逻辑】对手若已下注很小（例 200），突然 raise 1000+（增量 1000 > 4×200=800）
+    → 这种「突袭」往往是强牌信号（两对+、听牌/半诈唬/全下前奏），收紧跟注
+    门槛；正常节奏的下注（增量与之前累计相当或更小）则不触发。
+
+    重放 state.request["history"] 计算对手每次主动加注的 raise-to 增量与对手
+    总累计。state.request 由 GameState.__init__ 持有。
+    """
+    request = getattr(state, "request", None) or {}
+    opp = state.opp_id
+    opp_cum = 0          # 对手本手累计投入（所有主动加注的增量之和）
+    last_incr = 0        # 对手最近一次主动加注的增量
+    for r in (request.get("history") or []):
+        if r.get("player_id") != opp:
+            continue
+        at = r.get("action_type", "")
+        a = r.get("action", 0)
+        is_raise = at in ("raise", "allin") or (
+            isinstance(a, int) and not isinstance(a, bool) and a > 0)
+        if not is_raise:
+            continue
+        rnd = int(r.get("round", 0))
+        # raise-to 语义：a = 该轮本玩家总注额 → 增量 = a - 该轮本玩家之前最大注
+        prev_round_max = 0
+        for r2 in (request.get("history") or []):
+            if r2 is r:
+                break
+            if r2.get("player_id") != opp:
+                continue
+            if int(r2.get("round", 0)) != rnd:
+                continue
+            a2 = r2.get("action", 0)
+            at2 = r2.get("action_type", "")
+            if at2 in ("raise", "allin") or (
+                    isinstance(a2, int) and not isinstance(a2, bool) and a2 > 0):
+                prev_round_max = max(prev_round_max, int(a2))
+        incr = int(a) - prev_round_max
+        if incr < 0:
+            incr = 0
+        last_incr = incr
+        opp_cum += incr
+    prior = opp_cum - last_incr
+    if prior > 0 and last_incr > OPP_JUMP_RATIO * prior:
+        return True
+    return False
 
 
 def _allin_floor_guard(state, action):
     """全下下限（盈利门槛）——用户规则的最后一道闸。
 
-    【业务逻辑】只有「投入筹码量 > 当前总盈利 + ALLIN_FLOOR_CONST」才
+    【业务逻辑】只有「累计投入 > 当前总盈利 + ALLIN_FLOOR_CONST」才
     允许跟全下或主动全下：
-      - 投入量：面对全下时 = min(我方剩余筹码, 需跟注额)（跟注即全下）；
-                主动全下时 = 我方剩余筹码。
-      - 门槛 = total_win_chips[我方] + 1000：盈利越高门槛越高（领先
-        保护，防止「小优势 allin 输光」）；落后时门槛为负 → 几乎不限
-        （搏翻盘）。
+      - 跟全下：累计投入 = 已投（INIT - my_chips）+ 跟注额
+                = INIT - (my_chips - min(my_left, to_call))
+      - 主动全下：invest = my_left（我方主动把剩余全下，新投量）
+    门槛 = total_win_chips[我方] + 1000：盈利越高门槛越高（领先
+    保护，防止「小优势 allin 输光」）；落后时门槛为负 → 几乎不限
+    （搏翻盘）。
+    【第 19 手修正】用「累计投入」而非只算本次新投——我方已大量投入
+    后（小底池 or 大底池），即便剩余 to_call 不大，累计也远超门槛，
+    应允许继续跟全下榨价值。
     不满足时：跟全下 → 弃牌；主动全下 → 过牌（能过则过，否则弃）。
     """
     if action.get("act") != "allin":
         return action
     try:
         floor = state.total_win_chips[state.my_id] + ALLIN_FLOOR_CONST
-        invest = (min(state.my_left, state.to_call)
-                  if state.to_call > 0 else state.my_left)
+        if state.to_call > 0:
+            # 跟全下：累计投入 = 已投 + 跟注额（受 my_left 约束）
+            invest = INIT_CHIPS - (state.my_chips - min(state.my_left, state.to_call))
+        else:
+            # 主动全下：我方主动投入 = my_left
+            invest = state.my_left
         if invest > floor:
-            return action          # 投入超过门槛 → 允许全下
+            return action          # 累计投入超门槛 → 允许全下
     except Exception:
         return action              # 状态异常时不额外拦截
     # 被锁：能过牌就过牌（不主动 allin），否则弃牌
@@ -2257,6 +2322,11 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             # 常规档跟全下需要胜率 > 赔率要求的边际（margin≥0.02），
             # 避免「小优势就接全下」的高方差打法
             thr = eff_req + margin
+        # 【对手突袭大注】最近一次加注增量 > 此前累计的 4 倍 → 强牌信号，
+        # 跟全下门槛额外抬高（仅当不属于压力/追分档——这些档对手范围本就更紧）
+        if adj not in ("pressure", "desperate", "doomed") and \
+                _opp_bet_jumped(state):
+            thr += OPP_JUMP_FAC_MARGIN
         if strong or eq >= thr or (big_draw and eq >= eff_req):
             return {"act": "allin"}
         return {"act": "fold"}
