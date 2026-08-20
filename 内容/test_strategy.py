@@ -203,7 +203,30 @@ trap_bet = req(my_id=1, my_chips=19500, my_cards=[45, 21],
 a = act(trap_bet, aggressive())
 check("check-raise:对手中计下注后强牌加注", a.get("act") in ("raise", "allin"), str(a))
 
-# ---------- 6. 耗时 ----------
+# ---------- 6. 偷盲档（对手疑似锁胜 → 关闭诈唬+高频小额偷盲）----------
+from match_ctx import MatchContext   # noqa: E402
+
+lock_ctx = MatchContext()
+lock_ctx.opponent_locking = True
+# 偷盲档：庄家位任何牌（含 72o）小额开池
+st = parse_request(req(my_id=0, my_chips=19900, my_cards=[23, 2],
+                       hand=45, max_hand=70, total_win_chips=[0, 0]))
+a = decide(st, OpponentModel(), lock_ctx)
+check("偷盲档:庄家72o小额偷盲(2.2BB)", a == {"act": "raise", "num": 440}, str(a))
+# 偷盲档：空气牌翻后不诈唬（即使对手高弃牌）
+st = parse_request(req(my_id=0, my_chips=19500, my_cards=[24, 17],
+                       public_cards=[46, 22, 5], hand=45, max_hand=70,
+                       total_win_chips=[0, 0],
+                       history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+a = decide(st, foldy(), lock_ctx)   # foldy 高弃牌，平时会诈唬 → 偷盲档关闭
+check("偷盲档:空气牌不诈唬", a == {"act": "check"}, str(a))
+# 对照组：无 ctx（正常）→ 同场景空气牌对高弃牌对手会诈唬
+a = decide(st, foldy())
+check("对照���:正常档空气诈唬恢复", a.get("act") == "raise", str(a))
+
+# ---------- 7. 耗时 ----------
 t0 = time.time()
 for _ in range(10):
     act(air_flop, station())

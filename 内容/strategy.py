@@ -53,8 +53,17 @@ TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，
 
 
 # ---------------- 对外入口 ----------------
-def decide(state, model):
-    """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。"""
+_CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
+
+
+def decide(state, model, ctx=None):
+    """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
+
+    ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
+    （对手弃牌推断/激进等级/回撤保护）通过它只调整状态机阈值偏移。
+    """
+    global _CTX
+    _CTX = ctx
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
@@ -98,13 +107,27 @@ def _match_adjust(state):
       pressure  —— 领先且对手短码：ICM 压力下放宽全下/加注（对手弃牌率高）；
       desperate —— 大幅落后且临近终局：极限激进追分，阻止对手锁胜；
       doomed    —— 落后到数学上不可追（对手同款锁胜逻辑已成立）：放开一切豪赌；
+      steal     —— 对手疑似锁胜（弃牌率飙升）：关闭诈唬、高频小额偷盲；
       normal    —— 常规。
+
+    赛制上下文（match_ctx）只在此处调整阈值：
+      - opponent_locking → 直接返回 steal 档；
+      - 激进等级 → 对 lead 做 ±LEVEL_SHIFT_BB 偏移（激进=负偏移早追分，
+        保守=正偏移早保收益），即「调整触发阈值」而非新增决策路径。
     """
     try:
         hands_left = state.max_hand - state.hand_num
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         bb = state.big_blind
+
+        # 模块一：疑似锁胜 → 偷盲档（关闭诈唬 + 高频小额偷盲）
+        if _CTX is not None and _CTX.opponent_locking:
+            return "steal"
+        # 模块二/三：激进等级 → 阈值偏移（大盲单位）
+        if _CTX is not None:
+            lead += _CTX.threshold_offset(state) * bb
+
         if hands_left <= 15:
             # 落后到对手可用「全程弃牌」锁胜的量级：数学上已不可追，放开豪赌
             if lead <= -2.5 * bb * hands_left:
@@ -140,6 +163,9 @@ def _preflop_decide(state, model):
 
 def _button_open(state, model, pct, arch, adj):
     """庄家位开池：范围随对手原型伸缩。"""
+    # 偷盲档：对手疑似锁胜 → 任何牌都小额开池（高频偷盲，无需大注吓唬）
+    if adj == "steal":
+        return _raise_to(state, OPEN_SIZE_VS_STATION * state.big_blind)
     open_pct = BTN_OPEN_PCT
     if arch == "rock":
         open_pct = 0.92     # 岩石不惩罚宽开池 → 更激进偷盲
@@ -218,7 +244,9 @@ def _bb_option(state, model, pct, arch, adj):
         iso_pct = 0.30     # 对站点隔离靠价值范围
     elif arch == "rock":
         iso_pct = 0.55     # 多惩罚岩石的溜入
-    if adj in ("desperate", "doomed"):
+    if adj == "steal":
+        iso_pct = 0.90     # 偷盲档：对手弃牌率高 → 几乎任何牌都隔离抢池
+    elif adj in ("desperate", "doomed"):
         iso_pct = 0.80     # 劣势追分：隔离加注范围翻倍（抢底池搏翻盘）
     if pct <= iso_pct:
         return _raise_to(state, ISO_SIZE_BB * state.big_blind)
@@ -235,18 +263,20 @@ def _bb_defend(state, model, pct, arch, adj):
     defend_pct = _clamp(1.15 - 1.8 * required, 0.22, 0.90)
     if arch == "maniac":
         defend_pct = min(0.95, defend_pct + 0.12)
-    if adj in ("desperate", "doomed"):
-        defend_pct = 1.0   # 劣势追分：任何牌都防守（含垃圾牌），留在局里搏翻盘
-
-    # 3-bet 范围：对手面对加注弃牌率高 → 宽（诈唬）；
-    #             跟注站 → 窄（纯价值，线性化）
-    threebet_pct = BB_3BET_PCT
-    if model.eff_fold_to_bet() >= 0.50:
-        threebet_pct = BB_3BET_BLUFFY
-    if arch == "station":
-        threebet_pct = 0.10
-    if adj in ("desperate", "doomed"):
-        threebet_pct = 0.35  # 劣势追分：3-bet 范围大幅加宽（含大量诈唬）
+    if adj == "steal":
+        # 偷盲档：对手弃牌率高 → 不做诈唬性 3-bet，按赔率防守即可
+        threebet_pct = 0.0
+        defend_pct = max(defend_pct, 0.60)
+    else:
+        threebet_pct = BB_3BET_PCT
+        if model.eff_fold_to_bet() >= 0.50:
+            threebet_pct = BB_3BET_BLUFFY
+        if arch == "station":
+            threebet_pct = 0.10
+        if adj in ("desperate", "doomed"):
+            threebet_pct = 0.35  # 劣势追分：3-bet 范围大幅加宽（含大量诈唬）
+        if adj in ("desperate", "doomed"):
+            defend_pct = 1.0   # 劣势追分：任何牌都防守（含垃圾牌），留在局里搏翻盘
 
     if pct <= threebet_pct:
         return _raise_to(state, 3.0 * state.curbet[state.opp_id])
@@ -475,6 +505,8 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer = max(0.0, buffer - 0.05)     # 有利位置 C-Bet 诈唬门槛下调
     if adj == "protect":
         buffer += 0.15                       # 领先保收益：少诈唬
+    elif adj == "steal":
+        buffer += 0.50                       # 偷盲档：关闭所有纯诈唬（对手弃牌率已高，无需诈唬）
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
     if fold_eq >= breakeven + buffer:
@@ -578,6 +610,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     # ---- 空气：罕见反诈唬（对手高弃牌 + 我有位置 + 便宜；劣势追分时也尝试）----
     if (model.eff_fold_to_bet() >= 0.60 and required <= 0.30 and state.is_button) \
             or adj in ("desperate", "doomed"):
+        # 偷盲档不在此列：关闭反诈唬（对手弃牌率已高，反诈唬无收益）
         return _raise_pot(state)
     return {"act": "fold"}
 

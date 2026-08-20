@@ -22,6 +22,7 @@ import json
 import sys
 
 from game_state import parse_request
+from match_ctx import MatchContext
 from opponent import OpponentModel, build_model_from_history
 from strategy import decide
 
@@ -146,9 +147,14 @@ def _handle_line(obj):
                 # 对手建模：优先跨手牌的 globaldata，其次 data
                 model = OpponentModel.from_json(gdata_str or data_str)
                 build_model_from_history(model, request, state.my_id)
-                action = decide(state, model)
+                # 赛制上下文：从模型容器恢复 → 结算上一手 → 同步激进档
+                ctx = MatchContext.from_dict(model.ctx_dict)
+                ctx.update(state)
+                ctx.sync_baseline(state)
+                action = decide(state, model, ctx)
                 resp = _to_response(action)
                 resp = _final_guard(state, resp)
+                model.ctx_dict = ctx.to_dict()
                 data_out = model.to_json()
             except Exception:
                 resp = _fallback_resp(state)

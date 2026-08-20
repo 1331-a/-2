@@ -13,10 +13,10 @@ bundle.py — 生成 BotZone 单文件提交版本。
 """
 
 INTERNAL = {"cards", "evaluator", "ranges", "game_state",
-            "equity", "opponent", "strategy", "bot"}
+            "equity", "opponent", "match_ctx", "strategy", "bot"}
 # 依赖顺序（被依赖者在前）
 ORDER = ["cards", "evaluator", "ranges", "game_state",
-         "equity", "opponent", "strategy", "bot"]
+         "equity", "opponent", "match_ctx", "strategy", "bot"]
 
 
 def _strip_module(src):

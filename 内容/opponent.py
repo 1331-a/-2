@@ -57,6 +57,9 @@ class OpponentModel:
         # ---- 去重游标（同一手牌的多回合不重复计数） ----
         self.last_hand = None
         self.last_opp_count = 0
+        # ---- 赛制上下文（match_ctx.MatchContext.to_dict 的容器，
+        #      随本模型一起经 globaldata 持久化） ----
+        self.ctx_dict = {}
 
     # ---------------- 原始统计量 ----------------
     @property

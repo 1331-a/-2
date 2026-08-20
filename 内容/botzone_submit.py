@@ -725,6 +725,9 @@ class OpponentModel:
         # ---- 去重游标（同一手牌的多回合不重复计数） ----
         self.last_hand = None
         self.last_opp_count = 0
+        # ---- 赛制上下文（match_ctx.MatchContext.to_dict 的容器，
+        #      随本模型一起经 globaldata 持久化） ----
+        self.ctx_dict = {}
 
     # ---------------- 原始统计量 ----------------
     @property
@@ -963,6 +966,155 @@ def build_model_from_history(model, request, my_id):
 
 # -*- coding: utf-8 -*-
 """
+match_ctx.py — 赛制上下文（对手弃牌推断 / 激进等级 / 回撤保护）。
+
+【整合原则】三个模块只做一件事：给现有状态机 protect/pressure/
+desperate/doomed 的**触发阈值提供偏移**，不新增独立决策路径。
+
+  模块一 对手弃牌率推断器：
+    本平台只在轮到我行动时发 request —— 对手直接弃牌的手牌我们
+    根本看不到，VPIP/C-Bet 无法直接观测。因此用 globaldata 持久化
+    「我方累计净赢 total_win_chips」，每手牌用净赢增量推断：
+      +50 = 对手 SB 弃牌（我是 BB 收盲）
+      +100 = 对手 BB 弃牌（我是 SB 收盲）
+    最近 WINDOW 局「直接收盲率」> LOCK_RATE → 标记 opponent_locking
+    （疑似锁胜）。注意：只是行为信号，不假设对手真的会锁。
+
+  模块二 激进等级切换器：
+    基于 total_win_chips（平台每手牌筹码重置，my_chips 不是累计值，
+    必须用累计净赢）。三档：保守(>+20%) / 正常(±20%) / 激进(<-20%)。
+    激进档让状态机阈值偏向「追分」（负偏移），保守档偏向「保收益」。
+
+  模块三 回撤保护：
+    单局亏损 > DRAWDOWN_PCT → 降档一级；保守连续 UP_CONSEC_CONSERVATIVE
+    局盈利 / 正常连续 UP_CONSEC_NORMAL 局盈利且累计盈亏 > 门槛 → 升档。
+    作为阈值偏移使用，不硬切决策路径。
+
+所有阈值均为可配置常量。
+"""
+
+
+# ---------------- 可配置常量 ----------------
+WINDOW = 15                     # 滑动窗口：最近 15 局
+BLIND_NETS = (50, 100)          # 直接收盲的单局净赢（对手弃 SB/BB）
+LOCK_RATE = 0.60                # 直接收盲率阈值 → 疑似锁胜
+LOCK_MIN_SAMPLES = 8            # 判定疑似锁胜所需的最少样本局数
+
+LEVEL_CONSERVATIVE = 0          # 保守：正常策略，不额外激进
+LEVEL_NORMAL = 1                # 正常
+LEVEL_AGGRESSIVE = 2            # 激进：追分
+
+BRACKET_PCT = 0.20              # 激进等级分档：累计盈亏 ±20% 初始筹码
+DRAWDOWN_PCT = 0.15             # 单局亏损阈值 → 大败降档
+UP_CONSEC_CONSERVATIVE = 3      # 保守档连续盈利升档局数
+UP_CONSEC_NORMAL = 5            # 正常档连续盈利升档局数
+UP_NORMAL_MIN_PNL = -0.10       # 正常档升档的累计盈亏下限（-10%）
+LEVEL_SHIFT_BB = 6              # 激进等级对状态机阈值的偏移（大盲单位）
+
+
+class MatchContext:
+    """赛制上下文。to_dict/from_dict 存于对手模型的 ctx_dict，随 globaldata 持久化。"""
+
+    def __init__(self):
+        self.total_hands = 0         # 已结算手数
+        self.last_hand = None        # 上一请求的 hand 编号（用于手牌边界检测）
+        self.last_win = None         # 上一请求的我方累计净赢
+        self.recent_win = []         # FIFO：最近 WINDOW 局单局净赢
+        self.direct_blind_rate = 0.0  # 最近窗口直接收盲率
+        self.opponent_locking = False  # 疑似锁胜
+        self.level = LEVEL_NORMAL    # 激进等级
+        self.consec_profit = 0       # 连续盈利局数（用于升档）
+
+    # ---------------- 序列化 ----------------
+    def to_dict(self):
+        return self.__dict__
+
+    @classmethod
+    def from_dict(cls, d):
+        c = cls()
+        if isinstance(d, dict):
+            for k in c.__dict__:
+                if k in d:
+                    c.__dict__[k] = d[k]
+        return c
+
+    # ---------------- 每回合更新（每次 request 调用一次）----------------
+    def update(self, state):
+        """在每次 request 时调用：检测到新手牌即结算上一手。"""
+        hand = state.hand_num
+        my_win = state.total_win_chips[state.my_id]
+        if hand != self.last_hand:
+            if self.last_hand is not None and self.last_win is not None:
+                self._record_hand(state, my_win - self.last_win)
+            self.last_hand = hand
+            self.last_win = my_win
+
+    def _record_hand(self, state, net):
+        """上一手已结束：记录单局净赢并更新三项指标。"""
+        self.total_hands += 1
+        q = self.recent_win
+        q.append(net)
+        if len(q) > WINDOW:
+            del q[0]
+
+        # 模块一：直接收盲率 → 疑似锁胜
+        wins = list(q)
+        blind = sum(1 for w in wins if w in BLIND_NETS)
+        self.direct_blind_rate = blind / len(wins) if wins else 0.0
+        self.opponent_locking = (
+            len(wins) >= LOCK_MIN_SAMPLES and self.direct_blind_rate > LOCK_RATE)
+
+        # 模块三：回撤降档 + 连续盈利计数
+        if net <= -DRAWDOWN_PCT * INIT_CHIPS:
+            self.level = max(LEVEL_CONSERVATIVE, self.level - 1)
+            self.consec_profit = 0
+        elif net > 0:
+            self.consec_profit += 1
+        else:
+            self.consec_profit = 0
+        self._level_up(state)
+
+    def _level_up(self, state):
+        """模块三：连续盈利升档。"""
+        pnl = state.total_win_chips[state.my_id]
+        if self.level == LEVEL_CONSERVATIVE and \
+                self.consec_profit >= UP_CONSEC_CONSERVATIVE:
+            self.level = LEVEL_NORMAL
+            self.consec_profit = 0
+        elif self.level == LEVEL_NORMAL and \
+                self.consec_profit >= UP_CONSEC_NORMAL and \
+                pnl > UP_NORMAL_MIN_PNL * INIT_CHIPS:
+            self.level = LEVEL_AGGRESSIVE
+            self.consec_profit = 0
+
+    def sync_baseline(self, state):
+        """
+        模块二主规则：每回合开始前让激进档向「累计盈亏分档」收敛。
+        - 大盈利(>+20%)：强制不高于保守档（保护收益）；
+        - 大亏损(<-20%)：强制不低于激进档（必须追分，回撤降档在大
+          亏损带内被覆盖——这是有意取舍：深坑里没有冷却的资本）。
+        """
+        pnl = state.total_win_chips[state.my_id]
+        if pnl > BRACKET_PCT * INIT_CHIPS:
+            self.level = min(self.level, LEVEL_CONSERVATIVE)
+        elif pnl < -BRACKET_PCT * INIT_CHIPS:
+            self.level = max(self.level, LEVEL_AGGRESSIVE)
+
+    # ---------------- 供策略层使用 ----------------
+    def threshold_offset(self, state):
+        """
+        状态机阈值偏移（大盲单位）：
+          激进 → 负偏移（把领先视为更差 → 更早进入 desperate/doomed 追分）；
+          保守 → 正偏移（把领先视为更好 → 更早 protect 保收益）。
+        """
+        if self.level == LEVEL_AGGRESSIVE:
+            return -LEVEL_SHIFT_BB
+        if self.level == LEVEL_CONSERVATIVE:
+            return LEVEL_SHIFT_BB
+        return 0
+
+# -*- coding: utf-8 -*-
+"""
 strategy.py — AI 决策引擎（升级版）。
 
 【升级总览】
@@ -1013,8 +1165,17 @@ TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，
 
 
 # ---------------- 对外入口 ----------------
-def decide(state, model):
-    """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。"""
+_CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
+
+
+def decide(state, model, ctx=None):
+    """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
+
+    ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
+    （对手弃牌推断/激进等级/回撤保护）通过它只调整状态机阈值偏移。
+    """
+    global _CTX
+    _CTX = ctx
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
@@ -1058,13 +1219,27 @@ def _match_adjust(state):
       pressure  —— 领先且对手短码：ICM 压力下放宽全下/加注（对手弃牌率高）；
       desperate —— 大幅落后且临近终局：极限激进追分，阻止对手锁胜；
       doomed    —— 落后到数学上不可追（对手同款锁胜逻辑已成立）：放开一切豪赌；
+      steal     —— 对手疑似锁胜（弃牌率飙升）：关闭诈唬、高频小额偷盲；
       normal    —— 常规。
+
+    赛制上下文（match_ctx）只在此处调整阈值：
+      - opponent_locking → 直接返回 steal 档；
+      - 激进等级 → 对 lead 做 ±LEVEL_SHIFT_BB 偏移（激进=负偏移早追分，
+        保守=正偏移早保收益），即「调整触发阈值」而非新增决策路径。
     """
     try:
         hands_left = state.max_hand - state.hand_num
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         bb = state.big_blind
+
+        # 模块一：疑似锁胜 → 偷盲档（关闭诈唬 + 高频小额偷盲）
+        if _CTX is not None and _CTX.opponent_locking:
+            return "steal"
+        # 模块二/三：激进等级 → 阈值偏移（大盲单位）
+        if _CTX is not None:
+            lead += _CTX.threshold_offset(state) * bb
+
         if hands_left <= 15:
             # 落后到对手可用「全程弃牌」锁胜的量级：数学上已不可追，放开豪赌
             if lead <= -2.5 * bb * hands_left:
@@ -1100,6 +1275,9 @@ def _preflop_decide(state, model):
 
 def _button_open(state, model, pct, arch, adj):
     """庄家位开池：范围随对手原型伸缩。"""
+    # 偷盲档：对手疑似锁胜 → 任何牌都小额开池（高频偷盲，无需大注吓唬）
+    if adj == "steal":
+        return _raise_to(state, OPEN_SIZE_VS_STATION * state.big_blind)
     open_pct = BTN_OPEN_PCT
     if arch == "rock":
         open_pct = 0.92     # 岩石不惩罚宽开池 → 更激进偷盲
@@ -1178,7 +1356,9 @@ def _bb_option(state, model, pct, arch, adj):
         iso_pct = 0.30     # 对站点隔离靠价值范围
     elif arch == "rock":
         iso_pct = 0.55     # 多惩罚岩石的溜入
-    if adj in ("desperate", "doomed"):
+    if adj == "steal":
+        iso_pct = 0.90     # 偷盲档：对手弃牌率高 → 几乎任何牌都隔离抢池
+    elif adj in ("desperate", "doomed"):
         iso_pct = 0.80     # 劣势追分：隔离加注范围翻倍（抢底池搏翻盘）
     if pct <= iso_pct:
         return _raise_to(state, ISO_SIZE_BB * state.big_blind)
@@ -1195,18 +1375,20 @@ def _bb_defend(state, model, pct, arch, adj):
     defend_pct = _clamp(1.15 - 1.8 * required, 0.22, 0.90)
     if arch == "maniac":
         defend_pct = min(0.95, defend_pct + 0.12)
-    if adj in ("desperate", "doomed"):
-        defend_pct = 1.0   # 劣势追分：任何牌都防守（含垃圾牌），留在局里搏翻盘
-
-    # 3-bet 范围：对手面对加注弃牌率高 → 宽（诈唬）；
-    #             跟注站 → 窄（纯价值，线性化）
-    threebet_pct = BB_3BET_PCT
-    if model.eff_fold_to_bet() >= 0.50:
-        threebet_pct = BB_3BET_BLUFFY
-    if arch == "station":
-        threebet_pct = 0.10
-    if adj in ("desperate", "doomed"):
-        threebet_pct = 0.35  # 劣势追分：3-bet 范围大幅加宽（含大量诈唬）
+    if adj == "steal":
+        # 偷盲档：对手弃牌率高 → 不做诈唬性 3-bet，按赔率防守即可
+        threebet_pct = 0.0
+        defend_pct = max(defend_pct, 0.60)
+    else:
+        threebet_pct = BB_3BET_PCT
+        if model.eff_fold_to_bet() >= 0.50:
+            threebet_pct = BB_3BET_BLUFFY
+        if arch == "station":
+            threebet_pct = 0.10
+        if adj in ("desperate", "doomed"):
+            threebet_pct = 0.35  # 劣势追分：3-bet 范围大幅加宽（含大量诈唬）
+        if adj in ("desperate", "doomed"):
+            defend_pct = 1.0   # 劣势追分：任何牌都防守（含垃圾牌），留在局里搏翻盘
 
     if pct <= threebet_pct:
         return _raise_to(state, 3.0 * state.curbet[state.opp_id])
@@ -1435,6 +1617,8 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer = max(0.0, buffer - 0.05)     # 有利位置 C-Bet 诈唬门槛下调
     if adj == "protect":
         buffer += 0.15                       # 领先保收益：少诈唬
+    elif adj == "steal":
+        buffer += 0.50                       # 偷盲档：关闭所有纯诈唬（对手弃牌率已高，无需诈唬）
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
     if fold_eq >= breakeven + buffer:
@@ -1538,6 +1722,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     # ---- 空气：罕见反诈唬（对手高弃牌 + 我有位置 + 便宜；劣势追分时也尝试）----
     if (model.eff_fold_to_bet() >= 0.60 and required <= 0.30 and state.is_button) \
             or adj in ("desperate", "doomed"):
+        # 偷盲档不在此列：关闭反诈唬（对手弃牌率已高，反诈唬无收益）
         return _raise_pot(state)
     return {"act": "fold"}
 
@@ -1763,9 +1948,14 @@ def _handle_line(obj):
                 # 对手建模：优先跨手牌的 globaldata，其次 data
                 model = OpponentModel.from_json(gdata_str or data_str)
                 build_model_from_history(model, request, state.my_id)
-                action = decide(state, model)
+                # 赛制上下文：从模型容器恢复 → 结算上一手 → 同步激进档
+                ctx = MatchContext.from_dict(model.ctx_dict)
+                ctx.update(state)
+                ctx.sync_baseline(state)
+                action = decide(state, model, ctx)
                 resp = _to_response(action)
                 resp = _final_guard(state, resp)
+                model.ctx_dict = ctx.to_dict()
                 data_out = model.to_json()
             except Exception:
                 resp = _fallback_resp(state)
