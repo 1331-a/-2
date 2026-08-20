@@ -62,7 +62,7 @@ st = parse_request(req(total_win_chips=[1000, -1000], public_cards=[46, 6, 1],
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st, OpponentModel())
-check("锁注对照:领先1000不受限可大注", a.get("act") == "raise" and a["num"] > 1000, str(a))
+check("锁注对照:领先1000不锁但增量上限1000", a == {"act": "raise", "num": 1000}, str(a))
 
 # 对照组：落后 2000 不受限
 st = parse_request(req(total_win_chips=[-2000, 2000], public_cards=[46, 6, 1],
@@ -70,7 +70,7 @@ st = parse_request(req(total_win_chips=[-2000, 2000], public_cards=[46, 6, 1],
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st, OpponentModel())
-check("锁注对照:落后2000不受限", a.get("act") == "raise" and a["num"] > 1000, str(a))
+check("锁注对照:落后2000不锁但增量上限1000", a == {"act": "raise", "num": 1000}, str(a))
 
 # ---------- 加注增量上限（全局：增量≤1000） ----------
 # 翻后无人下注大底池价值注（pot 3000）→ 增量≤1000 → 总注额≤1000

@@ -148,7 +148,7 @@ aa_bet2 = req(hand=16, my_id=0, my_chips=19500, my_cards=[48, 50],
 a = decide(parse_request(aa_bet2), m7)
 check("学习优先:面对下注加注用学习尺寸(0.35池≈860)", a == {"act": "raise", "num": 860}, str(a))
 a0 = decide(parse_request(aa_bet2), OpponentModel())
-check("学习优先:无数据常规加注(0.75池≈1500)", a0 == {"act": "raise", "num": 1500}, str(a0))
+check("学习优先:无数据常规加注(增量上限1300)", a0 == {"act": "raise", "num": 1300}, str(a0))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

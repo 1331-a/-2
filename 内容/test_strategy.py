@@ -480,7 +480,8 @@ royal = req(my_id=0, my_chips=19500, my_cards=[50, 46],
                      {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
                      {"round": 3, "player_id": 1, "action": 0, "action_type": "check"}])
 a = act(royal)
-check("河牌坚果超池下注(>池)", a.get("act") == "raise" and a["num"] > 1000, str(a))
+# 增量上限 1000 全局生效 → 坚果超池也压到 1000（用户规则）
+check("河牌坚果大注(增量上限1000)", a.get("act") == "raise" and a["num"] >= 1000, str(a))
 
 # ---------- 7. 极化 4-Bet 诈唬（A5s 阻挡牌）----------
 # SB A♠5♠ 开池被 BB 3-bet 到 1200；对手高弃牌 → A5s 诈唬 4-bet
