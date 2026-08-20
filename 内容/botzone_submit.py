@@ -725,6 +725,13 @@ class OpponentModel:
         # ---- 去重游标（同一手牌的多回合不重复计数） ----
         self.last_hand = None
         self.last_opp_count = 0
+        # ---- 对手响应学习（我方下注/加注后对手的反应，按尺寸分桶）----
+        # 用户需求：记录「我下注 X 后对手经常弃牌」这类条件响应，驱动
+        # 下注尺寸选择与诈唬决策。窗口 = 最近 20 手牌（FIFO 过滤）。
+        self.bet_resp_events = []   # [(hand, is_preflop, bucket, reaction)]
+        self.resp_done = {}         # hand -> [已处理的 my-bet 历史索引]
+        self.resp_tail = None       # 上一手尾部: (hand, is_preflop, bucket, is_my_bet_end)
+        self.resp_window = 20       # 学习窗口（手牌数）
         # ---- 赛制上下文（match_ctx.MatchContext.to_dict 的容器，
         #      随本模型一起经 globaldata 持久化） ----
         self.ctx_dict = {}
@@ -817,6 +824,112 @@ class OpponentModel:
             return _PRIOR["river_fold"]
         return self._shrunk(self.river_fold / self.river_faces,
                             self.river_faces, "river_fold")
+
+    # ---------------- 对手响应学习（我方下注后对手的反应）----------------
+    # 桶定义（相对尺寸）：
+    #   翻前：我方本轮总注额 / 大盲  → small ≤2.5、medium ≤4、large >4
+    #   翻后：我方本轮总注额 / 底池  → small ≤0.4、medium ≤0.75、large >0.75
+    # 学习对象是「我方主动下注后的对手反应」，用于：
+    #   1. 价值下注尺寸：选对手弃牌率最低的桶（钓最宽跟注范围）；
+    #   2. 诈唬：用该尺寸的实测弃牌率替代全局弃牌率（更准）。
+    _BUCKET_PF_SMALL, _BUCKET_PF_MED, _BUCKET_PF_LARGE = "pf_s", "pf_m", "pf_l"
+    _BUCKET_SF_SMALL, _BUCKET_SF_MED, _BUCKET_SF_LARGE = "sf_s", "sf_m", "sf_l"
+
+    @staticmethod
+    def _bet_size_bucket(is_preflop, my_bet_total, big_blind, pot):
+        """把「我方下注后的本轮总注额」映射到尺寸桶。"""
+        if is_preflop:
+            bb = big_blind if big_blind > 0 else 100
+            ratio = my_bet_total / bb
+            if ratio <= 2.5:
+                return OpponentModel._BUCKET_PF_SMALL
+            if ratio <= 4.0:
+                return OpponentModel._BUCKET_PF_MED
+            return OpponentModel._BUCKET_PF_LARGE
+        p = pot if pot > 0 else 1
+        ratio = my_bet_total / p
+        if ratio <= 0.40:
+            return OpponentModel._BUCKET_SF_SMALL
+        if ratio <= 0.75:
+            return OpponentModel._BUCKET_SF_MED
+        return OpponentModel._BUCKET_SF_LARGE
+
+    def _clean_bet_resp(self, cur_hand):
+        """按窗口（最近 resp_window 手）清理过期事件。"""
+        if cur_hand is not None:
+            floor = cur_hand - self.resp_window
+            self.bet_resp_events = [
+                e for e in self.bet_resp_events if e[0] > floor]
+        if len(self.bet_resp_events) > self.resp_window * 6:
+            # 防御：极端情况下硬性截断
+            self.bet_resp_events = self.bet_resp_events[-self.resp_window * 6:]
+
+    def _add_bet_resp(self, hand, is_preflop, bucket, reaction):
+        # 用 list 而非 tuple：JSON 序列化后类型保持一致（tuple 会变 list）
+        self.bet_resp_events.append([hand, is_preflop, bucket, reaction])
+        self._clean_bet_resp(hand)
+
+    def bet_resp_stats(self, bucket, cur_hand=None, min_samples=3):
+        """某尺寸桶的对手反应统计：{fold, call, raise, n}（窗口内）。
+        样本 < min_samples 时返回 None（数据不足，勿用于决策）。"""
+        if cur_hand is not None:
+            floor = cur_hand - self.resp_window
+            evs = [e for e in self.bet_resp_events
+                   if e[1] == (bucket.startswith("pf")) and e[2] == bucket
+                   and e[0] > floor]
+        else:
+            evs = [e for e in self.bet_resp_events if e[2] == bucket]
+        if not evs:
+            return None
+        st = {"fold": 0, "call": 0, "raise": 0}
+        for _, _, _, r in evs:
+            st[r] = st.get(r, 0) + 1
+        st["n"] = sum(st.values())
+        if st["n"] < min_samples:
+            return None
+        st["fold_rate"] = st["fold"] / st["n"]
+        st["call_rate"] = st["call"] / st["n"]
+        st["raise_rate"] = st["raise"] / st["n"]
+        return st
+
+    def learned_fold_rate(self, is_preflop, my_bet_total, big_blind, pot,
+                          cur_hand=None, min_samples=3):
+        """学习到的「该下注尺寸下对手弃牌率」；数据不足返回 None。"""
+        b = self._bet_size_bucket(is_preflop, my_bet_total, big_blind, pot)
+        st = self.bet_resp_stats(b, cur_hand, min_samples)
+        if st is None:
+            return None
+        return st["fold_rate"]
+
+    def learned_value_bucket(self, is_preflop, cur_hand=None, min_samples=3):
+        """选择「对手弃牌率最低」的桶（价值注应避开对手爱弃的尺寸）。
+        返回 (bucket, fold_rate) 或 None（样本不足）。
+        EV 权衡：弃牌率低的尺寸跟注范围更宽，价值注选它。
+        """
+        best = None
+        for b in (self._BUCKET_PF_SMALL, self._BUCKET_PF_MED,
+                  self._BUCKET_PF_LARGE) if is_preflop else (
+                self._BUCKET_SF_SMALL, self._BUCKET_SF_MED,
+                self._BUCKET_SF_LARGE):
+            st = self.bet_resp_stats(b, cur_hand, min_samples)
+            if st is None:
+                continue
+            if best is None or st["fold_rate"] < best[1]:
+                best = (b, st["fold_rate"])
+        return best
+
+    # ---------------- 桶 -> 代表下注尺寸（策略层选用）----------------
+    @staticmethod
+    def bucket_to_frac(bucket):
+        """把桶转成代表下注比例（翻后：底池比例；翻前：大盲倍数）。"""
+        return {
+            OpponentModel._BUCKET_PF_SMALL: 2.2,
+            OpponentModel._BUCKET_PF_MED: 3.0,
+            OpponentModel._BUCKET_PF_LARGE: 4.0,
+            OpponentModel._BUCKET_SF_SMALL: 0.35,
+            OpponentModel._BUCKET_SF_MED: 0.55,
+            OpponentModel._BUCKET_SF_LARGE: 0.80,
+        }.get(bucket, 0.55)
 
     def decay(self, factor=0.5):
         """指数衰减全部计数：每 _DECAY_EVERY 手调用一次，让近期数据权重
@@ -915,17 +1028,34 @@ class OpponentModel:
         return m
 
 
-def build_model_from_history(model, request, my_id):
+def build_model_from_history(model, request, state):
     """从 request 的 history 增量统计对手本手牌动作（带去重与大注识别）。
 
     - 用 (hand 编号, 已统计条数) 去重：平台每回合重放完整历史不重复计数；
     - 单轮重放各玩家的加注额（raise-to），对手加注额 >= 3 倍本轮当前
       最大注时记为「大注」；
-    - 换手牌时 hands_seen += 1（若上一手牌观测到对手动作）。
+    - 换手牌时 hands_seen += 1（若上一手牌观测到对手动作）；
+    - 【响应学习】采集「我方下注 → 对手反应」事件：
+        同手牌内可见 call/raise（history 重放）；对手 fold 后本手结束
+        不可见 → 用「上一手以我方非全押下注结尾 + 新手牌到来」跨手推断。
+    state 由 bot 层传入（parse_request 结果），用于桶的盲注/底池计算。
     """
+    my_id = state.my_id
     opp = 1 - my_id
     hand = request.get("hand", None)
-    if hand != model.last_hand:
+    is_new_hand = (hand != model.last_hand)
+
+    # resp_done 的 key 经 JSON 往返会变 str，统一转 int（防同手牌查重失效）
+    if model.resp_done:
+        rd = {}
+        for k, v in model.resp_done.items():
+            try:
+                rd[int(k)] = v
+            except (TypeError, ValueError):
+                continue
+        model.resp_done = rd
+
+    if is_new_hand:
         model.last_hand = hand
         if model.last_opp_count > 0:
             model.hands_seen += 1  # 上一手牌对手有动作，计一手样本
@@ -933,8 +1063,81 @@ def build_model_from_history(model, request, my_id):
             if model.hands_seen and model.hands_seen % _DECAY_EVERY == 0:
                 model.decay(0.5)
         model.last_opp_count = 0
+        # 响应学习：上一手以「我方非全押下注」结尾 → 对手弃牌
+        if model.resp_tail is not None:
+            prev_hand, pf, bucket, my_bet_end = model.resp_tail
+            if my_bet_end and hand is not None:
+                model._add_bet_resp(prev_hand, pf, bucket, "fold")
+            model.resp_tail = None
+        # 清理旧手牌的已处理游标（key 经 JSON 往返会变 str，需转 int）
+        if hand is not None:
+            rd = {}
+            for h, v in model.resp_done.items():
+                try:
+                    hi = int(h)
+                except (TypeError, ValueError):
+                    continue
+                if hi == hand or hi > (hand - 5):
+                    rd[hi] = v
+            model.resp_done = rd
+        model._clean_bet_resp(hand)
 
     hist = request.get("history") or []
+
+    # ---- 响应学习：同手牌重放「我下注 → 对手反应」----
+    if hist and hand is not None:
+        done_list = set(model.resp_done.get(hand, ()))
+        bb = state.big_blind
+        pot = state.pot
+        for i, r in enumerate(hist):
+            if i in done_list:
+                continue
+            if r.get("player_id") != my_id:
+                continue
+            at = r.get("action_type", "")
+            a = r.get("action", 0)
+            is_my_bet = (at in ("raise", "bet") or
+                         (isinstance(a, int) and not isinstance(a, bool) and a > 0))
+            if not is_my_bet or at == "allin" or a == -2:
+                continue  # 只看我方非全押的下注/加注
+            rnd = int(r.get("round", 0))
+            for j in range(i + 1, len(hist)):
+                nxt = hist[j]
+                if int(nxt.get("round", 0)) != rnd:
+                    break
+                if nxt.get("player_id") != opp:
+                    continue
+                nat = nxt.get("action_type", "")
+                if nat == "fold":
+                    reaction = "fold"
+                elif nat in ("raise", "allin"):
+                    reaction = "raise"
+                elif nat in ("call", "check"):
+                    reaction = "call"
+                else:
+                    continue
+                pf = (rnd == 0)
+                bucket = OpponentModel._bet_size_bucket(pf, int(a), bb, pot)
+                model._add_bet_resp(hand, pf, bucket, reaction)
+                done_list.add(i)
+                break
+        model.resp_done[hand] = sorted(done_list)
+
+    # ---- 响应学习：更新上一手尾部状态（用于跨手推断对手弃牌）----
+    if hist:
+        last = hist[-1]
+        lat = last.get("action_type", "")
+        la = last.get("action", 0)
+        lid = last.get("player_id")
+        is_my_bet_end = (lid == my_id and lat != "allin" and la != -2 and
+                         (lat in ("raise", "bet") or
+                          (isinstance(la, int) and not isinstance(la, bool) and la > 0)))
+        pf = int(last.get("round", 0)) == 0
+        bucket = None
+        if is_my_bet_end:
+            bb = state.big_blind
+            bucket = OpponentModel._bet_size_bucket(pf, int(la), bb, state.pot)
+        model.resp_tail = (hand, pf, bucket, is_my_bet_end)
 
     # 单轮重放：按顺序整理对手动作 (action_type, round, 是否大注)
     opp_actions = []
@@ -1759,10 +1962,6 @@ def _postflop_decide(state, model):
 def _fold_equity(model, adj):
     """有效弃牌权益（诈唬收益的核心输入），按对局状态打折/加成。"""
     fe = model.eff_fold_to_bet()
-    if adj == "protect":
-        fe *= 0.5      # 领先保收益：诈唬大幅压缩
-    elif adj in ("desperate", "doomed"):
-        fe *= 1.6      # 劣势追分：把弃牌权益打到顶（激进诈唬搏翻盘）
 def _fold_equity(model, adj):
     """有效弃牌权益（诈唬收益的核心输入），按对局状态打折/加成。"""
     fe = model.eff_fold_to_bet()
@@ -1780,6 +1979,23 @@ def _fishy(model):
     而不是大注把他们吓跑（用户反馈：优势加注太多钓不上鱼）。
     """
     return model.archetype() == "station" or model.eff_fold_to_bet() < FISH_FOLD_BB
+
+
+def _learned_size(model, state, default_frac):
+    """对手响应学习的价值注尺寸（翻后）。
+
+    【优化思路】对手行为学习模块记录「我下注 X 后对手的反应」（最近 20 手、
+    按尺寸分桶）。价值注应避开对手爱弃的尺寸、选弃牌率最低的桶——
+    弃牌率低 = 跟注范围宽 = 同样下注能榨更多价值。
+    样本 < 3 时返回 (default_frac, False) 回退现有逻辑。
+    """
+    res = model.learned_value_bucket(False, cur_hand=state.hand_num)
+    if res is None:
+        return default_frac, False
+    bucket, _ = res
+    return OpponentModel.bucket_to_frac(bucket), True
+
+
 def _check_side(state, model, eq, category, strong, good, medium, big_draw,
                 draw, tex, arch, adj, is_river, i_aggressor):
     """主动下注侧：价值 / 诱敌深入 / 保护 / 半诈唬 / 纯诈唬（EV 门控+阻挡牌）。"""
@@ -1805,6 +2021,10 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
             if is_river:
                 frac = VALUE_BET
             return _bet_fraction(state, frac)
+        # 【响应学习】价值注尺寸：样本充分时选对手弃牌率最低的桶（实证优先）
+        lf, learned = _learned_size(model, state, None)
+        if learned:
+            return _bet_fraction(state, lf)
         # 非坚果强牌（顶对/两对/三条）对跟注型：钓鱼小注，钓垃圾牌跟注
         if _fishy(model):
             frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
@@ -1821,6 +2041,10 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         # SPR 很低：大注把后街筹码在有利时打光（0.6 池而非 0.8，防一次打光）
         if spr <= 2.5:
             return _bet_fraction(state, 0.60)
+        # 【响应学习】价值注尺寸：实证弃牌率最低的桶优先
+        lf, learned = _learned_size(model, state, None)
+        if learned:
+            return _bet_fraction(state, lf)
         # 跟注型对手：钓鱼小注（其会用差牌跟注，小注钓更宽范围）
         if _fishy(model):
             frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
@@ -1863,6 +2087,14 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer += 0.50                       # 偷盲档：关闭所有纯诈唬（对手弃牌率已高，无需诈唬）
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
+    # 【响应学习】诈唬用「该尺寸实测弃牌率」替代全局弃牌率（更准）：
+    # 计划下注 BLUFF(0.55 池) → 查对手对 medium 桶的真实反应，
+    # 比如「我下注 550 后对手 8 次弃 6 次」→ 用 0.75 而非全局估计。
+    my_bet_total = state.curbet[state.my_id] + int(BLUFF * state.pot)
+    lf = model.learned_fold_rate(False, my_bet_total, state.big_blind,
+                                 state.pot, cur_hand=state.hand_num)
+    if lf is not None:
+        fold_eq = lf
     if fold_eq >= breakeven + buffer:
         # 无位置时只诈唬非激进对手（避免被 check-raise 掀翻）
         if state.is_button or model.eff_bet_freq() < 0.45 or \
@@ -2213,7 +2445,7 @@ def _handle_line(obj):
             try:
                 # 对手建模：优先跨手牌的 globaldata，其次 data
                 model = OpponentModel.from_json(gdata_str or data_str)
-                build_model_from_history(model, request, state.my_id)
+                build_model_from_history(model, request, state)
                 # 赛制上下文：从模型容器恢复 → 结算上一手 → 同步激进档
                 ctx = MatchContext.from_dict(model.ctx_dict)
                 ctx.update(state)

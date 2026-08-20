@@ -146,7 +146,7 @@ def _handle_line(obj):
             try:
                 # 对手建模：优先跨手牌的 globaldata，其次 data
                 model = OpponentModel.from_json(gdata_str or data_str)
-                build_model_from_history(model, request, state.my_id)
+                build_model_from_history(model, request, state)
                 # 赛制上下文：从模型容器恢复 → 结算上一手 → 同步激进档
                 ctx = MatchContext.from_dict(model.ctx_dict)
                 ctx.update(state)

@@ -25,6 +25,7 @@ import time
 from evaluator import (TWO_PAIR, ONE_PAIR, STRAIGHT, evaluate_7)
 from equity import monte_carlo_equity
 from ranges import hand_percentile
+from opponent import OpponentModel
 
 # ============ 可调参数（单位见注释） ============
 # ---- 翻前范围（百分位，0~1，越小越紧） ----
@@ -647,10 +648,6 @@ def _postflop_decide(state, model):
 def _fold_equity(model, adj):
     """有效弃牌权益（诈唬收益的核心输入），按对局状态打折/加成。"""
     fe = model.eff_fold_to_bet()
-    if adj == "protect":
-        fe *= 0.5      # 领先保收益：诈唬大幅压缩
-    elif adj in ("desperate", "doomed"):
-        fe *= 1.6      # 劣势追分：把弃牌权益打到顶（激进诈唬搏翻盘）
 def _fold_equity(model, adj):
     """有效弃牌权益（诈唬收益的核心输入），按对局状态打折/加成。"""
     fe = model.eff_fold_to_bet()
@@ -668,6 +665,23 @@ def _fishy(model):
     而不是大注把他们吓跑（用户反馈：优势加注太多钓不上鱼）。
     """
     return model.archetype() == "station" or model.eff_fold_to_bet() < FISH_FOLD_BB
+
+
+def _learned_size(model, state, default_frac):
+    """对手响应学习的价值注尺寸（翻后）。
+
+    【优化思路】对手行为学习模块记录「我下注 X 后对手的反应」（最近 20 手、
+    按尺寸分桶）。价值注应避开对手爱弃的尺寸、选弃牌率最低的桶——
+    弃牌率低 = 跟注范围宽 = 同样下注能榨更多价值。
+    样本 < 3 时返回 (default_frac, False) 回退现有逻辑。
+    """
+    res = model.learned_value_bucket(False, cur_hand=state.hand_num)
+    if res is None:
+        return default_frac, False
+    bucket, _ = res
+    return OpponentModel.bucket_to_frac(bucket), True
+
+
 def _check_side(state, model, eq, category, strong, good, medium, big_draw,
                 draw, tex, arch, adj, is_river, i_aggressor):
     """主动下注侧：价值 / 诱敌深入 / 保护 / 半诈唬 / 纯诈唬（EV 门控+阻挡牌）。"""
@@ -693,6 +707,10 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
             if is_river:
                 frac = VALUE_BET
             return _bet_fraction(state, frac)
+        # 【响应学习】价值注尺寸：样本充分时选对手弃牌率最低的桶（实证优先）
+        lf, learned = _learned_size(model, state, None)
+        if learned:
+            return _bet_fraction(state, lf)
         # 非坚果强牌（顶对/两对/三条）对跟注型：钓鱼小注，钓垃圾牌跟注
         if _fishy(model):
             frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
@@ -709,6 +727,10 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         # SPR 很低：大注把后街筹码在有利时打光（0.6 池而非 0.8，防一次打光）
         if spr <= 2.5:
             return _bet_fraction(state, 0.60)
+        # 【响应学习】价值注尺寸：实证弃牌率最低的桶优先
+        lf, learned = _learned_size(model, state, None)
+        if learned:
+            return _bet_fraction(state, lf)
         # 跟注型对手：钓鱼小注（其会用差牌跟注，小注钓更宽范围）
         if _fishy(model):
             frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
@@ -751,6 +773,14 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer += 0.50                       # 偷盲档：关闭所有纯诈唬（对手弃牌率已高，无需诈唬）
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
+    # 【响应学习】诈唬用「该尺寸实测弃牌率」替代全局弃牌率（更准）：
+    # 计划下注 BLUFF(0.55 池) → 查对手对 medium 桶的真实反应，
+    # 比如「我下注 550 后对手 8 次弃 6 次」→ 用 0.75 而非全局估计。
+    my_bet_total = state.curbet[state.my_id] + int(BLUFF * state.pot)
+    lf = model.learned_fold_rate(False, my_bet_total, state.big_blind,
+                                 state.pot, cur_hand=state.hand_num)
+    if lf is not None:
+        fold_eq = lf
     if fold_eq >= breakeven + buffer:
         # 无位置时只诈唬非激进对手（避免被 check-raise 掀翻）
         if state.is_button or model.eff_bet_freq() < 0.45 or \
