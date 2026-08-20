@@ -369,7 +369,7 @@ nuts = req(my_id=0, my_chips=19500, my_cards=[50, 46],
                     {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
                     {"round": 3, "player_id": 1, "action": 0, "action_type": "check"}])
 a = act(nuts, station())
-check("钓鱼:坚果对站点仍超池", a.get("act") == "raise" and a["num"] >= 1200, str(a))
+check("钓鱼:坚果对站点大注(增量上限1000)", a.get("act") == "raise" and a["num"] >= 1000, str(a))
 
 # 面对下注强牌（AA, 底池 1300/需跟 300）：站点克制加注（0.45 池 < 常规 0.75 池）
 aa_bet = req(my_id=0, my_chips=19500, my_cards=[48, 50],
