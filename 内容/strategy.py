@@ -86,6 +86,16 @@ RISK_ALLIN_EQ_FLOOR = 0.25   # 大幅落后时跟全下的胜率数学底线
 RISK_BEHIND_LIMIT = -4000    # 大幅落后阈值（累计净赢）
 RISK_HANDS_LEFT = 20         # 落后场景的剩余局数上限
 
+# ---- 河牌公对陷阱（硬性风险规避，不经过数学计算）----
+# 【规则】河牌圈：公面≥3个不同点数且无A + 公对存在 + 我方仅一对（对子
+# 全部来自公面）+ 踢脚小于 Q → 面对对手全下直接弃牌，不做任何数学计算。
+# 【改良】本类牌面下对手任意配对（Q/K/公对牌/口袋对）都是两对或三条，
+# Q 踢脚与 K 踢脚几乎无差别——故踢脚 < A 时面对全下要么硬弃（<Q）要么
+# 以极高门槛决策（Q/K 踢脚），只有 A 踢脚的裸公对才允许正常数学决策。
+RIVER_TRAP_KICKER = 12        # 踢脚 < Q → 硬弃（用户规则，不计算）
+RIVER_TRAP_WARN_KICKER = 14   # 踢脚 < A → warning（Q/K 踢脚，高门槛）
+RIVER_TRAP_WARN_MARGIN = 0.15 # warning 档跟全下所需的额外胜率门槛
+
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 
@@ -166,6 +176,52 @@ def should_avoid_risk(state):
     high_board = max(board_other, default=0)   # 公面可能压制踢脚的高张（Q/K/A）
     if kicker < high_board:
         return True                       # 弱两对：踢脚被压制
+    return False
+
+
+def _river_paired_trap(state):
+    """
+    河牌「裸公对」陷阱检测（硬性风险规避，不经过任何数学计算）。
+
+    【业务逻辑（供算法文档）】
+    用户规则：河牌圈，公共牌 ≥3 个不同点数且无 A、公对存在、我方最终
+    牌型仅为 ONE_PAIR 且对子全部来自公共牌（手牌两张均未配对）→ 面对
+    对手全下直接弃牌。
+
+    【改良——对子大小与公共牌关系优先，不看踢脚】
+    裸公对面对全下时，对手任意配对都是两对/三条，踢脚在「一对 vs 两对」
+    的比较中完全不参与——第 49 手 K♣8♥ 对公对 9 + 公面 Q，对手 Q5 配成
+    两对 QQ99，K 踢脚毫无意义。真正决定胜负的是：
+      1. 公面是否存在比公对更高的单张 → 对手拿它配公对即成更大两对；
+      2. 公对本身是否太小（<T）→ 能赢的对手牌（更小口袋对）太少。
+    满足任一 → 硬弃。只有「公对 ≥T 且是公面最高」的裸公对才走数学决策。
+    """
+    if state.current_round < 3 or len(state.board) != 5:
+        return False                      # 仅河牌圈
+    rc = {}
+    for r in (c // 4 for c in state.board):
+        rc[r] = rc.get(r, 0) + 1
+    if 14 in rc:
+        return False                      # 公面有 A → 规则排除
+    pair_rank = 0
+    for r, n in rc.items():
+        if n >= 2:
+            pair_rank = r
+            break
+    if pair_rank == 0:
+        return False                      # 无公对
+    if len(rc) < 3:
+        return False                      # 不同点数 < 3（如 AAJ）→ 不触发
+    my = sorted((c // 4 for c in state.hole))
+    if my[0] == my[1]:
+        return False                      # 手牌口袋对 → 对子来自手牌，非裸公对
+    if evaluate_7(state.hole + state.board)[0] != ONE_PAIR:
+        return False                      # 两对/三条/… → 走其他逻辑（如弱两对）
+    # 对子大小与公共牌关系（不看踢脚）：
+    if any(r > pair_rank for r in rc):
+        return True                       # 公面有更高单张 → 对手配公对即成更大两对
+    if pair_rank < 10:
+        return True                       # 公对 < T：太小，能赢的对手牌太少
     return False
 
 
@@ -835,6 +891,10 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         margin -= 0.06       # 劣势追分：跟注门槛大幅放宽（多看牌搏翻盘）
 
     # ---- 对手全下 / 需跟注额 ≥ 剩余筹码：纯赔率决策 ----
+    # 【硬性风险规避】河牌裸公对陷阱：直接弃牌，不做任何数学计算——
+    # 对手全下 range 里两对/三条占比极高，裸公对几乎必输（第 49 手教训）。
+    if is_river and _river_paired_trap(state):
+        return {"act": "fold"}
     if state.opp_is_allin or to_call >= state.my_left:
         # ICM 压力/劣势追分：放宽跟注（对手范围更紧或我们需要赌博）
         if adj == "pressure":

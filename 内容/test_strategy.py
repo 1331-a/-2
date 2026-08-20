@@ -383,6 +383,38 @@ a_d = act(aa_bet)
 check("钓鱼:站点强牌克制加注(0.45池≈1020)", a_s.get("act") == "raise" and 900 <= a_s["num"] < 1200, str(a_s))
 check("钓鱼:默认对手常规加注(0.75池≈1500)", a_d.get("act") == "raise" and a_d["num"] >= 1200 and a_d["num"] > a_s["num"], str(a_d))
 
+# ---------- 6e. 河牌裸公对陷阱（硬性风险规避，不看踢脚）----------
+from strategy import _river_paired_trap   # noqa: E402
+
+# 第 49 手：公对9 + 公面Q高张 + K♣8♥裸公对 + 对手全下 → 硬弃
+st49 = parse_request(req(my_id=0, my_chips=3000, my_cards=[47, 24],
+                         public_cards=[42, 29, 16, 11, 30],
+                         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                                  {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                                  {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                                  {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                                  {"round": 3, "player_id": 1, "action": -2, "action_type": "allin"}]))
+check("公对陷阱:第49手K8裸公对识别", _river_paired_trap(st49) is True, "")
+a = decide(st49, OpponentModel())
+check("公对陷阱:第49手对手全下直接弃牌", a == {"act": "fold"}, str(a))
+# 对照组：公对K + 无更高单张（A踢脚裸公对）→ 不硬弃（数学决策）
+stk = parse_request(req(my_id=0, my_cards=[51, 24], public_cards=[46, 44, 29, 16, 11]))
+check("公对陷阱:公对K无更高单张不触发", _river_paired_trap(stk) is False, "")
+# 对照组：手牌口袋对 → 对子来自手牌，不触发
+stp = parse_request(req(my_id=0, my_cards=[24, 25], public_cards=[42, 29, 16, 11, 30]))
+check("公对陷阱:口袋对不触发", _river_paired_trap(stp) is False, "")
+# 对照��：公面有 A → 规则排除
+sta = parse_request(req(my_id=0, my_cards=[47, 24], public_cards=[50, 29, 16, 11, 30]))
+check("公对陷阱:公面有A不触发", _river_paired_trap(sta) is False, "")
+# 对照组：转牌（4张）→ 不触发
+stt = parse_request(req(my_id=0, my_cards=[47, 24], public_cards=[42, 29, 16, 11]))
+check("公对陷阱:非河牌不触发", _river_paired_trap(stt) is False, "")
+# 对照组：手牌 Q 配公牌 Q → 两对（非裸公对）→ 不触发
+stw = parse_request(req(my_id=0, my_cards=[42, 24], public_cards=[42, 29, 16, 11, 30]))
+check("公对陷阱:顶两对不触发", _river_paired_trap(stw) is False, "")
+
 # ---------- 7. 耗时 ----------
 t0 = time.time()
 for _ in range(10):
