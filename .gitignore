@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+
+# WorkBuddy 项目记忆（个人笔记，不必上传）
+.workbuddy/
+
+# 构建产物
+botbattle/dist/
+botbattle/build/
+*.spec
+
+# 系统文件
+Thumbs.db
+.DS_Store

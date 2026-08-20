@@ -1,0 +1,40 @@
+name: build-elf
+
+# 在 GitHub 托管的 Ubuntu runner 上构建 Linux x86_64 ELF 并上传为构建产物。
+# 触发：手动 dispatch，或推送到 botbattle/poker_bot.py 时自动。
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - 'botbattle/poker_bot.py'
+      - '.github/workflows/build-elf.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install PyInstaller
+        run: pip install "pyinstaller>=6.10,<7"
+
+      - name: Build single-file ELF
+        working-directory: botbattle
+        run: |
+          pyinstaller --onefile --strip --clean --name poker_bot poker_bot.py
+          chmod +x dist/poker_bot
+          file dist/poker_bot
+          ls -lh dist/poker_bot
+
+      - name: Upload ELF artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: poker_bot-linux-x86_64
+          path: botbattle/dist/poker_bot
+          if-no-files-found: error
+          retention-days: 90
