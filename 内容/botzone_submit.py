@@ -1425,6 +1425,13 @@ ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总
 OPP_JUMP_RATIO = 4.0            # 增量阈值倍数
 OPP_JUMP_FAC_MARGIN = 0.10       # 检测到突袭大注时，跟全下阈值额外抬高量
 
+# ---- 延迟施压（delayed aggression）----
+# 【规则】双方持续过牌后突然加注：对手对「过牌后突然出手」的弃牌率显著
+# 高于平均（认为我方有强牌才敢动），故折算为额外 fold_eq 加成。
+DELAYED_BONUS_FULL = 0.20      # 当前街双方都 check 过：完整加成（河牌威胁最大）
+DELAYED_BONUS_PARTIAL = 0.10   # 上一街双方都 check，当前街我方首次行动（转牌突然出手）
+OPP_JUMP_FAC_MARGIN = 0.10       # 检测到突袭大注时，跟全下阈值额外抬高量
+
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 
@@ -2072,6 +2079,46 @@ def _opp_raised_preflop(state):
     return _last_preflop_raiser(state) == state.opp_id
 
 
+
+def _delayed_aggression_bonus(state):
+    """延迟施压加成：双方持续过牌后突然加注的额外弃牌率加成。
+
+    【业务逻辑】用户规则：双方持续过牌时，可以突然无视牌型加注来欺骗对手。
+    对手对「过牌后突然出手」的弃牌率显著高于平均，故此场景下诈唬的
+    fold_eq 需额外加成：
+      - 当前街双方都 check 过 → +DELAYED_BONUS_FULL（0.20，河牌威胁最大）
+      - 上一街双方都 check，当前街我方首次行动（转牌突然出手）
+        → +DELAYED_BONUS_PARTIAL（0.10）
+    返回 fold_eq 加成（0~0.20）。"""
+    request = getattr(state, "request", None) or {}
+    hist = request.get("history") or []
+    cur_round = state.current_round
+    if cur_round < 1:
+        return 0.0
+    opp = state.opp_id
+    my = state.my_id
+
+    def _street_checked(round_no):
+        return [r for r in hist if int(r.get("round", 0)) == round_no and r.get("action_type") == "check"]
+
+    # 上一街双方都 check，当前街我方首次行动（典型「翻牌 check-check → 转牌加注」）
+    if cur_round >= 2:
+        prev = _street_checked(cur_round - 1)
+        prev_opp_check = any(r.get("player_id") == opp for r in prev)
+        prev_my_check = any(r.get("player_id") == my for r in prev)
+        cur_my_acted = any(r.get("player_id") == my for r in hist
+                            if int(r.get("round", 0)) == cur_round)
+        if prev_opp_check and prev_my_check and not cur_my_acted:
+            # 上两街（cur_round-1 和 cur_round-2）都 check-check →
+            # 持续三街过牌后突然出手：弃牌率加成更大（FULL）
+            if cur_round >= 3:
+                prev2 = _street_checked(cur_round - 2)
+                if all(any(r.get("player_id") == p for r in prev2) for p in (opp, my)):
+                    return DELAYED_BONUS_FULL
+            return DELAYED_BONUS_PARTIAL
+    return 0.0
+
+
 def _bluff_buffer(state):
     """诈唬缓冲按阻挡牌效应调整（手握 A 阻断对手 Ax 强牌/坚果同花）。
     A→0.03，K→0.06，小废牌→0.12。"""
@@ -2260,6 +2307,8 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer += 0.50                       # 偷盲档：关闭所有纯诈唬（对手弃牌率已高，无需诈唬）
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
+        # 【延迟施压】双方持续过牌后突然加注：弃牌率额外加成
+        fold_eq = min(0.95, fold_eq + _delayed_aggression_bonus(state))
     # 【响应学习】诈唬用「该尺寸实测弃牌率」替代全局弃牌率（更准）：
     # 计划下注 BLUFF(0.55 池) → 查对手对 medium 桶的真实反应，
     # 比如「我下注 550 后对手 8 次弃 6 次」→ 用 0.75 而非全局估计。
