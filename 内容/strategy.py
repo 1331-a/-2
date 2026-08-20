@@ -581,9 +581,9 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         return _bet_fraction(state, frac)
 
     if good:
-        # SPR 很低：直接大注把后街筹码在有利时打光
+        # SPR 很低：大注把后街筹码在有利时打光（0.6 池而非 0.8，防一次打光）
         if spr <= 2.5:
-            return _bet_fraction(state, 0.80)
+            return _bet_fraction(state, 0.60)
         frac = VALUE_BET if tex["wet"] >= 0.5 else THIN_VALUE
         # 河牌对跟注站做薄价值（其会用差牌跟注）
         if is_river and arch == "station":
@@ -674,21 +674,30 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             return {"act": "allin"}
         return {"act": "fold"}
 
-    # ---- 强牌：加注求价值；浅筹码 / ICM 压力 / 劣势追分直接全下 ----
+    # ---- 强牌：加注求价值；全下门槛按牌力分层 ----
     if strong:
         spr = state.effective_stack / max(pot, 1)
-        if spr <= 2.0 or adj in ("pressure", "desperate", "doomed"):
-            return {"act": "allin"}
+        # 【修复】全下分层：坚果/超高胜率（顺子+ 或 eq≥0.82）才可在
+        # 浅筹码/追分时全下；两对/顶对只允许极浅筹码+高胜率或追分时全下，
+        # 其余情况一律克制加注——避免「小优势上大筹码一次输光」
+        if category >= STRAIGHT or eq >= 0.82:
+            if spr <= 3.0 or adj in ("pressure", "desperate", "doomed"):
+                return {"act": "allin"}
+        else:
+            if adj in ("desperate", "doomed"):
+                return {"act": "allin"}
+            if spr <= 1.2 and eq >= 0.72:
+                return {"act": "allin"}
         # 河牌坚果 + 有位置：超池加注榨取
         if is_river and (category >= STRAIGHT or eq >= 0.80) and \
                 state.is_button and arch != "rock":
             return _bet_fraction(state, OVERBET)
-        return _raise_pot(state)
+        return _raise_pot(state, category, adj)
 
     # ---- 良好成牌：价值加注或赔率跟注 ----
     if good:
         if state.is_button and eq >= 0.68 and arch != "rock":
-            return _raise_pot(state)          # 位置+明显领先 → 加注
+            return _raise_pot(state, category, adj)  # 位置+明显领先 → 克制加注
         if eq >= eff_req + margin:
             return {"act": "call"}
         if eq >= eff_req and (arch == "maniac" or adj in ("desperate", "doomed")):
@@ -699,7 +708,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     #      强听牌有隐含赔率加成，按成牌口径评估会低估其价值）----
     if big_draw:
         if model.eff_fold_to_bet() >= 0.45 and required <= 0.40:
-            return _raise_pot(state)          # 半诈唬加注（弃牌权益+成牌双收益）
+            return _raise_pot(state, None, adj)  # 半诈唬：克制尺寸（0.75 池）
         if eq >= eff_req:
             return {"act": "call"}
         if eq >= required * 0.75 or adj in ("desperate", "doomed"):
@@ -724,7 +733,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     if (model.eff_fold_to_bet() >= 0.60 and required <= 0.30 and state.is_button) \
             or adj in ("desperate", "doomed"):
         # 偷盲档不在此列：关闭反诈唬（对手弃牌率已高，反诈唬无收益）
-        return _raise_pot(state)
+        return _raise_pot(state, None, adj)
     return {"act": "fold"}
 
 
@@ -745,11 +754,20 @@ def _bet_fraction(state, fraction):
     return _raise_to(state, target)
 
 
-def _raise_pot(state):
-    """面对下注时，做约一个底池大小的加注。"""
+def _raise_pot(state, category=None, adj=None):
+    """
+    面对下注的加注（克制版）。
+    【修复】原实现做「底池大小加注」——深筹码时一次加注会把 60~70% 筹码
+    打进去，两对/顶对这类「强牌」也被迫全下量级，一旦被对手统治（三条/
+    顺子/更高两对）就单局输光。默认只加注到 0.75 底池（跟注后）；
+    仅坚果级（顺子+）或劣势追分（desperate/doomed）才满池加注。
+    """
     to_call = state.to_call
-    target = state.curbet[state.my_id] + to_call + (state.pot + to_call)
-    return _raise_to(state, target)
+    base = state.curbet[state.my_id] + to_call + int(0.75 * (state.pot + to_call))
+    if (category is not None and category >= STRAIGHT) or \
+            adj in ("desperate", "doomed"):
+        base = state.curbet[state.my_id] + to_call + (state.pot + to_call)
+    return _raise_to(state, base)
 
 
 # ---------------- 合法性安全程序（不变，最后防线） ----------------

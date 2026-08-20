@@ -252,6 +252,31 @@ check("公对规则:领先弱两对弃牌(对手全下)", a == {"act": "fold"}, 
 a = decide(pair_risk, OpponentModel())  # total_win 默认 [0,0] → 正常档
 check("公对规则:弱两对不触发全下", a.get("act") != "allin", str(a))
 
+# ---------- 6c. 防「小优势大注输光」：中强牌克制、坚果才全下 ----------
+# 顶对弱踢脚+湿润面（K♠5♦ + K♥J♠9♠8♠，eq≈0.69 小优势）面对转牌 2000 →
+# 克制加注（0.75 池）而非全下
+tp_deep = req(my_id=0, my_chips=17000, my_cards=[46, 13],
+              public_cards=[44, 38, 30, 26],
+              history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                       {"round": 1, "player_id": 1, "action": 500, "action_type": "raise"},
+                       {"round": 1, "player_id": 0, "action": 0, "action_type": "call"},
+                       {"round": 2, "player_id": 1, "action": 2000, "action_type": "raise"}])
+a = act(tp_deep)
+not_allin = a.get("act") != "allin"
+restrained = not (a.get("act") == "raise" and a["num"] >= 15000)  # 未到全下量级
+check("防输光:小优势顶对不全下且克制加注", not_allin and restrained, str(a))
+# 坚果顺子（A♠K♠ + Q♠J♠T♥9♦，皇家同花顺）浅筹码 → 可以全下
+nuts_shallow = req(my_id=0, my_chips=4000, my_cards=[50, 46],
+                   public_cards=[42, 38, 32, 29],
+                   history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                            {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                            {"round": 1, "player_id": 1, "action": 500, "action_type": "raise"},
+                            {"round": 1, "player_id": 0, "action": 0, "action_type": "call"},
+                            {"round": 2, "player_id": 1, "action": 2000, "action_type": "raise"}])
+a = act(nuts_shallow)
+check("防输光:坚果浅筹码可全下", a.get("act") == "allin", str(a))
+
 # ---------- 6b. 偷盲档（对手疑似锁胜 → 关闭诈唬+高频小额偷盲）----------
 from match_ctx import MatchContext   # noqa: E402
 
