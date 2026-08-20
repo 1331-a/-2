@@ -1424,13 +1424,13 @@ ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总
 # 慎重量考：跟全下/大注时收紧对手范围估计、抬跟注门槛。
 OPP_JUMP_RATIO = 4.0            # 增量阈值倍数
 OPP_JUMP_FAC_MARGIN = 0.10       # 检测到突袭大注时，跟全下阈值额外抬高量
+OPP_JUMP_EQ_PENALTY = 0.15     # 突袭大注时 eq 打折（对手范围收紧，顶对级牌力被高估）
 
 # ---- 延迟施压（delayed aggression）----
 # 【规则】双方持续过牌后突然加注：对手对「过牌后突然出手」的弃牌率显著
 # 高于平均（认为我方有强牌才敢动），故折算为额外 fold_eq 加成。
 DELAYED_BONUS_FULL = 0.20      # 当前街双方都 check 过：完整加成（河牌威胁最大）
 DELAYED_BONUS_PARTIAL = 0.10   # 上一街双方都 check，当前街我方首次行动（转牌突然出手）
-OPP_JUMP_FAC_MARGIN = 0.10       # 检测到突袭大注时，跟全下阈值额外抬高量
 
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
@@ -1440,46 +1440,49 @@ def _opp_bet_jumped(state):
     """对手「突袭大注」检测：最近一次主动加注的增量 > 对手之前本手累计投入的
     OPP_JUMP_RATIO 倍。
 
-    【业务逻辑】对手若已下注很小（例 200），突然 raise 1000+（增量 1000 > 4×200=800）
-    → 这种「突袭」往往是强牌信号（两对+、听牌/半诈唬/全下前奏），收紧跟注
-    门槛；正常节奏的下注（增量与之前累计相当或更小）则不触发。
+    【业务逻辑】对手若一直小跟（例累计 1100），突然 raise 8000（增量 6900
+    > 4×1100=4400）→ 这种「突袭」往往是强牌信号（两对+、听牌/半诈唬/全下
+    前奏），收紧跟注门槛；正常节奏的下注（增量与之前累计相当或更小）不触发。
 
-    重放 state.request["history"] 计算对手每次主动加注的 raise-to 增量与对手
-    总累计。state.request 由 GameState.__init__ 持有。
+    重放 state.request["history"]：按轮跟踪双方已投（raise-to 语义），
+    累计对手本手全部投入（call 也算），计算最近一次主动加注的增量。
     """
     request = getattr(state, "request", None) or {}
+    hist = request.get("history") or []
     opp = state.opp_id
-    opp_cum = 0          # 对手本手累计投入（所有主动加注的增量之和）
+    opp_cum = 0          # 对手本手累计投入（call+raise 增量之和）
     last_incr = 0        # 对手最近一次主动加注的增量
-    for r in (request.get("history") or []):
-        if r.get("player_id") != opp:
+    cur_round = None
+    rb = {0: 0, 1: 0}    # 本轮双方已投（按轮重置）
+    for r in hist:
+        rnd = int(r.get("round", 0))
+        if rnd != cur_round:
+            cur_round = rnd
+            rb = {0: 0, 1: 0}
+        p = r.get("player_id")
+        if p not in (0, 1):
             continue
         at = r.get("action_type", "")
         a = r.get("action", 0)
         is_raise = at in ("raise", "allin") or (
             isinstance(a, int) and not isinstance(a, bool) and a > 0)
-        if not is_raise:
-            continue
-        rnd = int(r.get("round", 0))
-        # raise-to 语义：a = 该轮本玩家总注额 → 增量 = a - 该轮本玩家之前最大注
-        prev_round_max = 0
-        for r2 in (request.get("history") or []):
-            if r2 is r:
-                break
-            if r2.get("player_id") != opp:
-                continue
-            if int(r2.get("round", 0)) != rnd:
-                continue
-            a2 = r2.get("action", 0)
-            at2 = r2.get("action_type", "")
-            if at2 in ("raise", "allin") or (
-                    isinstance(a2, int) and not isinstance(a2, bool) and a2 > 0):
-                prev_round_max = max(prev_round_max, int(a2))
-        incr = int(a) - prev_round_max
-        if incr < 0:
-            incr = 0
-        last_incr = incr
-        opp_cum += incr
+        if is_raise:
+            incr = int(a) - rb[p]      # raise-to：a=该轮总注额 → 增量
+            if incr < 0:
+                incr = 0
+            rb[p] = int(a)
+            if p == opp:
+                opp_cum += incr
+                last_incr = incr
+        elif at == "call":
+            cur_max = max(rb.values())
+            incr = cur_max - rb[p]     # 跟平到当前最大注
+            if incr < 0:
+                incr = 0
+            rb[p] = cur_max
+            if p == opp:
+                opp_cum += incr
+        # check/fold/allin(金额未知) 不累计
     prior = opp_cum - last_incr
     if prior > 0 and last_incr > OPP_JUMP_RATIO * prior:
         return True
@@ -2356,6 +2359,12 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     elif adj in ("desperate", "doomed"):
         margin -= 0.06       # 劣势追分：跟注门槛大幅放宽（多看牌搏翻盘）
 
+    # 【对手突袭大注】最近一次加注增量 > 此前累计 4 倍 → 强牌信号，跟注门槛
+    # 整体抬高（覆盖大注跟注与全下；压力/追分档不重复抬高）。第 36 手教训：
+    # 对手翻 10 倍大注（非全下）时也要收紧跟注——K10 顶对面对突袭应弃。
+    if adj not in ("pressure", "desperate", "doomed") and _opp_bet_jumped(state):
+        eff_req += OPP_JUMP_FAC_MARGIN
+        eq -= OPP_JUMP_EQ_PENALTY   # 突袭大注=对手范围大幅收紧，eq 高估需打折
     # ---- 对手全下 / 需跟注额 ≥ 剩余筹码：纯赔率决策 ----
     # 【硬性风险规避】河牌裸公对陷阱：直接弃牌，不做任何数学计算——
     # 对手全下 range 里两对/三条占比极高，裸公对几乎必输（第 49 手教训）。
@@ -2371,12 +2380,6 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             # 常规档跟全下需要胜率 > 赔率要求的边际（margin≥0.02），
             # 避免「小优势就接全下」的高方差打法
             thr = eff_req + margin
-        # 【对手突袭大注】最近一次加注增量 > 此前累计的 4 倍 → 强牌信号，
-        # 跟全下门槛额外抬高（仅当不属于压力/追分档——这些档对手范围本就更紧）
-        if adj not in ("pressure", "desperate", "doomed") and \
-                _opp_bet_jumped(state):
-            thr += OPP_JUMP_FAC_MARGIN
-        if strong or eq >= thr or (big_draw and eq >= eff_req):
             return {"act": "allin"}
         return {"act": "fold"}
 
