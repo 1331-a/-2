@@ -120,6 +120,7 @@ DELAYED_BONUS_PARTIAL = 0.10   # 上一街双方都 check，当前街我方首�
 
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
+_OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
 
 
 def _opp_bet_jumped(state):
@@ -218,8 +219,11 @@ def decide(state, model, ctx=None):
     ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
     （对手弃牌推断/激进等级/回撤保护）通过它只调整状态机阈值偏移。
     """
-    global _CTX
+    global _CTX, _OPP_JUMPED
     _CTX = ctx
+    # 【对手突袭大注】全局标志：翻前/翻后所有决策共享（优先级最高——
+    # 领先较大时不 allin、面对突袭大注收紧防守，都在决策一开始生效）
+    _OPP_JUMPED = _opp_bet_jumped(state)
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
@@ -515,6 +519,11 @@ def _preflop_allin_decide(state, model):
     if hands_left <= 15:
         thr = thr + ALLIN_ENDGAME_SHIFT if lead > 0 else thr - ALLIN_ENDGAME_SHIFT
 
+    # 【突袭大注】对手翻前突然大幅加注（增量 > 4×此前累计）→ 范围收紧，
+    # 跟全下阈值抬高（与翻后 jumped 同款保护）
+    if _OPP_JUMPED:
+        thr = min(0.90, thr + OPP_JUMP_FAC_MARGIN)
+
     # 领先者至少要过赔率底线（防止 -EV 的接注）；落后者允许 -EV 搏翻盘
     if lead > 0:
         thr = max(thr, required)
@@ -623,6 +632,10 @@ def _button_vs_3bet(state, model, pct, arch, adj):
     elif adj in ("desperate", "doomed"):
         # 劣势追分：反加注也几乎全接（要翻盘必须先留在局里）
         call_pct = min(0.90, call_pct + 0.30)
+    # 【突袭大注】对手突然大幅加注（如 799→5300）→ 跟注范围收缩一半，
+    # 只留强牌（防止「理论上不该跟还是跟了」）
+    if _OPP_JUMPED:
+        call_pct = max(0.05, call_pct * 0.5)
     if pct <= call_pct:
         return {"act": "call"}
     return {"act": "fold"}
@@ -668,6 +681,10 @@ def _bb_defend(state, model, pct, arch, adj):
             threebet_pct = 0.35  # 劣势追分：3-bet 范围大幅加宽（含大量诈唬）
         if adj in ("desperate", "doomed"):
             defend_pct = 1.0   # 劣势追分：任何牌都防守（含垃圾牌），留在局里搏翻盘
+
+    # 【突袭大注】对手突然大幅加注 → 防守范围收缩一半（只留强牌）
+    if _OPP_JUMPED:
+        defend_pct = max(0.10, defend_pct * 0.5)
 
     if pct <= threebet_pct:
         return _raise_to(state, 3.0 * state.curbet[state.opp_id])
@@ -1049,7 +1066,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     # 【对手突袭大注】最近一次加注增量 > 此前累计 4 倍 → 强牌信号，跟注门槛
     # 整体抬高（覆盖大注跟注与全下；压力/追分档不重复抬高）。第 36 手教训：
     # 对手翻 10 倍大注（非全下）时也要收紧跟注——K10 顶对面对突袭应弃。
-    if adj not in ("pressure", "desperate", "doomed") and _opp_bet_jumped(state):
+    if adj not in ("pressure", "desperate", "doomed") and _OPP_JUMPED:
         eff_req += OPP_JUMP_FAC_MARGIN
         eq -= OPP_JUMP_EQ_PENALTY   # 突袭大注=对手范围大幅收紧，eq 高估需打折
     # ---- 对手全下 / 需跟注额 ≥ 剩余筹码：纯赔率决策 ----

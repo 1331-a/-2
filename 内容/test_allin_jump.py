@@ -80,5 +80,25 @@ stj4 = req(my_id=0, my_cards=[48, 50], public_cards=[46, 6, 1],
                     {"round": 1, "player_id": 1, "action": 600, "action_type": "raise"}])
 check("jumped:跨轮正常跟注不触发", _opp_bet_jumped(parse_request(stj4)) is False, "")
 
+# ---------- 3. 翻前突袭大注（对手 799→5300，BB 位弱牌应弃） ----------
+pf_base = {"num_players": 2, "dealer_id": 0, "my_id": 1, "my_chips": 19900,
+           "public_cards": [], "hand": 10, "max_hand": 70,
+           "total_win_chips": [0, 0], "total_win_games": [0, 0],
+           "history": [{"round": 0, "player_id": 0, "action": 799, "action_type": "raise"},
+                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                       {"round": 0, "player_id": 0, "action": 5300, "action_type": "raise"}]}
+pf_jump = dict(pf_base)
+pf_jump["my_cards"] = [44, 31]   # KJo
+st = parse_request(pf_jump)
+check("翻前突袭:799→5300检测", _opp_bet_jumped(st) is True, "")
+a = decide(st, OpponentModel())
+check("翻前突袭:KJo面对5300弃牌", a == {"act": "fold"}, str(a))
+# 对照组：正常节奏 799→1400，KJo 正常跟注（不被误伤）
+pf_norm = dict(pf_base)
+pf_norm["my_cards"] = [44, 31]
+pf_norm["history"][2] = {"round": 0, "player_id": 0, "action": 1400, "action_type": "raise"}
+a = decide(parse_request(pf_norm), OpponentModel())
+check("翻前对照:正常节奏KJo跟注不误伤", a.get("act") in ("call", "raise"), str(a))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
