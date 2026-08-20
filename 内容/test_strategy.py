@@ -322,15 +322,16 @@ def allin_req(my_cards, pnl_me, hand=30, max_hand=70):
                history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                         {"round": 0, "player_id": 1, "action": -2, "action_type": "allin"}])
 
-# 大幅领先(+6000) + AA：eq≈0.85，超过 0.75 门槛且满足第四步 → 跟全下
+# 大幅领先(+6000) + AA：本应跟全下，但 LEAD_LOCK（领先>2000 无论如何不 allin）
+# 是更高优先级规则 → 弃牌（用户规则：优势超过2000不allin，优先级最高）
 a = act(allin_req([48, 50], 6000))
-check("全下分档:大幅领先AA跟全下", a == {"act": "allin"}, str(a))
+check("全下分档:大幅领先AA被LEAD_LOCK弃牌", a == {"act": "fold"}, str(a))
 # 大幅领先(+6000) + 72o：eq≈0.30 → 弃（保住领先优势）
 a = act(allin_req([23, 2], 6000))
 check("全下分档:大幅领先72o弃牌", a == {"act": "fold"}, str(a))
-# 小幅领先(+2000) + KK：eq≈0.72 > 0.65 门槛 → 跟全下
+# 小幅领先(+2000) + KK：lead=4000 > 2000 → LEAD_LOCK → 弃（不 allin）
 a = act(allin_req([44, 46], 2000))
-check("全下分档:小幅领先KK跟全下", a == {"act": "allin"}, str(a))
+check("全下分档:小幅领先KK被LEAD_LOCK弃牌", a == {"act": "fold"}, str(a))
 # 均势 + TT：eq≈0.60 > 0.55 门槛 → 跟全下
 a = act(allin_req([32, 33], 0))
 check("全下分档:均势TT跟全下", a == {"act": "allin"}, str(a))

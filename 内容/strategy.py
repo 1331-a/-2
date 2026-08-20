@@ -104,6 +104,13 @@ RIVER_TRAP_WARN_MARGIN = 0.15 # warning 档跟全下所需的额外胜率门槛
 # 「领先但未锁胜时的全下保护」。
 ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总盈利 + 此值
 
+# ---- 优势锁定（LEAD_LOCK）：领先较大时硬性保守 ----
+# 【规则】优势（累计盈利差）> LEAD_NO_ALLIN 时：①无论如何不 allin；
+# ②单次下注/加注的注码 ≤ LEAD_MAX_BET。领先时只用小注慢慢积累，
+# 避免大注送筹码（用户规则，优先级最高——decide 入口即生效）。
+LEAD_NO_ALLIN = 2000         # 优势阈值：超过则进入锁定模式
+LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
+
 # ---- 对手突袭大注（单次加注增量 > 此前对手本手总投入的 N 倍）----
 # 【规则】当对手一次加注的增量 > 对手之前本手累计投入的 OPP_JUMP_RATIO 倍
 # 时，判定为「突袭大注」——往往代表对手强牌（两对+/听牌/全下前奏），
@@ -121,6 +128,7 @@ DELAYED_BONUS_PARTIAL = 0.10   # 上一街双方都 check，当前街我方首�
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
+_LEAD_LOCK = False    # 优势锁定模式：领先>LEAD_NO_ALLIN 时不 allin、注码≤LEAD_MAX_BET
 
 
 def _opp_bet_jumped(state):
@@ -194,6 +202,11 @@ def _allin_floor_guard(state, action):
     """
     if action.get("act") != "allin":
         return action
+    # 【优势锁定】领先>LEAD_NO_ALLIN：无论如何不 allin（最高优先级硬规则）
+    if _LEAD_LOCK:
+        if state.to_call <= 0:
+            return {"act": "check"}
+        return {"act": "fold"}
     try:
         from game_state import INIT_CHIPS
         floor = state.total_win_chips[state.my_id] + ALLIN_FLOOR_CONST
@@ -219,11 +232,18 @@ def decide(state, model, ctx=None):
     ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
     （对手弃牌推断/激进等级/回撤保护）通过它只调整状态机阈值偏移。
     """
-    global _CTX, _OPP_JUMPED
+    global _CTX, _OPP_JUMPED, _LEAD_LOCK
     _CTX = ctx
     # 【对手突袭大注】全局标志：翻前/翻后所有决策共享（优先级最高——
     # 领先较大时不 allin、面对突袭大注收紧防守，都在决策一开始生效）
     _OPP_JUMPED = _opp_bet_jumped(state)
+    # 【优势锁定】领先 > LEAD_NO_ALLIN → 不 allin + 注码≤LEAD_MAX_BET
+    # （用户规则，优先级最高：决策一开始就进入锁定模式）
+    try:
+        _LEAD_LOCK = (state.total_win_chips[state.my_id]
+                      - state.total_win_chips[state.opp_id]) > LEAD_NO_ALLIN
+    except Exception:
+        _LEAD_LOCK = False
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
@@ -1212,8 +1232,8 @@ def _normalize(state, action):
 
     # 规则5：本局有人全押 → 只允许弃牌(-1)/全押(-2)
     if state.any_allin:
-        if act == "fold":
-            return {"act": "fold"}
+        if act == "fold" or _LEAD_LOCK:
+            return {"act": "fold"}   # LEAD_LOCK 时对手全下也弃（不 allin）
         return {"act": "allin"} if my_left > 0 else {"act": "fold"}
 
     if act == "fold":
@@ -1241,6 +1261,12 @@ def _normalize(state, action):
             num = 0
         min_r = state.min_raise()
         max_r = state.max_raise()
+        if _LEAD_LOCK:
+            # 优势锁定：单次注码 ≤ LEAD_MAX_BET；若最小加注已超上限
+            # （对手注已很大），则无法合法加注 → 降级 call/check
+            num = min(num, LEAD_MAX_BET)
+            if num < min_r:
+                return {"act": "call"} if to_call > 0 else {"act": "check"}
         if num < min_r:
             num = min_r
         if num >= max_r or num >= my_left:
