@@ -330,6 +330,45 @@ check("全下分档:大幅落后A5s跟全下搏翻盘", a == {"act": "allin"}, s
 a = act(allin_req([23, 2], -6000))
 check("全下分档:大幅落后72o仍弃牌", a == {"act": "fold"}, str(a))
 
+# ---------- 6d. 钓鱼下注（对跟注型对手缩小价值注，钓更宽跟注范围）----------
+from strategy import _fishy   # noqa: E402
+
+# 翻后 TPTK + 无人下注（底池 1000）：站点用小注钓（≤0.55 池），默认对手常规尺寸
+tptk = req(my_id=0, my_chips=19500, my_cards=[48, 44],
+           public_cards=[46, 6, 1],
+           history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                    {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                    {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}])
+a_station = act(tptk, station())
+a_default = act(tptk)
+check("钓鱼:站点价值注≤0.55池", a_station.get("act") == "raise" and a_station["num"] <= 550, str(a_station))
+check("钓鱼:默认对手常规尺寸≥0.5池", a_default.get("act") == "raise" and a_default["num"] >= 500, str(a_default))
+check("钓鱼:站点注小于常规注", a_station["num"] < a_default["num"], "%s vs %s" % (a_station, a_default))
+
+# 坚果（皇家同花顺 river）+ 站点：仍超池大注榨取（不被缩小——站点对坚果照跟）
+nuts = req(my_id=0, my_chips=19500, my_cards=[50, 46],
+           public_cards=[42, 38, 34, 30, 16],
+           history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                    {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                    {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                    {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                    {"round": 3, "player_id": 1, "action": 0, "action_type": "check"}])
+a = act(nuts, station())
+check("钓鱼:坚果对站点仍超池", a.get("act") == "raise" and a["num"] >= 1200, str(a))
+
+# 面对下注强牌（AA, 底池 1300/需跟 300）：站点克制加注（0.45 池 < 常规 0.75 池）
+aa_bet = req(my_id=0, my_chips=19500, my_cards=[48, 50],
+             public_cards=[46, 6, 1],
+             history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                      {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                      {"round": 1, "player_id": 1, "action": 300, "action_type": "raise"}])
+a_s = act(aa_bet, station())
+a_d = act(aa_bet)
+# 内部 num 为「本轮总注额」语义（平台实测合法）：
+# 站点 fish 0.45 池 → 总注 1020；默认 0.75 池 → 总注 1500（差距=加注量 720 vs 1200）
+check("钓鱼:站点强牌克制加注(0.45池≈1020)", a_s.get("act") == "raise" and 900 <= a_s["num"] < 1200, str(a_s))
+check("钓鱼:默认对手常规加注(0.75池≈1500)", a_d.get("act") == "raise" and a_d["num"] >= 1200 and a_d["num"] > a_s["num"], str(a_d))
+
 # ---------- 7. 耗时 ----------
 t0 = time.time()
 for _ in range(10):

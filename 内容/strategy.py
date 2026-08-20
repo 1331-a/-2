@@ -67,6 +67,17 @@ ALLIN_THR = {              # key 见 _preflop_allin_decide 档位说明
 }
 ALLIN_ENDGAME_SHIFT = 0.03  # 终局（剩≤15手）修正：领先更严 / 落后更宽
 
+# ---- 钓鱼下注（对跟注型对手缩小价值注，钓更宽跟注范围）----
+# 【优化思路】对「爱跟注的对手」（跟注站/低弃牌率），0.65~0.75 池的大注
+# 会把他们吓跑，损失价值。这类对手的特点是不看赔率跟注，小注反而能让
+# 他们的垃圾牌/中等牌继续跟——利润 = 更宽的跟注范围 × 小注 > 窄范围 × 大注。
+# 但「坚果级（顺子+）」例外：跟注型对手对坚果也照跟，应保持大注榨取。
+FISH_FOLD_BB = 0.35        # 对手面对下注弃牌率 < 此值 → 视为跟注型（钓鱼目标）
+FISH_BET = 0.45            # 跟注型对手的常规价值下注（常规 0.65 → 0.45）
+FISH_BET_WET = 0.50        # 湿润面（仍需一定保护，但跟注型不弃小注）
+FISH_BET_DRY = 0.38        # 干燥面（求跟，越小越容易钓）
+FISH_RAISE = 0.45          # 面对下注加注时对跟注型的克制尺寸（常规 0.75 → 0.45）
+
 
 # ---- 公对风险规避（弱两对保护）----
 RISK_LEAD_CALL_FRAC = 0.50   # 领先时弱两对最多跟注 50% 底池
@@ -640,10 +651,23 @@ def _fold_equity(model, adj):
         fe *= 0.5      # 领先保收益：诈唬大幅压缩
     elif adj in ("desperate", "doomed"):
         fe *= 1.6      # 劣势追分：把弃牌权益打到顶（激进诈唬搏翻盘）
+def _fold_equity(model, adj):
+    """有效弃牌权益（诈唬收益的核心输入），按对局状态打折/加成。"""
+    fe = model.eff_fold_to_bet()
+    if adj == "protect":
+        fe *= 0.5      # 领先保收益：诈唬大幅压缩
+    elif adj in ("desperate", "doomed"):
+        fe *= 1.6      # 劣势追分：把弃牌权益打到顶（激进诈唬搏翻盘）
     return _clamp(fe, 0.0, 0.9)
 
 
-# ---------------- 无人下注（可过牌）----------------
+def _fishy(model):
+    """跟注型对手（钓鱼目标）：跟注站原型，或面对下注弃牌率很低（爱跟）。
+
+    对这类对手，价值注应该用小注「钓」更宽的跟注范围，
+    而不是大注把他们吓跑（用户反馈：优势加注太多钓不上鱼）。
+    """
+    return model.archetype() == "station" or model.eff_fold_to_bet() < FISH_FOLD_BB
 def _check_side(state, model, eq, category, strong, good, medium, big_draw,
                 draw, tex, arch, adj, is_river, i_aggressor):
     """主动下注侧：价值 / 诱敌深入 / 保护 / 半诈唬 / 纯诈唬（EV 门控+阻挡牌）。"""
@@ -660,10 +684,22 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
                 (category >= TWO_PAIR or eq >= 0.85) and \
                 model.eff_bet_freq() >= 0.45:
             return {"act": "check"}
-        # 河牌坚果优势 + 对手非岩石：超池下注榨取最大价值
+        # 河牌坚果优势 + 对手非岩石：超池下注榨取最大价值（跟注型对手也照跟）
         if is_river and (category >= STRAIGHT or eq >= 0.80) and arch != "rock":
             return _bet_fraction(state, OVERBET)
-        # 湿面大注拒绝给听牌好赔率，干面稍小求跟注
+        # 坚果级（顺子+）即使对跟注型也大注榨取——跟注型对手对坚果照跟
+        if category >= STRAIGHT:
+            frac = VALUE_BET_WET if tex["wet"] >= 0.5 else VALUE_BET
+            if is_river:
+                frac = VALUE_BET
+            return _bet_fraction(state, frac)
+        # 非坚果强牌（顶对/两对/三条）对跟注型：钓鱼小注，钓垃圾牌跟注
+        if _fishy(model):
+            frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
+            if is_river:
+                frac = FISH_BET
+            return _bet_fraction(state, frac)
+        # 常规对手：湿面大注拒绝给听牌好赔率，干面稍小求跟注
         frac = VALUE_BET_WET if tex["wet"] >= 0.5 else VALUE_BET
         if is_river:
             frac = VALUE_BET
@@ -673,6 +709,12 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         # SPR 很低：大注把后街筹码在有利时打光（0.6 池而非 0.8，防一次打光）
         if spr <= 2.5:
             return _bet_fraction(state, 0.60)
+        # 跟注型对手：钓鱼小注（其会用差牌跟注，小注钓更宽范围）
+        if _fishy(model):
+            frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
+            if is_river:
+                frac = FISH_BET
+            return _bet_fraction(state, frac)
         frac = VALUE_BET if tex["wet"] >= 0.5 else THIN_VALUE
         # 河牌对跟注站做薄价值（其会用差牌跟注）
         if is_river and arch == "station":
@@ -781,12 +823,12 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         if is_river and (category >= STRAIGHT or eq >= 0.80) and \
                 state.is_button and arch != "rock":
             return _bet_fraction(state, OVERBET)
-        return _raise_pot(state, category, adj)
+        return _raise_pot(state, category, adj, fish=_fishy(model))
 
     # ---- 良好成牌：价值加注或赔率跟注 ----
     if good:
         if state.is_button and eq >= 0.68 and arch != "rock":
-            return _raise_pot(state, category, adj)  # 位置+明显领先 → 克制加注
+            return _raise_pot(state, category, adj, fish=_fishy(model))  # 位置+明显领先 → 克制加注
         if eq >= eff_req + margin:
             return {"act": "call"}
         if eq >= eff_req and (arch == "maniac" or adj in ("desperate", "doomed")):
@@ -843,19 +885,23 @@ def _bet_fraction(state, fraction):
     return _raise_to(state, target)
 
 
-def _raise_pot(state, category=None, adj=None):
+def _raise_pot(state, category=None, adj=None, fish=False):
     """
     面对下注的加注（克制版）。
     【修复】原实现做「底池大小加注」——深筹码时一次加注会把 60~70% 筹码
     打进去，两对/顶对这类「强牌」也被迫全下量级，一旦被对手统治（三条/
     顺子/更高两对）就单局输光。默认只加注到 0.75 底池（跟注后）；
     仅坚果级（顺子+）或劣势追分（desperate/doomed）才满池加注。
+    【钓鱼】fish=True（跟注型对手）时只加注到 0.45 底池——大加注会把
+    他们的差牌吓跑，小加注钓更宽跟注范围（坚果仍满池，站点对坚果照跟）。
     """
     to_call = state.to_call
-    base = state.curbet[state.my_id] + to_call + int(0.75 * (state.pot + to_call))
     if (category is not None and category >= STRAIGHT) or \
             adj in ("desperate", "doomed"):
         base = state.curbet[state.my_id] + to_call + (state.pot + to_call)
+    else:
+        frac = FISH_RAISE if fish else 0.75
+        base = state.curbet[state.my_id] + to_call + int(frac * (state.pot + to_call))
     return _raise_to(state, base)
 
 
