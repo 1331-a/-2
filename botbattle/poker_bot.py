@@ -1008,8 +1008,8 @@ BLUFF = 0.55               # 纯诈唬
 BLOCKER = 0.45             # 中等牌有位置的小注施压
 
 # ---- 计算预算 ----
-MC_ITERATIONS = 1200       # 蒙特卡洛最大抽样数（评估器已验证非瓶颈，余量充足）
-TIME_BUDGET = 0.7          # 决策软时限（秒），确保 1 秒限时内完成
+MC_ITERATIONS = 1000       # 蒙特卡洛最大抽样数
+TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，预留充足余量
 
 
 # ---------------- 对外入口 ----------------
@@ -1689,15 +1689,8 @@ def _persisted_str(v):
         return ""
 
 
-def run():
-    raw = sys.stdin.read().strip()
-    if not raw:
-        return
-    try:
-        obj = json.loads(raw)
-    except Exception:
-        return
-
+def _handle_line(obj):
+    """处理一行 JSON 输入，返回 (resp, data_out, json_mode)。"""
     json_mode = False
     data_str = gdata_str = ""
     request = None
@@ -1731,13 +1724,34 @@ def run():
                 resp = _fallback_resp(state)
     except Exception:
         resp = 0
+    return resp, data_out, json_mode
 
-    if json_mode:
-        out = {"response": resp, "data": data_out, "globaldata": data_out}
-        sys.stdout.write(json.dumps(out) + "\n")
-    else:
-        sys.stdout.write(str(resp) + "\n")
-    sys.stdout.flush()
+
+def run():
+    """
+    逐行读取 stdin：平台发一行 request 就回一行 response。
+
+    【修复】原实现用 sys.stdin.read() 等 EOF 才输出；若平台发完 request
+    后保持 stdin 打开（常驻模式），bot 会一直阻塞在 read() 上，8 秒内
+    无任何输出 → 预检判定「Bot 未响应」。逐行模式两种情形都兼容：
+      - 每轮重启：平台关 stdin → EOF → 循环结束，进程自然退出；
+      - 常驻模式：继续循环等待下一行 request。
+    """
+    for raw in sys.stdin:
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            obj = json.loads(raw)
+        except Exception:
+            continue  # 非 JSON 输入（如预热握手）直接忽略，避免崩溃
+        resp, data_out, json_mode = _handle_line(obj)
+        if json_mode:
+            out = {"response": resp, "data": data_out, "globaldata": data_out}
+            sys.stdout.write(json.dumps(out) + "\n")
+        else:
+            sys.stdout.write(str(resp) + "\n")
+        sys.stdout.flush()
 
 
 

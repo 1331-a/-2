@@ -10,6 +10,10 @@ botbattle/dist/
 botbattle/build/
 *.spec
 
+# 下载/生成的二进制提交包（避免误提交到 GitHub）
+poker_bot-linux-x86_64.zip
+BotBattle提交_poker_bot.zip
+
 # 系统文件
 Thumbs.db
 .DS_Store
