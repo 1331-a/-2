@@ -72,7 +72,8 @@ check("jumped:正常节奏不触发", _opp_bet_jumped(parse_request(stj2)) is Fa
 
 stj3 = req(my_id=0, my_cards=[48, 50], public_cards=[46, 6, 1],
            history=[{"round": 0, "player_id": 1, "action": 5000, "action_type": "raise"}])
-check("jumped:首次加注(prior=0)不触发", _opp_bet_jumped(parse_request(stj3)) is False, "")
+# 新规则：对方已下注 > 2000 即触发（无 4 倍条件）→ 首次大注 5000 也触发
+check("jumped:首次大注5000(已下注>2000)触发", _opp_bet_jumped(parse_request(stj3)) is True, "")
 
 stj4 = req(my_id=0, my_cards=[48, 50], public_cards=[46, 6, 1],
            history=[{"round": 0, "player_id": 1, "action": 500, "action_type": "raise"},

@@ -1429,7 +1429,7 @@ LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
 # 【规则】当对手一次加注的增量 > 对手之前本手累计投入的 OPP_JUMP_RATIO 倍
 # 时，判定为「突袭大注」——往往代表对手强牌（两对+/听牌/全下前奏），
 # 慎重量考：跟全下/大注时收紧对手范围估计、抬跟注门槛。
-OPP_JUMP_RATIO = 4.0            # 增量阈值倍数
+OPP_JUMP_THRESHOLD = 2000      # 对手本手累计已下注超过此值 → 跟注警告（用户规则，无4倍条件）
 OPP_JUMP_FAC_MARGIN = 0.10       # 检测到突袭大注时，跟全下阈值额外抬高量
 OPP_JUMP_EQ_PENALTY = 0.15     # 突袭大注时 eq 打折（对手范围收紧，顶对级牌力被高估）
 
@@ -1461,7 +1461,6 @@ def _opp_bet_jumped(state):
     hist = request.get("history") or []
     opp = state.opp_id
     opp_cum = 0          # 对手本手累计投入（call+raise 增量之和）
-    last_incr = 0        # 对手最近一次主动加注的增量
     cur_round = None
     rb = {0: 0, 1: 0}    # 本轮双方已投（按轮重置）
     for r in hist:
@@ -1483,7 +1482,6 @@ def _opp_bet_jumped(state):
             rb[p] = int(a)
             if p == opp:
                 opp_cum += incr
-                last_incr = incr
         elif at == "call":
             cur_max = max(rb.values())
             incr = cur_max - rb[p]     # 跟平到当前最大注
@@ -1493,10 +1491,9 @@ def _opp_bet_jumped(state):
             if p == opp:
                 opp_cum += incr
         # check/fold/allin(金额未知) 不累计
-    prior = opp_cum - last_incr
-    if prior > 0 and last_incr > OPP_JUMP_RATIO * prior:
-        return True
-    return False
+    # 【用户规则】跟注警告：对方已下注 > OPP_JUMP_THRESHOLD(2000) 即触发，
+    # 不设置 4 倍增量条件——对手累计投入超过 2000 后，跟注需慎重。
+    return opp_cum > OPP_JUMP_THRESHOLD
 
 
 def _allin_floor_guard(state, action):
