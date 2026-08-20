@@ -415,6 +415,50 @@ check("公对陷阱:非河牌不触发", _river_paired_trap(stt) is False, "")
 stw = parse_request(req(my_id=0, my_cards=[42, 24], public_cards=[42, 29, 16, 11, 30]))
 check("公对陷阱:顶两对不触发", _river_paired_trap(stw) is False, "")
 
+# ---------- 6f. 全下下限（投入须超过 当前总盈利+1000 才允许 allin）----------
+from strategy import _allin_floor_guard   # noqa: E402
+
+# 单元：领先 15000（门槛 16000）+ 筹码 6000 面对全下 → 跟全下被锁 → 弃牌
+stg1 = parse_request(req(my_id=0, my_chips=6000, my_cards=[48, 50],
+                         public_cards=[46, 6, 1], total_win_chips=[15000, -15000],
+                         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                  {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}]))
+check("全下下限:领先大+浅筹码跟全下→弃牌",
+      _allin_floor_guard(stg1, {"act": "allin"}) == {"act": "fold"}, "")
+# 单元：领先 15000 + 无人下注 → 主动全下被锁 → 过牌
+stg2 = parse_request(req(my_id=0, my_chips=15000, my_cards=[48, 50],
+                         public_cards=[46, 6, 1], total_win_chips=[15000, -15000],
+                         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+check("全下下限:领先大主动全下→过牌",
+      _allin_floor_guard(stg2, {"act": "allin"}) == {"act": "check"}, "")
+# 单元：落后 -8000（门槛 -7000）→ 允许全下（搏翻盘）
+stg3 = parse_request(req(my_id=0, my_chips=10000, my_cards=[48, 50],
+                         total_win_chips=[-8000, 8000]))
+check("全下下限:落后允许全下",
+      _allin_floor_guard(stg3, {"act": "allin"}) == {"act": "allin"}, "")
+# 单元：均势（门槛 1000）+ 筹码 5000 → 允许
+stg4 = parse_request(req(my_id=0, my_chips=5000, my_cards=[48, 50],
+                         total_win_chips=[0, 0]))
+check("全下下限:均势正常筹码允许",
+      _allin_floor_guard(stg4, {"act": "allin"}) == {"act": "allin"}, "")
+# 单元：非 allin 动作不拦截
+check("全下下限:非allin动作不动",
+      _allin_floor_guard(stg1, {"act": "call"}) == {"act": "call"}, "")
+# 端到端：领先 15000 + 短筹码 AA 面对对手全下 → 整体决策弃牌
+a = decide(stg1, OpponentModel())
+check("全下下限:端到端领先短筹码弃全下", a == {"act": "fold"}, str(a))
+# 端到端对照组：落后 -8000 + 短筹码 AA 面对全下 → 仍可全下搏翻盘
+stg5 = parse_request(req(my_id=0, my_chips=6000, my_cards=[48, 50],
+                         public_cards=[46, 6, 1], total_win_chips=[-8000, 8000],
+                         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                  {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}]))
+a = decide(stg5, OpponentModel())
+check("全下下限:端到端落后仍全下搏翻盘", a.get("act") in ("allin", "fold"), str(a))
+
 # ---------- 7. 耗时 ----------
 t0 = time.time()
 for _ in range(10):

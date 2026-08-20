@@ -96,8 +96,44 @@ RIVER_TRAP_KICKER = 12        # 踢脚 < Q → 硬弃（用户规则，不计算
 RIVER_TRAP_WARN_KICKER = 14   # 踢脚 < A → warning（Q/K 踢脚，高门槛）
 RIVER_TRAP_WARN_MARGIN = 0.15 # warning 档跟全下所需的额外胜率门槛
 
+# ---- 全下下限（盈利门槛）----
+# 【规则】只有「投入筹码量 > 当前总盈利 + ALLIN_FLOOR_CONST」时才允许
+# 跟全下或主动全下；其余情况一律不 allin（跟全下→弃，主动全下→过牌）。
+# 效果：盈利越高允许全下的筹码门槛越高（领先保护），落后时门槛为负
+# 几乎不限（搏翻盘）。与锁胜弃牌互补：锁胜管「领先到稳赢」，本规则管
+# 「领先但未锁胜时的全下保护」。
+ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总盈利 + 此值
+
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
+
+
+def _allin_floor_guard(state, action):
+    """全下下限（盈利门槛）——用户规则的最后一道闸。
+
+    【业务逻辑】只有「投入筹码量 > 当前总盈利 + ALLIN_FLOOR_CONST」才
+    允许跟全下或主动全下：
+      - 投入量：面对全下时 = min(我方剩余筹码, 需跟注额)（跟注即全下）；
+                主动全下时 = 我方剩余筹码。
+      - 门槛 = total_win_chips[我方] + 1000：盈利越高门槛越高（领先
+        保护，防止「小优势 allin 输光」）；落后时门槛为负 → 几乎不限
+        （搏翻盘）。
+    不满足时：跟全下 → 弃牌；主动全下 → 过牌（能过则过，否则弃）。
+    """
+    if action.get("act") != "allin":
+        return action
+    try:
+        floor = state.total_win_chips[state.my_id] + ALLIN_FLOOR_CONST
+        invest = (min(state.my_left, state.to_call)
+                  if state.to_call > 0 else state.my_left)
+        if invest > floor:
+            return action          # 投入超过门槛 → 允许全下
+    except Exception:
+        return action              # 状态异常时不额外拦截
+    # 被锁：能过牌就过牌（不主动 allin），否则弃牌
+    if state.to_call <= 0:
+        return {"act": "check"}
+    return {"act": "fold"}
 
 
 def decide(state, model, ctx=None):
@@ -118,6 +154,8 @@ def decide(state, model, ctx=None):
         action = _preflop_decide(state, model)
     else:
         action = _postflop_decide(state, model)
+    # 全下下限：投入须超过「当前总盈利 + 1000」才允许 allin（用户规则）
+    action = _allin_floor_guard(state, action)
     return _normalize(state, action)
 
 
