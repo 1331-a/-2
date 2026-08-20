@@ -124,6 +124,7 @@ OPP_JUMP_EQ_PENALTY = 0.15     # 突袭大注时 eq 打折（对手范围收紧�
 # 高于平均（认为我方有强牌才敢动），故折算为额外 fold_eq 加成。
 DELAYED_BONUS_FULL = 0.20      # 当前街双方都 check 过：完整加成（河牌威胁最大）
 DELAYED_BONUS_PARTIAL = 0.10   # 上一街双方都 check，当前街我方首次行动（转牌突然出手）
+OPP_CHECK_BONUS = 0.30       # 对手最近连续过牌≥2次 → 直接加注（用户规则，优先级最高）
 
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
@@ -825,6 +826,20 @@ def _delayed_aggression_bonus(state):
     opp = state.opp_id
     my = state.my_id
 
+    # 【对手连续过牌≥2 次 → 直接加注】用户规则：对手连续两次过牌就直接加注。
+    # 对手连续 check 说明其牌力弱/示弱，此时突然出手弃牌率极高——不要求
+    # 我方也过牌（我方下注后对手连续 check 同样适用）。
+    streak = 0
+    for r in reversed(hist):
+        if r.get("player_id") != opp:
+            continue
+        if r.get("action_type") == "check":
+            streak += 1
+        else:
+            break
+    if streak >= 2:
+        return OPP_CHECK_BONUS
+
     def _street_checked(round_no):
         return [r for r in hist if int(r.get("round", 0)) == round_no and r.get("action_type") == "check"]
 
@@ -1034,8 +1049,9 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer += 0.50                       # 偷盲档：关闭所有纯诈唬（对手弃牌率已高，无需诈唬）
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
-        # 【延迟施压】双方持续过牌后突然加注：弃牌率额外加成
-        fold_eq = min(0.95, fold_eq + _delayed_aggression_bonus(state))
+    # 【延迟施压】双方持续过牌后突然加注 / 对手连续过牌≥2次直接加注：
+    # 弃牌率额外加成（所有档位生效，normal 也适用）
+    fold_eq = min(0.95, fold_eq + _delayed_aggression_bonus(state))
     # 【响应学习】诈唬用「该尺寸实测弃牌率」替代全局弃牌率（更准）：
     # 计划下注 BLUFF(0.55 池) → 查对手对 medium 桶的真实反应，
     # 比如「我下注 550 后对手 8 次弃 6 次」→ 用 0.75 而非全局估计。
