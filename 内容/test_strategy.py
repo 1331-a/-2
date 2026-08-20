@@ -132,7 +132,7 @@ a = act(behind)
 check("落后追分:72o至少不保守弃牌(开池/溜入)",
       a.get("act") in ("raise", "call", "allin"), str(a))
 
-# 大幅领先+临近终局：空气不诈唬（protect）
+# 大幅领先+临近终局：锁胜弃牌（lead 16000 > 2.5×200×5=2500 → 直接弃牌稳赢）
 ahead_air = req(my_id=0, my_chips=19500, my_cards=[24, 17],
                 public_cards=[46, 22, 5], hand=45, max_hand=50,
                 total_win_chips=[8000, -8000], total_win_games=[35, 10],
@@ -141,7 +141,24 @@ ahead_air = req(my_id=0, my_chips=19500, my_cards=[24, 17],
                          {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}])
 m = foldy()  # 即使对手爱弃牌，领先时也降波动
 a = act(ahead_air, m)
-check("领先保收益:空气控池过牌", a == {"act": "check"}, str(a))
+check("大领先锁胜:直接弃牌", a == {"act": "fold"}, str(a))
+
+# ---------- 4b. 锁胜弃牌边界 ----------
+# 70 手赛制，第 65 手，领先 6000：阈值=2.5×200×5=2500 → 触发锁胜（AA 也弃）
+lock70 = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=65, max_hand=70,
+             total_win_chips=[30000, -30000], total_win_games=[40, 25])
+a = act(lock70)
+check("70手赛制锁胜触发(AA也弃)", a == {"act": "fold"}, str(a))
+# 同位置但领先不足（[400,-400], 阈值2500）→ 不触发，AA 正常开池
+nolock = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=65, max_hand=70,
+             total_win_chips=[400, -400], total_win_games=[40, 25])
+a = act(nolock)
+check("领先不足不锁胜(AA正常开池)", a == {"act": "raise", "num": 500}, str(a))
+# 70 手中期（第 10 手）大领先 24000（<阈值30000）→ 不触发
+mid70 = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=10, max_hand=70,
+            total_win_chips=[12000, -12000], total_win_games=[10, 0])
+a = act(mid70)
+check("中期大领先不触发(AA正常开池)", a == {"act": "raise", "num": 500}, str(a))
 
 # ---------- 5. 耗时 ----------
 t0 = time.time()

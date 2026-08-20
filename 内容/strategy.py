@@ -55,11 +55,35 @@ TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，
 # ---------------- 对外入口 ----------------
 def decide(state, model):
     """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。"""
+    # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
+    if _fold_out_active(state):
+        return {"act": "fold"}
     if state.stage == "preflop":
         action = _preflop_decide(state, model)
     else:
         action = _postflop_decide(state, model)
     return _normalize(state, action)
+
+
+def _fold_out_active(state):
+    """
+    锁胜弃牌（fold-out）判定：领先优势能否靠全程弃牌保证最终获胜。
+
+    【数学推导】比赛按 total_win_chips（累计净赢）定胜负，盲注 50/100：
+      - 我 SB 弃牌：我净 -50，对手净 +50 → 领先差 -100
+      - 我 BB 弃牌：我净 -100，对手净 +100 → 领先差 -200
+      即每手弃牌最多消耗 2×大盲 的领先优势（BB 弃牌时）。
+    剩余 R 手 → 最坏消耗 2×大盲×R。
+    当 领先 > 2.5×大盲×R（2.5 倍余量覆盖盲注估计偏差/平局判负等边界）
+    时，全程弃牌后领先仍为正 → 稳赢。此模式自动只会在后期大领先时触发。
+    """
+    try:
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        hands_left = state.max_hand - state.hand_num
+        return lead > 2.5 * state.big_blind * hands_left
+    except Exception:
+        return False
 
 
 def _clamp(x, lo, hi):
@@ -69,7 +93,7 @@ def _clamp(x, lo, hi):
 # ---------------- 对局状态调整（风控·宏观层） ----------------
 def _match_adjust(state):
     """
-    50 手定胜负的比赛中，根据领先量与剩余手数调整风险偏好：
+    max_hand 手定胜负的比赛中，根据领先量与剩余手数调整风险偏好：
       protect  —— 大幅领先且临近终局：降波动（少诈唬、跟注更严）；
       pressure —— 领先且对手短码：ICM 压力下放宽全下/加注（对手弃牌率高）；
       catchup  —— 大幅落后且临近终局：加波动（多诈唬、宽跟注）；
