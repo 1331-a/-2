@@ -97,5 +97,38 @@ check("前几步钓鱼:river顶对恢复正常注(≥0.5池)",
       a.get("act") in ("raise", "check") and
       (a.get("act") == "check" or a["num"] >= 0.5 * st.pot), str(a))
 
+# ============ C. 翻后大注牌型门槛：只有牌型≥三条才能下注超过2000 ============
+deep_pf = [{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+           {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+           {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+           {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+           {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+           {"round": 2, "player_id": 0, "action": 0, "action_type": "check"}]
+
+# C1) river 对手下注 1500，我顺子级（≥三条）→ 允许大注/全下（绝不只是跟）
+r = req(my_chips=17000, my_cards=[36, 32], public_cards=[44, 30, 29, 16, 12],
+        history=deep_pf + [{"round": 3, "player_id": 1, "action": 1500, "action_type": "raise"}])
+st = parse_request(r)
+a = decide(st, OpponentModel())
+check("牌型门槛:顺子面对1500可大注(raise/allin)",
+      a.get("act") in ("raise", "allin"), str(a))
+
+# C2) river 对手下注 1500，我两对（<三条）→ 绝不 raise 超 2000（call/弃）
+r = req(my_chips=17000, my_cards=[42, 13], public_cards=[43, 22, 29, 16, 12],
+        history=deep_pf + [{"round": 3, "player_id": 1, "action": 1500, "action_type": "raise"}])
+st = parse_request(r)
+a = decide(st, OpponentModel())
+check("牌型门槛:两对面对1500不超限(call/fold)",
+      a.get("act") in ("call", "fold") or
+      (a.get("act") == "raise" and a["num"] <= 2000), str(a))
+
+# C3) 翻前不受牌型门槛约束：AKs 4-bet 2600 保持（超强牌翻前豁免）
+r = req(my_chips=18700, my_cards=[48, 44],
+        history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"},
+                 {"round": 0, "player_id": 1, "action": 1200, "action_type": "raise"}])
+a = decide(parse_request(r), OpponentModel())
+check("牌型门槛:翻前AKs 4-bet保持>2000",
+      a.get("act") == "raise" and a["num"] > 2000, str(a))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

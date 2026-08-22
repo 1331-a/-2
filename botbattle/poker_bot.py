@@ -1359,6 +1359,7 @@ strategy.py — AI 决策引擎（升级版）。
 
 import time
 
+                      evaluate_7)
 
 # ============ 可调参数（单位见注释） ============
 # ---- 翻前范围（百分位，0~1，越小越紧） ----
@@ -1455,6 +1456,14 @@ MAX_RAISE_INCR = 1000         # 我方加注最大增量（10BB）
 # 总注额不允许超过 PREFLOP_MAX_BET（在 _normalize 统一执行，
 # 超强牌豁免仍受全局增量上限 MAX_RAISE_INCR 约束）。
 PREFLOP_MAX_BET = 1000       # 翻牌前非超强牌总注额上限（10BB）
+
+# ---- 翻后大注牌型门槛（用户规则）----
+# 只有牌型 ≥ 三条（THREE_OF_A_KIND）才能下注/加注总注额超过
+# HIGH_BET_LIMIT；两对及以下（高牌/一对/两对）总注额上限 2000
+#（在 _normalize 统一执行，翻前不受此规则约束——翻前已有
+# PREFLOP_MAX_BET 非超强牌 1000 上限，超强牌翻前按增量上限走）。
+HIGH_BET_LIMIT = 2000         # 翻后大注总注额上限（20BB）
+HIGH_BET_MIN_CAT = THREE_OF_A_KIND  # 允许超限的最低牌型（三条）
 
 # ---- 对手突袭大注（单次加注增量 > 此前对手本手总投入的 N 倍）----
 # 【规则】当对手一次加注的增量 > 对手之前本手累计投入的 OPP_JUMP_RATIO 倍
@@ -1651,6 +1660,11 @@ def _bet_cap_guard(state, action):
         # 与降级逻辑集中一处，避免此处 _bet_fraction 在翻前产生歧义）
         return action
     if _is_super_hand(state.hole):
+        return action
+    # 【用户规则】牌型 ≥ 三条（顺子/同花/葫芦/四条/同花顺）同样豁免：
+    # 只有牌型 ≥ 三条才能下注超过 HIGH_BET_LIMIT(2000)，故此类牌力
+    # 不受本规则 1000 上限约束（由 _normalize 的牌型门槛放行/压限）。
+    if evaluate_7(state.hole + state.board)[0] >= HIGH_BET_MIN_CAT:
         return action
     num = int(action.get("num", 0))
     if num <= BET_CAP:
@@ -2761,6 +2775,14 @@ def _normalize(state, action):
             num = min(num, PREFLOP_MAX_BET)
             if num < min_r:
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
+        # 【用户规则】翻后大注牌型门槛：只有牌型 ≥ 三条才能下注超过 2000。
+        # 两对及以下（高牌/一对/两对）即使深底池也只允许 ≤ HIGH_BET_LIMIT；
+        # 若对手注已大到最小加注超上限 → 无法合法加注 → 降级 call/check。
+        if state.stage != "preflop" and num > HIGH_BET_LIMIT:
+            if evaluate_7(state.hole + state.board)[0] < HIGH_BET_MIN_CAT:
+                num = HIGH_BET_LIMIT
+                if num < min_r:
+                    return {"act": "call"} if to_call > 0 else {"act": "check"}
         if num < min_r:
             num = min_r
         if num >= max_r or num >= my_left:
