@@ -23,6 +23,7 @@ def _strip_module(src):
     """去掉内部 import 与 if __name__ 块，返回保留的行。"""
     out = []
     in_main_block = False
+    drop_paren = 0   # >0：正在删除一个括号未闭合的内部 import 块（多行 import 续行）
     for ln in src.split("\n"):
         stripped = ln.strip()
         # 检测 if __name__ 块（跳过整块）
@@ -34,11 +35,19 @@ def _strip_module(src):
         if stripped.startswith("if __name__"):
             in_main_block = True
             continue
+        # 内部 import 的括号续行（如 from X import (\n    A,\n    B)）一并删除
+        if drop_paren > 0:
+            drop_paren += ln.count("(") - ln.count(")")
+            if drop_paren <= 0:
+                drop_paren = 0
+            continue
         # 去掉内部模块 import
         if stripped.startswith("import ") or stripped.startswith("from "):
             parts = stripped.split()
             mod = parts[1].split(".")[0]
             if mod in INTERNAL:
+                if "(" in stripped:
+                    drop_paren = ln.count("(") - ln.count(")")
                 continue
         out.append(ln)
     return "\n".join(out)

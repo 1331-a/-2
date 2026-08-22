@@ -22,8 +22,7 @@ strategy.py — AI 决策引擎（升级版）。
 
 import time
 
-from evaluator import (TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND,
-                      evaluate_7)
+from evaluator import TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND, evaluate_7
 from equity import monte_carlo_equity
 from ranges import hand_percentile
 from opponent import OpponentModel
