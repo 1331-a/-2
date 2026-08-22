@@ -96,9 +96,9 @@ tptk = req(hand=6, my_cards=[48, 44], public_cards=[46, 6, 1],
                     {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}])
 a = decide(parse_request(tptk), m2)
 check("策略:价值注用学习尺寸(弃小注0%→0.35池≈350)", a == {"act": "raise", "num": 350}, str(a))
-# 对照组：无学习数据 → 常规 0.65 池
+# 对照组：无学习数据 → 前几步强牌小注钓鱼 0.38 池（新规则 2026-08-22）
 a0 = decide(parse_request(tptk), OpponentModel())
-check("策略:无数据回退常规尺寸(650)", a0 == {"act": "raise", "num": 650}, str(a0))
+check("策略:无数据回退前几步钓鱼(380)", a0 == {"act": "raise", "num": 380}, str(a0))
 
 # ---------- 6. 策略接入：诈唬用实测弃牌率（对手对 medium 弃牌率高 → 敢诈唬） ----------
 m3 = OpponentModel()

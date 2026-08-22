@@ -1450,6 +1450,12 @@ LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
 # LEAD_LOCK（总注额≤1000）在优势时更严格。
 MAX_RAISE_INCR = 1000         # 我方加注最大增量（10BB）
 
+# ---- 翻牌前总注额上限（用户规则）----
+# 翻牌前下注超过 1000 仅限超强牌（AA/KK/QQ/JJ/AKs）；其他牌翻前
+# 总注额不允许超过 PREFLOP_MAX_BET（在 _normalize 统一执行，
+# 超强牌豁免仍受全局增量上限 MAX_RAISE_INCR 约束）。
+PREFLOP_MAX_BET = 1000       # 翻牌前非超强牌总注额上限（10BB）
+
 # ---- 对手突袭大注（单次加注增量 > 此前对手本手总投入的 N 倍）----
 # 【规则】当对手一次加注的增量 > 对手之前本手累计投入的 OPP_JUMP_RATIO 倍
 # 时，判定为「突袭大注」——往往代表对手强牌（两对+/听牌/全下前奏），
@@ -1639,6 +1645,10 @@ def _bet_cap_guard(state, action):
     规则2 均未触发时生效。
     """
     if action.get("act") != "raise":
+        return action
+    if state.stage == "preflop":
+        # 翻前总注额限制由 _normalize 统一执行（超强牌豁免 + min_raise 边界
+        # 与降级逻辑集中一处，避免此处 _bet_fraction 在翻前产生歧义）
         return action
     if _is_super_hand(state.hole):
         return action
@@ -2427,6 +2437,12 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         lf, learned = _learned_size(model, state, None)
         if learned:
             return _bet_fraction(state, lf)
+        # 【用户规则】前几步（翻牌/转牌）非坚果强牌 → 小注钓鱼：
+        # 早期用小注维持对手宽范围跟注、渐进构建底池，避免大注吓跑；
+        # 河牌才放大注/超池榨取（对手此时牌力已定型，小注钓不动）。
+        if (not is_river) and category < STRAIGHT:
+            frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
+            return _bet_fraction(state, frac)
         # 非坚果强牌（顶对/两对/三条）对跟注型：钓鱼小注，钓垃圾牌跟注
         if _fishy(model):
             frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
@@ -2447,6 +2463,11 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         lf, learned = _learned_size(model, state, None)
         if learned:
             return _bet_fraction(state, lf)
+        # 【用户规则】前几步（翻牌/转牌）非坚果强牌 → 小注钓鱼
+        # （与 strong 分支同规则：顶对级成牌在早期用小注维持对手宽跟注范围）
+        if (not is_river) and category < STRAIGHT:
+            frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
+            return _bet_fraction(state, frac)
         # 跟注型对手：钓鱼小注（其会用差牌跟注，小注钓更宽范围）
         if _fishy(model):
             frac = FISH_BET_WET if tex["wet"] >= 0.5 else FISH_BET_DRY
@@ -2732,6 +2753,12 @@ def _normalize(state, action):
             # 优势锁定：单次注码 ≤ LEAD_MAX_BET；若最小加注已超上限
             # （对手注已很大），则无法合法加注 → 降级 call/check
             num = min(num, LEAD_MAX_BET)
+            if num < min_r:
+                return {"act": "call"} if to_call > 0 else {"act": "check"}
+        # 【用户规则】翻牌前总注额 ≤ PREFLOP_MAX_BET，仅超强牌可超限：
+        # 非超强牌面对大反加（min_raise 已超上限）→ 无法合法加注 → 降级
+        if state.stage == "preflop" and not _is_super_hand(state.hole):
+            num = min(num, PREFLOP_MAX_BET)
             if num < min_r:
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
         if num < min_r:

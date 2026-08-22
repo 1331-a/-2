@@ -357,8 +357,10 @@ tptk = req(my_id=0, my_chips=19500, my_cards=[48, 44],
 a_station = act(tptk, station())
 a_default = act(tptk)
 check("钓鱼:站点价值注≤0.55池", a_station.get("act") == "raise" and a_station["num"] <= 550, str(a_station))
-check("钓鱼:默认对手常规尺寸≥0.5池", a_default.get("act") == "raise" and a_default["num"] >= 500, str(a_default))
-check("钓鱼:站点注小于常规注", a_station["num"] < a_default["num"], "%s vs %s" % (a_station, a_default))
+# 【新规则 2026-08-22】前几步（翻牌/转牌）非坚果强牌一律小注钓鱼——
+# 覆盖默认对手：flop TPTK 从 0.65 池(650) 改为 0.38 池(380)
+check("钓鱼:前几步强牌一律小注(≤0.55池)", a_default.get("act") == "raise" and a_default["num"] <= 550, str(a_default))
+check("钓鱼:前几步站点与默认同尺寸(新规则一律钓鱼)", a_station["num"] == a_default["num"], "%s vs %s" % (a_station, a_default))
 
 # 坚果（皇家同花顺 river）+ 站点：仍超池大注榨取（不被缩小——站点对坚果照跟）
 nuts = req(my_id=0, my_chips=19500, my_cards=[50, 46],
