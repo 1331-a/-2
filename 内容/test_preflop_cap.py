@@ -130,5 +130,51 @@ a = decide(parse_request(r), OpponentModel())
 check("牌型门槛:翻前AKs 4-bet保持>2000",
       a.get("act") == "raise" and a["num"] > 2000, str(a))
 
+# ============ D. 超强牌扩展（AQ/AK/KQ）============
+from strategy import _is_super_hand   # noqa: E402
+
+
+def _I(n):
+    return n + 8   # 平台牌号 → 内部编码
+
+
+check("超强牌:AKo是", _is_super_hand([_I(48), _I(45)]) is True, "")
+check("超强牌:AQo是", _is_super_hand([_I(48), _I(41)]) is True, "")
+check("超强牌:KQo是", _is_super_hand([_I(44), _I(41)]) is True, "")
+check("超强牌:AJo不是", _is_super_hand([_I(48), _I(37)]) is False, "")
+check("超强牌:KJo不是", _is_super_hand([_I(44), _I(37)]) is False, "")
+
+# D6) AKo（超强牌）翻前 3-bet 可超 1000（豁免）
+r = req(my_id=1, my_chips=19500, my_cards=[48, 45],
+        history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"}])
+a = decide(parse_request(r), OpponentModel())
+check("超强牌:AKo 3-bet豁免>1000",
+      a.get("act") == "raise" and a["num"] > 1000, str(a))
+
+# ============ E. 弃牌亏损线：弃牌致累计亏损超 -3000 → 无条件 allin ============
+# E1) pnl=-2000 + 已投1500 → 弃牌后-3500 < -3000 → 72o 也 allin
+r = req(my_cards=[23, 2], my_chips=18500, total_win_chips=[-2000, 2000])
+a = decide(parse_request(r), OpponentModel())
+check("弃牌亏损线:弃牌-3500→无条件allin", a == {"act": "allin"}, str(a))
+
+# E2) pnl=-5000 + 已投500 → 弃牌后-5500 → allin
+r = req(my_cards=[23, 2], my_chips=19500, total_win_chips=[-5000, 5000])
+a = decide(parse_request(r), OpponentModel())
+check("弃牌亏损线:弃牌-5500→allin", a == {"act": "allin"}, str(a))
+
+# E3) 对照组：pnl=-1000 + 已投1500 → 弃牌后-2500 未超线 → 不触发（正常决策）
+r = req(my_cards=[23, 2], my_chips=18500, total_win_chips=[-1000, 1000])
+a = decide(parse_request(r), OpponentModel())
+check("弃牌亏损线:弃牌-2500未超线不触发", a.get("act") != "allin", str(a))
+
+# E4) 翻后触发：我方翻前投1500（pnl=-2000），对手flop全下 → 弃牌即-3500 → allin
+r = req(my_id=0, my_cards=[23, 2], my_chips=18500, total_win_chips=[-2000, 2000],
+        public_cards=[46, 22, 5],
+        history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"},
+                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                 {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}])
+a = decide(parse_request(r), OpponentModel())
+check("弃牌亏损线:翻后弱牌面对全下allin", a == {"act": "allin"}, str(a))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

@@ -341,9 +341,10 @@ check("全下分档:均势72o弃牌", a == {"act": "fold"}, str(a))
 # 大幅落后(-6000) + A5s：eq≈0.45 > 0.40 → 跟全下搏翻盘
 a = act(allin_req([48, 12], -6000))
 check("全下分档:大幅落后A5s跟全下搏翻盘", a == {"act": "allin"}, str(a))
-# 大幅落后(-6000) + 72o：eq≈0.30 < 0.40 → 仍弃（赌博也有底线）
+# 大幅落后(-6000) + 72o：eq≈0.30 < 0.40 本应弃，但【弃牌亏损线】规则
+# （弃牌致累计亏损<-3000 → 无条件 allin）覆盖 → 全下搏翻盘
 a = act(allin_req([23, 2], -6000))
-check("全下分档:大幅落后72o仍弃牌", a == {"act": "fold"}, str(a))
+check("全下分档:大幅落后72o弃牌亏损线→allin", a == {"act": "allin"}, str(a))
 
 # ---------- 6d. 钓鱼下注（对跟注型对手缩小价值注，钓更宽跟注范围）----------
 from strategy import _fishy   # noqa: E402
@@ -390,7 +391,8 @@ check("钓鱼:默认对手常规加注(0.75池≈1500)", a_d.get("act") == "rais
 from strategy import _river_paired_trap   # noqa: E402
 
 # 第 49 手：公对9 + 公面Q高张 + K♣8♥裸公对 + 对手全下 → 硬弃
-st49 = parse_request(req(my_id=0, my_chips=3000, my_cards=[47, 24],
+# （my_chips=19500 已投500，弃牌亏损未超线，不触发弃牌亏损线规则）
+st49 = parse_request(req(my_id=0, my_chips=19500, my_cards=[47, 24],
                          public_cards=[42, 29, 16, 11, 30],
                          history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},

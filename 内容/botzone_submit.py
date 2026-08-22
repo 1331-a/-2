@@ -1464,6 +1464,12 @@ PREFLOP_MAX_BET = 1000       # 翻牌前非超强牌总注额上限（10BB）
 HIGH_BET_LIMIT = 2000         # 翻后大注总注额上限（20BB）
 HIGH_BET_MIN_CAT = THREE_OF_A_KIND  # 允许超限的最低牌型（三条）
 
+# ---- 弃牌亏损线（用户规则）----
+# 若本手弃牌会让累计亏损跌破 DESPAIR_ALLIN_LIMIT（弃牌后
+# total_win_chips[我方] - 本局已投入 < -3000）→ 无条件全下：
+# 弃牌即已无退路，不如全下搏翻盘（深亏时全下反而有最高期望）。
+DESPAIR_ALLIN_LIMIT = -3000   # 弃牌后累计亏损超过此值 → 无条件 allin
+
 # ---- 对手突袭大注（单次加注增量 > 此前对手本手总投入的 N 倍）----
 # 【规则】当对手一次加注的增量 > 对手之前本手累计投入的 OPP_JUMP_RATIO 倍
 # 时，判定为「突袭大注」——往往代表对手强牌（两对+/听牌/全下前奏），
@@ -1603,16 +1609,19 @@ def _allin_floor_guard(state, action):
 
 # ---------------- 规则2/规则3（用户规则，优先级 2/3） ----------------
 def _is_super_hand(hole):
-    """超强牌定义（规则3 豁免）：AA/KK/QQ/JJ（对子点数≥J=11）或 AKs（同花 AK）。
+    """超强牌定义（规则3/翻前上限豁免）：AA/KK/QQ/JJ（对子点数≥J=11）、
+    AQ/AK/KQ（含同花与不同花，2026-08-22 用户扩展）。
 
-    这类牌即使投入超过 BET_CAP 也允许大注（榨取价值），其余牌受规则3 限制。
+    这类牌即使投入超过 BET_CAP/PREFLOP_MAX_BET 也允许大注（榨取价值），
+    其余牌受规则3 / 翻前 1000 上限限制。
     """
     r = sorted(c // 4 for c in hole)
     hi, lo = r[1], r[0]
     if hi == lo and hi >= 11:            # JJ+（口袋对 J 及以上）
         return True
-    suited = (hole[0] % 4) == (hole[1] % 4)
-    return hi == 14 and lo == 13 and suited   # AKs
+    if hi == 14 and lo >= 12:            # AQ / AK（含 AQs/AQo/AKs/AKo）
+        return True
+    return hi == 13 and lo == 12         # KQ（含 KQs/KQo）
 
 
 def _profit_lock_allin(state):
@@ -1640,6 +1649,24 @@ def _profit_lock_allin(state):
         return eq > PROFIT_LOCK_EQ
     except Exception:
         return False
+
+
+def _despair_allin(state):
+    """弃牌亏损线：本手弃牌会让累计亏损跌破 DESPAIR_ALLIN_LIMIT → 无条件全下。
+
+    【业务逻辑】弃牌后累计盈亏 = total_win_chips[我方] - 本局已投入
+    （INIT_CHIPS - my_chips，弃牌时已投部分全部输掉）。若该值 < -3000，
+    说明弃牌 = 彻底认输且无翻盘可能，此时无条件 allin 搏一把：
+    全下即使输掉也是同样的结局，赢了则起死回生（用户规则，优先级高于
+    常规决策——放在 decide 入口规则2 之后执行）。
+    """
+    try:
+        invested = INIT_CHIPS - state.my_chips
+        if state.total_win_chips[state.my_id] - invested < DESPAIR_ALLIN_LIMIT:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _bet_cap_guard(state, action):
@@ -1701,6 +1728,7 @@ def decide(state, model, ctx=None):
     # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
     if not _LEAD_LOCK and _profit_lock_allin(state):
         return {"act": "allin"}
+
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
     if should_avoid_risk(state):
         action = _risk_avoid_route(state, model)
@@ -2728,11 +2756,21 @@ def _normalize(state, action):
 
     # 规则5：本局有人全押 → 只允许弃牌(-1)/全押(-2)
     if state.any_allin:
-        if act == "fold" or _LEAD_LOCK:
+        if _LEAD_LOCK:
             return {"act": "fold"}   # LEAD_LOCK 时对手全下也弃（不 allin）
+        # 【用户规则】弃牌亏损线：对手全押下弃牌会致累计亏损跌破 -3000
+        # → 不弃，全下搏（无条件，不看牌力）
+        if act == "fold" and _despair_allin(state):
+            return {"act": "allin"} if my_left > 0 else {"act": "fold"}
+        if act == "fold":
+            return {"act": "fold"}
         return {"act": "allin"} if my_left > 0 else {"act": "fold"}
 
     if act == "fold":
+        # 【用户规则】弃牌亏损线：弃牌会致累计亏损跌破 -3000 → 无条件全下
+        # （LEAD_LOCK 领先锁定优先：领先时绝不 allin，且领先不可能亏损超线）
+        if not _LEAD_LOCK and _despair_allin(state):
+            return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         return {"act": "fold"}
 
     if act == "check":
