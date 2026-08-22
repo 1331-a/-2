@@ -296,20 +296,20 @@ from match_ctx import MatchContext   # noqa: E402
 
 lock_ctx = MatchContext()
 lock_ctx.opponent_locking = True
-# 偷盲档：庄家位任何牌（含 72o）小额开池
-st = parse_request(req(my_id=0, my_chips=19900, my_cards=[23, 2],
+# 偷盲档：庄家位任何牌（含 72o）2.5BB 开池（规则1；my_chips=19950 → 盲注50/100）
+st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2],
                        hand=45, max_hand=70, total_win_chips=[0, 0]))
 a = decide(st, OpponentModel(), lock_ctx)
-check("偷盲档:庄家72o小额偷盲(2.2BB)", a == {"act": "raise", "num": 440}, str(a))
-# 偷盲档：空气牌翻后不诈唬（即使对手高弃牌）
-st = parse_request(req(my_id=0, my_chips=19500, my_cards=[24, 17],
+check("偷盲档:庄家72o小额偷盲(2.5BB)", a == {"act": "raise", "num": 250}, str(a))
+# 偷盲档：空气牌翻后也高频 C-Bet（规则1：对手弃牌率高，C-Bet 有利可图）
+st = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                        public_cards=[46, 22, 5], hand=45, max_hand=70,
                        total_win_chips=[0, 0],
-                       history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                       history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
-a = decide(st, foldy(), lock_ctx)   # foldy 高弃牌，平时会诈唬 → 偷盲档关闭
-check("偷盲档:空气牌不诈唬", a == {"act": "check"}, str(a))
+a = decide(st, foldy(), lock_ctx)   # 偷盲档：空气牌也 C-Bet（规则1，非关诈唬）
+check("偷盲档:空气牌C-Bet", a.get("act") == "raise", str(a))
 # 对照组：无 ctx（正常）→ 同场景空气牌对高弃牌对手会诈唬
 a = decide(st, foldy())
 check("对照���:正常档空气诈唬恢复", a.get("act") == "raise", str(a))
@@ -488,8 +488,9 @@ check("河牌坚果大注(增量上限1000)", a.get("act") == "raise" and a["num
 sb_3bet = req(my_id=0, my_chips=19500, my_cards=[50, 14],
               history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"},
                        {"round": 0, "player_id": 1, "action": 1200, "action_type": "raise"}])
+# A5s 非超强牌：4-bet 总额 2760 > 1000 → 被规则3 降级（底池>2000 → 只能跟注）
 a = act(sb_3bet, foldy())
-check("A5s 极化 4-bet 诈唬", a.get("act") == "raise" and a["num"] >= 2 * 1200, str(a))
+check("A5s 极化 4-bet 被规则3降级为跟注", a.get("act") == "call", str(a))
 
 # ---------- 8. ICM 压力模式 ----------
 # 领先 40BB + 剩 10 手 + 对手短码 → pressure（直接检测调整函数）

@@ -1198,9 +1198,10 @@ desperate/doomed 的**触发阈值提供偏移**，不新增独立决策路径�
 
 
 # ---------------- 可配置常量 ----------------
-WINDOW = 15                     # 滑动窗口：最近 15 局
-BLIND_NETS = (50, 100)          # 直接收盲的单局净赢（对手弃 SB/BB）
-LOCK_RATE = 0.60                # 直接收盲率阈值 → 疑似锁胜
+WINDOW = 20                     # 滑动窗口：最近 20 局（规则1：对手最近20局行为）
+BLIND_NETS = (50, 100)          # 直接收盲的单局净赢（对手弃 SB/BB）→ 对手弃牌
+LOCK_RATE = 0.65                # 弃牌率阈值：最近20局直接收盲率 > 65%（规则1）
+LOCK_ALLIN_FREQ = 0.10          # 全下频率上限：最近20局对手全下 < 10%（规则1）
 LOCK_MIN_SAMPLES = 8            # 判定疑似锁胜所需的最少样本局数
 
 LEVEL_CONSERVATIVE = 0          # 保守：正常策略，不额外激进
@@ -1222,9 +1223,11 @@ class MatchContext:
         self.total_hands = 0         # 已结算手数
         self.last_hand = None        # 上一请求的 hand 编号（用于手牌边界检测）
         self.last_win = None         # 上一请求的我方累计净赢
-        self.recent_win = []         # FIFO：最近 WINDOW 局单局净赢
-        self.direct_blind_rate = 0.0  # 最近窗口直接收盲率
-        self.opponent_locking = False  # 疑似锁胜
+        self.recent_hands = []       # FIFO：[单局净赢, 对手本手是否全下]（最近 WINDOW 局）
+        self.cur_opp_allin = False   # 当前手牌对手是否全下过（跨 request 累积）
+        self.direct_blind_rate = 0.0  # 最近窗口直接收盲率（= 对手弃牌率下界）
+        self.opp_allin_freq = 0.0     # 最近窗口对手全下频率
+        self.opponent_locking = False  # 疑似锁胜（弃牌率>65% 且 全下频率<10%）
         self.level = LEVEL_NORMAL    # 激进等级
         self.consec_profit = 0       # 连续盈利局数（用于升档）
 
@@ -1239,6 +1242,10 @@ class MatchContext:
             for k in c.__dict__:
                 if k in d:
                     c.__dict__[k] = d[k]
+            # 旧版本兼容：recent_win（仅净赢）→ recent_hands（补 allin 标志）
+            rw = d.get("recent_win")
+            if rw and not c.recent_hands:
+                c.recent_hands = [[w, False] for w in rw]
         return c
 
     # ---------------- 每回合更新（每次 request 调用一次）----------------
@@ -1246,26 +1253,38 @@ class MatchContext:
         """在每次 request 时调用：检测到新手牌即结算上一手。"""
         hand = state.hand_num
         my_win = state.total_win_chips[state.my_id]
+        # 检测当前手牌对手是否全下（history 可直接观测：对手 allin 后必轮到我们）
+        hist = (getattr(state, "request", None) or {}).get("history") or []
+        if any(r.get("player_id") == state.opp_id
+               and r.get("action_type") == "allin" for r in hist):
+            self.cur_opp_allin = True
         if hand != self.last_hand:
             if self.last_hand is not None and self.last_win is not None:
-                self._record_hand(state, my_win - self.last_win)
+                # 结算上一手：此时 cur_opp_allin 仍记录着上一手的全下状态
+                self._record_hand(state, my_win - self.last_win, self.cur_opp_allin)
             self.last_hand = hand
             self.last_win = my_win
+            self.cur_opp_allin = False
 
-    def _record_hand(self, state, net):
-        """上一手已结束：记录单局净赢并更新三项指标。"""
+    def _record_hand(self, state, net, opp_allin):
+        """上一手已结束：记录单局净赢与对手全下标志，并更新指标。"""
         self.total_hands += 1
-        q = self.recent_win
-        q.append(net)
+        q = self.recent_hands
+        q.append([net, opp_allin])
         if len(q) > WINDOW:
             del q[0]
 
-        # 模块一：直接收盲率 → 疑似锁胜
-        wins = list(q)
+        # 模块一：直接收盲率（对手弃牌率下界）> 65% 且 对手全下频率 < 10%
+        # → 疑似锁胜（规则1：对手明显收紧时主动偷盲追分）
+        wins = [h[0] for h in q]
         blind = sum(1 for w in wins if w in BLIND_NETS)
+        allin_cnt = sum(1 for h in q if h[1])
         self.direct_blind_rate = blind / len(wins) if wins else 0.0
+        self.opp_allin_freq = allin_cnt / len(q) if q else 0.0
         self.opponent_locking = (
-            len(wins) >= LOCK_MIN_SAMPLES and self.direct_blind_rate > LOCK_RATE)
+            len(wins) >= LOCK_MIN_SAMPLES
+            and self.direct_blind_rate > LOCK_RATE
+            and self.opp_allin_freq < LOCK_ALLIN_FREQ)
 
         # 模块三：回撤降档 + 连续盈利计数
         if net <= -DRAWDOWN_PCT * INIT_CHIPS:
@@ -1446,6 +1465,31 @@ DELAYED_BONUS_FULL = 0.20      # 当前街双方都 check 过：完整加成（�
 DELAYED_BONUS_PARTIAL = 0.10   # 上一街双方都 check，当前街我方首次行动（转牌突然出手）
 OPP_CHECK_BONUS = 0.30       # 对手最近连续过牌≥2次 → 直接加注（用户规则，优先级最高）
 
+# ---- 规则1：对手锁胜时的激进调整（最高优先级）----
+# 【规则】对手最近20局弃牌率>65% 且 全下频率<10%（match_ctx.opponent_locking）
+# → 判定对手明显收紧（疑似锁胜），主动偷盲追分：
+#   BTN 任意两张牌 2.5BB 开池（100% 频率）→ 翻后 C-Bet 85% 频率、50~60% 池
+#   → 被加注/全下立即弃牌不纠缠。本规则触发时不受规则2/规则3 限制。
+STEAL_OPEN_BB = 2.5           # 偷盲开池尺寸（2.5BB）
+STEAL_CBET_FRAC = 0.55        # 偷盲档 C-Bet 下注额（底池 55%，落在 50%~60% 区间）
+STEAL_FOLD_MIN_CAT = 4        # 被加注/全下时唯一例外：顺子及以上（STRAIGHT=4）仍正常决策
+
+# ---- 规则2：盈利锁胜全下（第二优先级）----
+# 【规则】当前累计总盈亏 > 0 且 本局已累计下注（含当前轮）> 总盈亏 + 2000
+# 且 手牌对抗随机牌胜率 > 30% → 立即全下锁胜，防止利润回吐。
+# 与 LEAD_LOCK 关系（用户确认）：LEAD_LOCK 优先——领先>2000 时注码受限，
+# 不可能出现「已投 > 盈利+2000」的深投入场景，本规则自然不触发。
+PROFIT_LOCK_CONST = 2000      # 已投须超过 总盈亏 + 此值
+PROFIT_LOCK_EQ = 0.30         # 对抗随机牌的胜率底线（防纯垃圾牌推）
+
+# ---- 规则3：下注额限制（第三优先级）----
+# 【规则】手牌不属于超强牌（AA/KK/QQ/JJ/AKs）时，主动下注/加注的总注额
+# > 1000 → 自动降级：底池≤2000 下注底池 50%；否则过牌/跟注。
+# 仅在规则1（偷盲档）与规则2 均未触发时生效。
+BET_CAP = 1000                # 非超强牌主动下注总注额上限
+BET_CAP_POT = 2000            # 底池超过此值时完全放弃主动下注（过牌/跟注）
+BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
+
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
@@ -1543,6 +1587,72 @@ def _allin_floor_guard(state, action):
     return {"act": "fold"}
 
 
+# ---------------- 规则2/规则3（用户规则，优先级 2/3） ----------------
+def _is_super_hand(hole):
+    """超强牌定义（规则3 豁免）：AA/KK/QQ/JJ（对子点数≥J=11）或 AKs（同花 AK）。
+
+    这类牌即使投入超过 BET_CAP 也允许大注（榨取价值），其余牌受规则3 限制。
+    """
+    r = sorted(c // 4 for c in hole)
+    hi, lo = r[1], r[0]
+    if hi == lo and hi >= 11:            # JJ+（口袋对 J 及以上）
+        return True
+    suited = (hole[0] % 4) == (hole[1] % 4)
+    return hi == 14 and lo == 13 and suited   # AKs
+
+
+def _profit_lock_allin(state):
+    """规则2：盈利锁胜全下检查。
+
+    【业务逻辑】当前累计总盈亏 > 0（盈利状态）且本局已累计下注金额（含
+    盲注与当前轮，= INIT_CHIPS - my_chips）> 总盈亏 + 2000，且手牌对抗
+    随机牌胜率 > 30%（防纯垃圾牌推）→ 立即全下锁胜，防止利润回吐
+    （投入已深、牌力有底线，直接推掉避免后街被对手反超）。
+    与 LEAD_LOCK 关系（用户确认）：LEAD_LOCK 优先——领先>2000 时注码
+    受限（≤1000），不可能出现「已投 > 盈利+2000」的深投入场景，
+    故本函数只在 LEAD_LOCK 未触发时被调用。
+    """
+    try:
+        pnl = state.total_win_chips[state.my_id]
+        if pnl <= 0:
+            return False
+        invested = INIT_CHIPS - state.my_chips   # 本局已累计投入（含当前轮）
+        if invested <= pnl + PROFIT_LOCK_CONST:
+            return False
+        # 胜率底线：对抗随机牌（opp_range_pct=1.0）快速蒙特卡洛
+        eq = monte_carlo_equity(state.hole, state.board, iterations=600,
+                                opp_range_pct=1.0,
+                                deadline=time.time() + 0.25)
+        return eq > PROFIT_LOCK_EQ
+    except Exception:
+        return False
+
+
+def _bet_cap_guard(state, action):
+    """规则3：下注额限制（第三优先级）。
+
+    【业务逻辑】手牌不属于超强牌（AA/KK/QQ/JJ/AKs）时，主动下注/加注的
+    总注额 > BET_CAP(1000) → 自动降级：
+      - 底池 ≤ 2000 → 只下注底池 50%（BET_CAP_FRAC）；
+      - 底池 > 2000 → 放弃主动下注（能跟就跟、否则过牌）。
+    目的：避免边缘牌投入过多筹码（用户规则）。仅在规则1（偷盲档）与
+    规则2 均未触发时生效。
+    """
+    if action.get("act") != "raise":
+        return action
+    if _is_super_hand(state.hole):
+        return action
+    num = int(action.get("num", 0))
+    if num <= BET_CAP:
+        return action
+    # 降级：底池 ≤ 2000 → 下注底池 50%；否则过牌/跟注
+    if state.pot <= BET_CAP_POT:
+        return _bet_fraction(state, BET_CAP_FRAC)
+    if state.to_call > 0:
+        return {"act": "call"}
+    return {"act": "check"}
+
+
 def decide(state, model, ctx=None):
     """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
 
@@ -1564,6 +1674,10 @@ def decide(state, model, ctx=None):
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
+    # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
+    # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
+    if not _LEAD_LOCK and _profit_lock_allin(state):
+        return {"act": "allin"}
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
     if should_avoid_risk(state):
         action = _risk_avoid_route(state, model)
@@ -1573,6 +1687,10 @@ def decide(state, model, ctx=None):
         action = _postflop_decide(state, model)
     # 全下下限：投入须超过「当前总盈利 + 1000」才允许 allin（用户规则）
     action = _allin_floor_guard(state, action)
+    # 【规则3】下注额限制（第三优先级）：规则1（偷盲档）触发时不生效——
+    # 偷盲 C-Bet 允许超过 1000（对手弃牌率高，高频 C-Bet 是主动收益策略）
+    if _match_adjust(state) != "steal":
+        action = _bet_cap_guard(state, action)
     return _normalize(state, action)
 
 
@@ -1893,9 +2011,9 @@ def _preflop_decide(state, model):
 
 def _button_open(state, model, pct, arch, adj):
     """庄家位开池：范围随对手原型伸缩；开池尺寸学习优先。"""
-    # 偷盲档：对手疑似锁胜 → 任何牌都小额开池（高频偷盲，无需大注吓唬）
+    # 偷盲档：对手疑似锁胜 → 任意两张牌 2.5BB 开池，频率 100%（规则1）
     if adj == "steal":
-        return _raise_to(state, OPEN_SIZE_VS_STATION * state.big_blind)
+        return _raise_to(state, STEAL_OPEN_BB * state.big_blind)
     # 【学习优先】对手对翻前下注的反应数据充分时，选「弃牌率最低」的开池
     # 尺寸（实证覆盖原型假设）——比如对手对大注弃牌率远低，说明他爱跟，
     # 用大注开池也能被跟；反之对手对小注弃牌率最低，用小注钓更宽范围。
@@ -2282,6 +2400,12 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
     # 有利位置 + 翻前主动方 = 标准 C-Bet 场景，诈唬门槛下调
     cbet_spot = i_aggressor and state.is_button
 
+    # 【规则1】偷盲档（对手锁胜）：高频 C-Bet（85% 频率，50~60% 池）——
+    # 强牌（strong/good）走下方价值分支，其余（中等/听牌/空气）一律
+    # 下注底池 55%：对手弃牌率高，任何牌 C-Bet 都有利可图。
+    if adj == "steal" and not strong and not good:
+        return _bet_fraction(state, STEAL_CBET_FRAC)
+
     if strong:
         # 诱敌深入：OOP 强牌 + 对手激进（爱下注）→ 过牌让其下注，
         # 其出手后由 _face_bet 做大额加注（check-raise 陷阱），
@@ -2361,8 +2485,6 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer = max(0.0, buffer - 0.05)     # 有利位置 C-Bet 诈唬门槛下调
     if adj == "protect":
         buffer += 0.15                       # 领先保收益：少诈唬
-    elif adj == "steal":
-        buffer += 0.50                       # 偷盲档：关闭所有纯诈唬（对手弃牌率已高，无需诈唬）
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
     # 【延迟施压】双方持续过牌后突然加注 / 对手连续过牌≥2次直接加注：
@@ -2414,6 +2536,14 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         margin += 0.06       # 领先时只打好赔率
     elif adj in ("desperate", "doomed"):
         margin -= 0.06       # 劣势追分：跟注门槛大幅放宽（多看牌搏翻盘）
+
+    # 【规则1】偷盲档被加注/全下：立即弃牌不纠缠（规则1 执行动作 3）。
+    # 对手平时在弃牌，突然加注/全下 = 拿到强牌或识破偷盲 → 止损离场；
+    # 唯一例外：顺子及以上（STEAL_FOLD_MIN_CAT=STRAIGHT）的极强牌
+    # 仍正常决策（避免真坚果被白白弃掉）。
+    if adj == "steal" and to_call > 0:
+        if category < STEAL_FOLD_MIN_CAT:
+            return {"act": "fold"}
 
     # 【对手突袭大注】最近一次加注增量 > 此前累计 4 倍 → 强牌信号，跟注门槛
     # 整体抬高（覆盖大注跟注与全下；压力/追分档不重复抬高）。第 36 手教训：

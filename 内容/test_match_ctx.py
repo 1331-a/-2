@@ -26,12 +26,13 @@ def check(name, cond, detail=""):
 
 
 class StubState:
-    """轻量状态桩：只需 hand_num / total_win_chips / my_id。"""
+    """轻量状态桩：只需 hand_num / total_win_chips / my_id / opp_id。"""
 
     def __init__(self, hand, wins):
         self.hand_num = hand
         self.total_win_chips = list(wins)  # [p0, p1]
         self.my_id = 0
+        self.opp_id = 1
 
 
 def seq_states(hands, wins_seq, my_id=0):
@@ -58,8 +59,8 @@ for s in seq_states(hands, wins):
 check("锁胜推断:直接收盲率=100%", abs(ctx.direct_blind_rate - 1.0) < 1e-9,
       "%.2f" % ctx.direct_blind_rate)
 check("锁胜推断:opponent_locking=True", ctx.opponent_locking is True)
-check("锁胜推断:窗口≤15局", len(ctx.recent_win) <= 15,
-      str(len(ctx.recent_win)))
+check("锁胜推断:窗口≤20局", len(ctx.recent_hands) <= 20,
+      str(len(ctx.recent_hands)))
 
 # 对照组：正常胜负交替（非盲注额）→ 不标记锁胜
 ctx2 = MatchContext()
@@ -69,6 +70,27 @@ for i in range(16):
     ctx2.update(StubState(i, [acc, -acc]))
 check("锁胜推断:正常波动不误判", ctx2.opponent_locking is False,
       "rate=%.2f" % ctx2.direct_blind_rate)
+
+# 对照组：收盲率 90%>65% 但 对手全下频率 = 10%（不 <10%）→ 不标记锁胜（规则1 双条件）
+class StubStateR(StubState):
+    def __init__(self, hand, wins, opp_allin=False):
+        super().__init__(hand, wins)
+        self.request = {"history": [
+            {"player_id": 1,
+             "action_type": "allin" if opp_allin else "call"}]}
+
+ctx2b = MatchContext()
+acc = 0
+for i in range(20):
+    if i >= 18:            # 第 19、20 手对手全下（频率 10%）
+        acc += -1000
+        ctx2b.update(StubStateR(i, [acc, -acc], opp_allin=True))
+    else:                  # 前 18 手直接收盲（90%）
+        acc += 50
+        ctx2b.update(StubStateR(i, [acc, -acc]))
+check("锁胜推断:全下频率10%不标记",
+      ctx2b.opponent_locking is False,
+      "allin_freq=%.2f rate=%.2f" % (ctx2b.opp_allin_freq, ctx2b.direct_blind_rate))
 
 # ---------- 2. 激进等级分档（模块二）----------
 # 大盈利 > +20% → 保守

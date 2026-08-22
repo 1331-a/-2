@@ -30,9 +30,10 @@ desperate/doomed 的**触发阈值提供偏移**，不新增独立决策路径�
 from game_state import INIT_CHIPS
 
 # ---------------- 可配置常量 ----------------
-WINDOW = 15                     # 滑动窗口：最近 15 局
-BLIND_NETS = (50, 100)          # 直接收盲的单局净赢（对手弃 SB/BB）
-LOCK_RATE = 0.60                # 直接收盲率阈值 → 疑似锁胜
+WINDOW = 20                     # 滑动窗口：最近 20 局（规则1：对手最近20局行为）
+BLIND_NETS = (50, 100)          # 直接收盲的单局净赢（对手弃 SB/BB）→ 对手弃牌
+LOCK_RATE = 0.65                # 弃牌率阈值：最近20局直接收盲率 > 65%（规则1）
+LOCK_ALLIN_FREQ = 0.10          # 全下频率上限：最近20局对手全下 < 10%（规则1）
 LOCK_MIN_SAMPLES = 8            # 判定疑似锁胜所需的最少样本局数
 
 LEVEL_CONSERVATIVE = 0          # 保守：正常策略，不额外激进
@@ -54,9 +55,11 @@ class MatchContext:
         self.total_hands = 0         # 已结算手数
         self.last_hand = None        # 上一请求的 hand 编号（用于手牌边界检测）
         self.last_win = None         # 上一请求的我方累计净赢
-        self.recent_win = []         # FIFO：最近 WINDOW 局单局净赢
-        self.direct_blind_rate = 0.0  # 最近窗口直接收盲率
-        self.opponent_locking = False  # 疑似锁胜
+        self.recent_hands = []       # FIFO：[单局净赢, 对手本手是否全下]（最近 WINDOW 局）
+        self.cur_opp_allin = False   # 当前手牌对手是否全下过（跨 request 累积）
+        self.direct_blind_rate = 0.0  # 最近窗口直接收盲率（= 对手弃牌率下界）
+        self.opp_allin_freq = 0.0     # 最近窗口对手全下频率
+        self.opponent_locking = False  # 疑似锁胜（弃牌率>65% 且 全下频率<10%）
         self.level = LEVEL_NORMAL    # 激进等级
         self.consec_profit = 0       # 连续盈利局数（用于升档）
 
@@ -71,6 +74,10 @@ class MatchContext:
             for k in c.__dict__:
                 if k in d:
                     c.__dict__[k] = d[k]
+            # 旧版本兼容：recent_win（仅净赢）→ recent_hands（补 allin 标志）
+            rw = d.get("recent_win")
+            if rw and not c.recent_hands:
+                c.recent_hands = [[w, False] for w in rw]
         return c
 
     # ---------------- 每回合更新（每次 request 调用一次）----------------
@@ -78,26 +85,38 @@ class MatchContext:
         """在每次 request 时调用：检测到新手牌即结算上一手。"""
         hand = state.hand_num
         my_win = state.total_win_chips[state.my_id]
+        # 检测当前手牌对手是否全下（history 可直接观测：对手 allin 后必轮到我们）
+        hist = (getattr(state, "request", None) or {}).get("history") or []
+        if any(r.get("player_id") == state.opp_id
+               and r.get("action_type") == "allin" for r in hist):
+            self.cur_opp_allin = True
         if hand != self.last_hand:
             if self.last_hand is not None and self.last_win is not None:
-                self._record_hand(state, my_win - self.last_win)
+                # 结算上一手：此时 cur_opp_allin 仍记录着上一手的全下状态
+                self._record_hand(state, my_win - self.last_win, self.cur_opp_allin)
             self.last_hand = hand
             self.last_win = my_win
+            self.cur_opp_allin = False
 
-    def _record_hand(self, state, net):
-        """上一手已结束：记录单局净赢并更新三项指标。"""
+    def _record_hand(self, state, net, opp_allin):
+        """上一手已结束：记录单局净赢与对手全下标志，并更新指标。"""
         self.total_hands += 1
-        q = self.recent_win
-        q.append(net)
+        q = self.recent_hands
+        q.append([net, opp_allin])
         if len(q) > WINDOW:
             del q[0]
 
-        # 模块一：直接收盲率 → 疑似锁胜
-        wins = list(q)
+        # 模块一：直接收盲率（对手弃牌率下界）> 65% 且 对手全下频率 < 10%
+        # → 疑似锁胜（规则1：对手明显收紧时主动偷盲追分）
+        wins = [h[0] for h in q]
         blind = sum(1 for w in wins if w in BLIND_NETS)
+        allin_cnt = sum(1 for h in q if h[1])
         self.direct_blind_rate = blind / len(wins) if wins else 0.0
+        self.opp_allin_freq = allin_cnt / len(q) if q else 0.0
         self.opponent_locking = (
-            len(wins) >= LOCK_MIN_SAMPLES and self.direct_blind_rate > LOCK_RATE)
+            len(wins) >= LOCK_MIN_SAMPLES
+            and self.direct_blind_rate > LOCK_RATE
+            and self.opp_allin_freq < LOCK_ALLIN_FREQ)
 
         # 模块三：回撤降档 + 连续盈利计数
         if net <= -DRAWDOWN_PCT * INIT_CHIPS:

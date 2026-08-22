@@ -56,13 +56,14 @@ st = parse_request(req(total_win_chips=[3000, -3000], public_cards=[46, 6, 1],
 a = decide(st, OpponentModel())
 check("锁注:领先3000对手全下也弃(不allin)", a == {"act": "fold"}, str(a))
 
-# 对照组：领先 1000（≤2000）不受限 → 可正常大注
+# 对照组：领先 1000（lead=2000 ≤2000 不锁）+ 深投入（已投5000 > 盈利1000+2000）
+# → 被规则2（盈利锁胜全下）接管 → allin（新规则预期行为）
 st = parse_request(req(total_win_chips=[1000, -1000], public_cards=[46, 6, 1],
                        history=[{"round": 0, "player_id": 0, "action": 2500, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st, OpponentModel())
-check("锁注对照:领先1000不锁但增量上限1000", a == {"act": "raise", "num": 1000}, str(a))
+check("锁注对照:领先1000深投入被规则2接管全下", a == {"act": "allin"}, str(a))
 
 # 对照组：落后 2000 不受限
 st = parse_request(req(total_win_chips=[-2000, 2000], public_cards=[46, 6, 1],
