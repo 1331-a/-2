@@ -97,9 +97,10 @@ air_flop = req(my_id=0, my_chips=19500, my_cards=[24, 17],
                history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                         {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                         {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}])
-# 对跟注站：空气不下注（诈唬无弃牌权益）
+# 对跟注站：空气不下注（诈唬无弃牌权益）——但【新规则 2026-08-22】
+# 对手 check 后立刻小注施压（对手过牌=示弱），故空气牌也下小注
 a = act(air_flop, station())
-check("vs站点空气不下注", a == {"act": "check"}, str(a))
+check("vs站点对手check空气小注", a.get("act") == "raise" and a["num"] <= 500, str(a))
 # 对高弃牌对手：空气诈唬
 a = act(air_flop, foldy())
 check("vs岩石空气诈唬下注", a.get("act") == "raise" and a["num"] >= 200, str(a))

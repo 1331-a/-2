@@ -1484,6 +1484,9 @@ OPP_JUMP_EQ_PENALTY = 0.15     # 突袭大注时 eq 打折（对手范围收紧�
 DELAYED_BONUS_FULL = 0.20      # 当前街双方都 check 过：完整加成（河牌威胁最大）
 DELAYED_BONUS_PARTIAL = 0.10   # 上一街双方都 check，当前街我方首次行动（转牌突然出手）
 OPP_CHECK_BONUS = 0.30       # 对手最近连续过牌≥2次 → 直接加注（用户规则，优先级最高）
+# 【用户规则】对手过牌后立刻加小注：对手本轮 check 过 → 弱牌/听牌/空气
+# 不再被动过牌，立刻下小注施压（对手过牌=示弱，小注即可拿下底池）。
+OPP_CHECK_BET = 0.40          # 对手 check 后立刻下注（底池比例）
 
 # ---- 规则1：对手锁胜时的激进调整（最高优先级）----
 # 【规则】对手最近20局弃牌率>65% 且 全下频率<10%（match_ctx.opponent_locking）
@@ -2293,6 +2296,31 @@ def _opp_raised_preflop(state):
 
 
 
+def _opp_checked_this_round(state):
+    """对手本轮（当前街）是否 check 过。重放 state.request.history 检查
+    当前 round 的 check 记录（玩家=对手）。
+
+    【业务逻辑】对手 check = 示弱/无强牌 → 我方应立刻下小注施压
+    （用户规则：对手过牌后立刻加小注），而不是被动跟 check 拖到下一街。
+    """
+    request = getattr(state, "request", None) or {}
+    hist = request.get("history") or []
+    cur_round = state.current_round
+    for r in hist:
+        if int(r.get("round", 0)) == cur_round and \
+                r.get("player_id") == state.opp_id and \
+                r.get("action_type") == "check":
+            return True
+    return False
+
+
+def _opp_check_bet(state, opp_checked):
+    """对手 check 后立刻下小注（用户规则）；否则过牌。"""
+    if opp_checked:
+        return _bet_fraction(state, OPP_CHECK_BET)
+    return {"act": "check"}
+
+
 def _delayed_aggression_bonus(state):
     """延迟施压加成：双方持续过牌后突然加注的额外弃牌率加成。
 
@@ -2450,6 +2478,8 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
     spr = state.effective_stack / max(state.pot, 1)
     # 有利位置 + 翻前主动方 = 标准 C-Bet 场景，诈唬门槛下调
     cbet_spot = i_aggressor and state.is_button
+    # 【用户规则】对手本轮 check 过 → 立刻小注（弱牌不再被动过牌）
+    opp_checked = _opp_checked_this_round(state)
 
     # 【规则1】偷盲档（对手锁胜）：高频 C-Bet（85% 频率，50~60% 池）——
     # 强牌（strong/good）走下方价值分支，其余（中等/听牌/空气）一律
@@ -2526,7 +2556,7 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         # 也要么积累底池要么直接赢下（弃牌权益 + 成牌双重收益）
         if fold_eq >= 0.30 or state.is_button or adj in ("desperate", "doomed"):
             return _bet_fraction(state, CBET)
-        return {"act": "check"}
+        return _opp_check_bet(state, opp_checked)   # 对手check过 → 立刻小注
 
     if medium:
         # 有利位置 C-Bet 频率目标 ≥70%：湿面或主动方都下注施压/保护
@@ -2535,10 +2565,10 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         # 不利位置 + 极干面 + 中强牌：1/3 池小注保护（低成本纠缠+节省筹码）
         if not state.is_button and tex["wet"] < 0.2 and eq >= 0.55:
             return _bet_fraction(state, BLOCKER_BET)
-        return {"act": "check"}
+        return _opp_check_bet(state, opp_checked)   # 对手check过 → 立刻小注
 
     if draw:
-        return {"act": "check"}     # 弱听牌免费看牌
+        return _opp_check_bet(state, opp_checked)   # 对手check过 → 立刻小注（原免费看牌）
 
     # 空气：纯诈唬，EV 门控 + 阻挡牌效应
     breakeven = BLUFF / (1.0 + BLUFF)        # ≈ 0.355
@@ -2568,7 +2598,7 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
             if (not is_river) or (fold_eq >= 0.45 and
                                   model.river_fold_rate() >= 0.35):
                 return _bet_fraction(state, BLUFF)
-    return {"act": "check"}
+    return _opp_check_bet(state, opp_checked)   # 对手check过 → 立刻小注（原过牌）
 
 
 # ---------------- 面对下注 ----------------
@@ -2812,11 +2842,14 @@ def _normalize(state, action):
             num = min(num, PREFLOP_MAX_BET)
             if num < min_r:
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
-        # 【用户规则】翻后大注牌型门槛：只有牌型 ≥ 三条才能下注超过 2000。
-        # 两对及以下（高牌/一对/两对）即使深底池也只允许 ≤ HIGH_BET_LIMIT；
+        # 【用户规则】每次下注/加注 ≤ HIGH_BET_LIMIT(2000)，除非：
+        #   ①翻后牌型 ≥ 三条（顺子/同花/葫芦/四条/同花顺）；
+        #   ②抢对方锁赢（steal 偷盲档——对手疑似锁胜时高频 C-Bet 允许大注）。
+        # 翻前无牌面 → 一律 2000 封顶（超强牌翻前可超 1000 但仍 ≤2000）。
         # 若对手注已大到最小加注超上限 → 无法合法加注 → 降级 call/check。
-        if state.stage != "preflop" and num > HIGH_BET_LIMIT:
-            if evaluate_7(state.hole + state.board)[0] < HIGH_BET_MIN_CAT:
+        if num > HIGH_BET_LIMIT and _match_adjust(state) != "steal":
+            if state.stage == "preflop" or \
+                    evaluate_7(state.hole + state.board)[0] < HIGH_BET_MIN_CAT:
                 num = HIGH_BET_LIMIT
                 if num < min_r:
                     return {"act": "call"} if to_call > 0 else {"act": "check"}

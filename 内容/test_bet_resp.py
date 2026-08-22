@@ -110,9 +110,9 @@ air = req(hand=9, my_cards=[24, 17], public_cards=[46, 22, 5],  # 空气牌 K♠
                    {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}])
 a = decide(parse_request(air), m3)
 check("策略:实测弃牌率100%→空气诈唬", a.get("act") == "raise", str(a))
-# 对照组：无学习数据 → 不诈唬（默认弃牌权益不足）
+# 对照组：无学习数据 → 对手 check 后立刻小注施压（新规则 2026-08-22）
 a0 = decide(parse_request(air), OpponentModel())
-check("策略:无数据空气不诈唬", a0.get("act") == "check", str(a0))
+check("策略:无数据对手check空气小注", a0.get("act") == "raise" and a0["num"] <= 500, str(a0))
 
 # ---------- 7. JSON 序列化往返 ----------
 m4 = OpponentModel()

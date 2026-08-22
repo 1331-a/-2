@@ -122,13 +122,16 @@ check("牌型门槛:两对面对1500不超限(call/fold)",
       a.get("act") in ("call", "fold") or
       (a.get("act") == "raise" and a["num"] <= 2000), str(a))
 
-# C3) 翻前不受牌型门槛约束：AKs 4-bet 2600 保持（超强牌翻前豁免）
-r = req(my_chips=18700, my_cards=[48, 44],
+# C3) 翻前 2000 封顶（用户规则：每次下注≤2000，翻前无牌面例外）：
+# AKs 4-bet 2760 → 压到 2000；若最小加注已超 2000 → 降级跟注
+r = req(my_chips=19600, my_cards=[48, 44],
         history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"},
                  {"round": 0, "player_id": 1, "action": 1200, "action_type": "raise"}])
-a = decide(parse_request(r), OpponentModel())
-check("牌型门槛:翻前AKs 4-bet保持>2000",
-      a.get("act") == "raise" and a["num"] > 2000, str(a))
+st = parse_request(r)
+a = decide(st, OpponentModel())
+check("翻前2000封顶:AKs 4-bet≤2000或降级",
+      (a.get("act") == "call") or
+      (a.get("act") == "raise" and a["num"] <= 2000), str(a))
 
 # ============ D. 超强牌扩展（AQ/AK/KQ）============
 from strategy import _is_super_hand   # noqa: E402
