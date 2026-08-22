@@ -2790,16 +2790,21 @@ def _normalize(state, action):
             return {"act": "fold"}   # LEAD_LOCK 时对手全下也弃（不 allin）
         # 【用户规则】弃牌亏损线：对手全押下弃牌会致累计亏损跌破 -3000
         # → 不弃，全下搏（无条件，不看牌力）
-        if act == "fold" and _despair_allin(state):
+        # 【doomed 禁弃】本局失败后对手即可锁胜 → 弃牌=直接认输，全下搏翻盘
+        if act == "fold" and (_despair_allin(state) or
+                              _match_adjust(state) == "doomed"):
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         if act == "fold":
             return {"act": "fold"}
         return {"act": "allin"} if my_left > 0 else {"act": "fold"}
 
     if act == "fold":
-        # 【用户规则】弃牌亏损线：弃牌会致累计亏损跌破 -3000 → 无条件全下
+        # 【用户规则】弃牌亏损线：弃牌会致累计亏损跌破 -3000 → 无条件全下；
+        # 【doomed 禁弃】本局失败后对手即可锁胜（_match_adjust==doomed）→
+        # 弃牌=直接认输，任何弃牌一律升级为全下搏翻盘。
         # （LEAD_LOCK 领先锁定优先：领先时绝不 allin，且领先不可能亏损超线）
-        if not _LEAD_LOCK and _despair_allin(state):
+        if not _LEAD_LOCK and (_despair_allin(state) or
+                               _match_adjust(state) == "doomed"):
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         return {"act": "fold"}
 

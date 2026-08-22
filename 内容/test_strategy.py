@@ -156,6 +156,33 @@ not_doom = req(my_id=1, my_chips=19900, my_cards=[23, 2], hand=30, max_hand=70,
                history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"}])
 a = act(not_doom)
 check("doomed档:未到锁胜线正常防守(72o弃牌)", a == {"act": "fold"}, str(a))
+# 【修复 2026-08-22】doomed 禁弃：本局失败后对手即可锁胜 → 任何弃牌升级为全下
+# 河牌裸公对 + 对手全下（第49手结构）在 doomed 时不再硬弃 → allin 搏翻盘
+doom_trap = req(my_id=0, my_chips=16000, my_cards=[47, 24], hand=65, max_hand=70,
+                total_win_chips=[-8000, 8000], total_win_games=[20, 45],
+                public_cards=[42, 29, 16, 11, 30],
+                history=[{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+                         {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                         {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                         {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                         {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                         {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                         {"round": 3, "player_id": 1, "action": -2, "action_type": "allin"}])
+a = act(doom_trap)
+check("doomed禁弃:河牌裸公对面对全下→allin", a == {"act": "allin"}, str(a))
+# 对照组：同一结构但正常档（未落后、未深投入）→ 仍硬弃（公对陷阱规则保留）
+normal_trap = req(my_id=0, my_chips=19500, my_cards=[47, 24], hand=10, max_hand=70,
+                  total_win_chips=[0, 0], total_win_games=[0, 0],
+                  public_cards=[42, 29, 16, 11, 30],
+                  history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                           {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                           {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                           {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                           {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                           {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                           {"round": 3, "player_id": 1, "action": -2, "action_type": "allin"}])
+a = act(normal_trap)
+check("doomed禁弃:正常档仍硬弃", a == {"act": "fold"}, str(a))
 
 # 大幅领先+临近终局：锁胜弃牌（lead 16000 > 2.5×200×5=2500 → 直接弃牌稳赢）
 ahead_air = req(my_id=0, my_chips=19500, my_cards=[24, 17],
