@@ -356,6 +356,31 @@ def _despair_allin(state):
     return False
 
 
+def _allin_high_bet_allowed(state):
+    """allin 金额超过 HIGH_BET_LIMIT(2000) 是否允许（用户规则例外集）。
+
+    【业务逻辑】「每次下注金额 ≤2000，除非牌面≥三条或抢对方锁赢」——
+    allin 也是下注，金额 = 我方剩余筹码。允许超 2000 的例外：
+      1. 翻后牌面 ≥ 三条（顺子+，结构性强牌豁免，与 raise 上限同口径）；
+      2. 抢对方锁赢（steal 档：对手疑似锁胜，高频偷盲需要大注）；
+      3. 本局输即对手锁胜（doomed：弃牌=认输，必须全下搏）。
+    注意：despair（弃牌亏损线）不在此列——「弃牌致深亏→无条件 allin」只在
+    决策结果为弃牌时升级（fold 分支），主动 allin 仍受 2000 上限约束
+    （用户反馈：两对+非锁胜却 allin>2000 属违规）。
+    其余场景（常规/领先保护/普通落后且牌面<三条）一律 ≤2000。
+    """
+    try:
+        adj = _match_adjust(state)
+        if adj in ("steal", "doomed"):
+            return True
+        if state.stage != "preflop" and \
+                evaluate_7(state.hole + state.board)[0] >= HIGH_BET_MIN_CAT:
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def _bet_cap_guard(state, action):
     """规则3：下注额限制（第三优先级）。
 
@@ -1535,6 +1560,14 @@ def _normalize(state, action):
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         if act == "fold":
             return {"act": "fold"}
+        # 【用户规则】allin 金额 ≤2000（仅翻后；例外见 _allin_high_bet_allowed）：
+        # 对手全押下我方全下金额超限且无例外 → 弃牌（规则5 内只允许弃/全押）。
+        # 翻前 allin 由「翻前全下分档」控制（eq+盈亏档位），不受金额上限约束。
+        # 例外补充：despair（弃牌即深亏）时跟全下=弃牌升级 allin 的等价行为
+        # （弃牌会触发 _despair_allin → allin），故放行。
+        if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
+                not _allin_high_bet_allowed(state) and not _despair_allin(state):
+            return {"act": "fold"}
         return {"act": "allin"} if my_left > 0 else {"act": "fold"}
 
     if act == "fold":
@@ -1552,6 +1585,22 @@ def _normalize(state, action):
 
     if act == "allin":
         if my_left > 0:
+            # 【用户规则】allin 金额 ≤2000（仅翻后；例外见 _allin_high_bet_allowed）
+            if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
+                    not _allin_high_bet_allowed(state):
+                if to_call > 0:
+                    return {"act": "fold"}   # 跟全下超限 → 弃
+                # 主动全下超限 → 降级为 2000 上限的普通加注（保持游戏进行）
+                num = HIGH_BET_LIMIT
+                min_r = state.min_raise()
+                after_call = state.curbet[state.my_id] + state.to_call
+                if num > after_call + MAX_RAISE_INCR:
+                    num = after_call + MAX_RAISE_INCR
+                if _LEAD_LOCK:
+                    num = min(num, LEAD_MAX_BET)
+                if num < min_r:
+                    return {"act": "check"}
+                return {"act": "raise", "num": num}
             return {"act": "allin"}
         return {"act": "check"} if to_call == 0 else {"act": "fold"}
 
@@ -1559,6 +1608,11 @@ def _normalize(state, action):
         if to_call <= 0:
             return {"act": "check"}
         if to_call >= my_left:      # 需严格 my_left > to_call 才能跟注
+            # 【用户规则】跟注即全下且金额超 2000 无例外 → 弃（仅翻后）
+            # （despair 除外：弃牌会升级 allin，跟全下等价）
+            if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
+                    not _allin_high_bet_allowed(state) and not _despair_allin(state):
+                return {"act": "fold"}
             return {"act": "allin"}
         return {"act": "call"}
 

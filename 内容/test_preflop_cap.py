@@ -179,5 +179,33 @@ r = req(my_id=0, my_cards=[23, 2], my_chips=18500, total_win_chips=[-2000, 2000]
 a = decide(parse_request(r), OpponentModel())
 check("弃牌亏损线:翻后弱牌面对全下allin", a == {"act": "allin"}, str(a))
 
+# ============ F. allin 金额 ≤2000（仅翻后，用户反馈修复） ============
+# F1) 翻后两对 + 对手全下 + 深筹码（非 despair）→ 跟全下超限 → 弃
+r = req(my_cards=[42, 13], my_chips=19500, public_cards=[43, 22, 29, 20],
+        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                 {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}])
+a = decide(parse_request(r), OpponentModel())
+check("allin上限:两对跟全下超2000→弃", a == {"act": "fold"}, str(a))
+
+# F2) 翻后顺子（牌面≥三条）→ 允许 allin
+r = req(my_cards=[36, 32], my_chips=8000, public_cards=[44, 30, 29, 16, 12],
+        history=[{"round": 0, "player_id": 0, "action": 6000, "action_type": "raise"},
+                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                 {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                 {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                 {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                 {"round": 3, "player_id": 1, "action": 0, "action_type": "check"}])
+a = decide(parse_request(r), OpponentModel())
+check("allin上限:顺子允许allin", a == {"act": "allin"}, str(a))
+
+# F3) 翻前跟全下不受金额上限约束（翻前全下分档控制）——回归
+r = req(my_id=0, my_chips=19500, my_cards=[32, 34],  # TT 均势面对翻前全下
+        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                 {"round": 0, "player_id": 1, "action": -2, "action_type": "allin"}])
+a = decide(parse_request(r), OpponentModel())
+check("allin上限:翻前全下分档不受金额约束", a.get("act") in ("allin", "call", "fold"), str(a))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
