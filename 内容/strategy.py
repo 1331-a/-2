@@ -23,7 +23,7 @@ strategy.py — AI 决策引擎（升级版）。
 import time
 
 from evaluator import (TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND,
-                       FULL_HOUSE, evaluate_7)
+                       FULL_HOUSE, HIGH_CARD, evaluate_7)
 from equity import monte_carlo_equity
 from ranges import hand_percentile
 from opponent import OpponentModel
@@ -366,7 +366,7 @@ def _allin_high_bet_allowed(state):
         if adj in ("steal", "doomed"):
             return True
         if state.stage != "preflop" and \
-                evaluate_7(state.hole + state.board)[0] >= HIGH_BET_MIN_CAT:
+                _effective_category(state) >= HIGH_BET_MIN_CAT:
             return True
     except Exception:
         pass
@@ -394,7 +394,8 @@ def _bet_cap_guard(state, action):
     # 【用户规则】牌型 ≥ 三条（顺子/同花/葫芦/四条/同花顺）同样豁免：
     # 只有牌型 ≥ 三条才能下注超过 HIGH_BET_LIMIT(2000)，故此类牌力
     # 不受本规则 1000 上限约束（由 _normalize 的牌型门槛放行/压限）。
-    if evaluate_7(state.hole + state.board)[0] >= HIGH_BET_MIN_CAT:
+    # 注：经 _effective_category 净化——公共牌拼的强牌型不豁免。
+    if _effective_category(state) >= HIGH_BET_MIN_CAT:
         return action
     num = int(action.get("num", 0))
     if num <= BET_CAP:
@@ -514,6 +515,31 @@ def should_avoid_risk(state):
     return False
 
 
+def _effective_category(state):
+    """有效牌型等级（用户规则 2026-08-23）：大于三条的牌型不能仅由公共牌组成。
+
+    公共牌自身已构成顺子/同花/葫芦/四条/同花顺（5 张公共牌全用上、未用到任何
+    一张手牌）时，对手必然同样拥有该牌型（最多平分），且对手仅需一张升级牌即可
+    击败我们：
+      - board 顺子（9 8 7 6 5）→ 对手有 T 即更高顺子；
+      - board 同花 → 对手有任意同花牌即更高踢脚；
+      - board 葫芦/四条 → 对手有对应牌即升级。
+    这种「假强牌」不能作为个人牌力 → 降级为 HIGH_CARD 处理，避免据此
+    价值下注 / 超池 / 跟大注 / 豁免注额上限 / 豁免河牌公对弃牌。
+
+    仅当 5 张公共牌且最强牌型 > 三条时检查（翻牌/转牌阶段 3~4 张公共牌
+    组合必然用到手牌，无需净化）。
+    """
+    if len(state.board) != 5:
+        return evaluate_7(state.hole + state.board)[0]
+    full = evaluate_7(state.hole + state.board)
+    if full[0] <= THREE_OF_A_KIND:
+        return full[0]                    # 只有「大于三条」才需要检查
+    if full == evaluate_7(state.board):
+        return HIGH_CARD                  # 最强 5 张全为公共牌 → 假强牌
+    return full[0]
+
+
 def _river_paired_trap(state):
     """【合并规则 2026-08-23】河牌圈公对存在 + 我方非(葫芦/三条/较大对≥Q 的
     顶两对) → 面对对手全下直接弃牌（结构性风险，不做数学计算）。
@@ -531,13 +557,16 @@ def _river_paired_trap(state):
         rc[r] = rc.get(r, 0) + 1
     if max(rc.values()) < 2:
         return False                      # 无公对
+    eff = _effective_category(state)      # 净化：公共牌拼的强牌型降级为高牌
+    if eff >= THREE_OF_A_KIND:
+        return False                      # 真强牌（三条/顺子/同花/葫芦等）→ 豁免
     e = evaluate_7(state.hole + state.board)
     cat = e[0]
-    if cat >= THREE_OF_A_KIND:            # 三条/顺子/同花/葫芦/四条/同花顺 → 豁免
-        return False                      # （顺子在公对牌面是强牌，绝不弃）
-    if cat == TWO_PAIR and e[1] >= 12:    # 较大对 ≥ Q → 顶两对豁免
+    if cat == TWO_PAIR and e[1] >= 12:    # 较大对 ≥ Q → 顶两对豁免（两对不受净化影响）
         return False
     return True
+
+
 def _risk_avoid_route(state, model):
     """
     公对弱两对的保守路线（规则3：与累计盈亏联动）。
@@ -1100,7 +1129,7 @@ def _postflop_decide(state, model):
         opp_range_pct=range_pct,
         deadline=time.time() + TIME_BUDGET)
 
-    category = evaluate_7(state.hole + state.board)[0]
+    category = _effective_category(state)   # 净化：公共牌拼的 >三条 牌型降级为高牌
     outs = _count_outs(state.hole, state.board)
 
     # ---- 强度分层（牌型 × 胜率 双口径）----
@@ -1571,7 +1600,7 @@ def _normalize(state, action):
         # 若对手注已大到最小加注超上限 → 无法合法加注 → 降级 call/check。
         if num > HIGH_BET_LIMIT and _match_adjust(state) != "steal":
             if state.stage == "preflop" or \
-                    evaluate_7(state.hole + state.board)[0] < HIGH_BET_MIN_CAT:
+                    _effective_category(state) < HIGH_BET_MIN_CAT:
                 num = HIGH_BET_LIMIT
                 if num < min_r:
                     return {"act": "call"} if to_call > 0 else {"act": "check"}

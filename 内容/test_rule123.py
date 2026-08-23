@@ -186,5 +186,93 @@ check("规则3:AQo次强非超强(2026-08-23)", _is_super_hand([56, 49]) is Fals
 check("规则3:KQo次强非超强(2026-08-23)", _is_super_hand([52, 49]) is False and _is_sub_strong([52, 49]) is True, "")
 check("规则3:TT非超强", _is_super_hand([40, 42]) is False, "")
 
+# ================= 规则4：大于三条的牌型不能仅由公共牌组成 =================
+print("\n===== 规则4：公共牌拼强牌型净化 =====")
+from strategy import _effective_category  # noqa: E402
+from evaluator import STRAIGHT, FLUSH, FOUR_OF_A_KIND, HIGH_CARD  # noqa: E402
+
+
+def river_req(**kw):
+    """河牌完整过牌到底的 request 基础（my_id=0，对手=1；默认 public_cards=9♠8♦7♥6♣5♠）。"""
+    base = {"my_cards": [56, 55], "my_chips": 19500,
+            "public_cards": [36, 33, 30, 27, 20],
+            "history": [
+                {"round": 0, "player_id": 0, "action": 100, "action_type": "raise"},
+                {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                {"round": 3, "player_id": 1, "action": 0, "action_type": "check"}]}
+    base.update(kw)
+    return base
+
+
+# 4-1) 单元：board 彩虹顺子 9 8 7 6 5 + 手里 A♠K♣（未用到手牌）→ 降级高牌
+st = parse_request(river_req())
+check("规则4:board顺子+AK无增强→降级高牌",
+      _effective_category(st) == HIGH_CARD,
+      "cat=%s" % _effective_category(st))
+
+# 4-2) 对照：同 board + 手里 T♦（升级成 T 高顺子）→ 真顺子保留
+st = parse_request(river_req(my_cards=[42, 55]))
+check("规则4:board顺子+手里T→真顺子保留",
+      _effective_category(st) == STRAIGHT,
+      "cat=%s" % _effective_category(st))
+
+# 4-3) 单元：board 同花 A♠9♠7♠4♠2♠ + 手里 K♣Q♦（无黑桃）→ 降级高牌
+st = parse_request(river_req(public_cards=[56, 36, 28, 16, 8], my_cards=[55, 50]))
+check("规则4:board同花+无同花手牌→降级高牌",
+      _effective_category(st) == HIGH_CARD,
+      "cat=%s" % _effective_category(st))
+
+# 4-4) 对照：同 board + 手里 K♠（补成 K 高同花）→ 真同花保留
+st = parse_request(river_req(public_cards=[56, 36, 28, 16, 8], my_cards=[52, 55]))
+check("规则4:board同花+手里K♠→真同花保留",
+      _effective_category(st) == FLUSH,
+      "cat=%s" % _effective_category(st))
+
+# 4-5) 单元：board 葫芦 T♥T♦T♣9♠9♣ + 手里 7♣2♦（未用到手牌）→ 降级高牌
+st = parse_request(river_req(public_cards=[41, 42, 43, 36, 39], my_cards=[31, 10]))
+check("规则4:board葫芦+无升级手牌→降级高牌",
+      _effective_category(st) == HIGH_CARD,
+      "cat=%s" % _effective_category(st))
+
+# 4-6) 对照：同 board + 手里 T♠（补成四条 T）→ 真四条保留
+st = parse_request(river_req(public_cards=[41, 42, 43, 36, 39], my_cards=[40, 10]))
+check("规则4:board葫芦+手里T→真四条保留",
+      _effective_category(st) == FOUR_OF_A_KIND,
+      "cat=%s" % _effective_category(st))
+
+
+def allin_river_req(**kw):
+    """河牌对手全下的 request（翻前双方 3000，河牌对手 allin；默认 board 葫芦）。"""
+    base = {"my_id": 0, "my_chips": 16000, "my_cards": [31, 10], "hand": 40,
+            "max_hand": 70, "total_win_chips": [0, 0], "total_win_games": [0, 0],
+            "public_cards": [41, 42, 43, 36, 39],
+            "history": [
+                {"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+                {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                {"round": 3, "player_id": 1, "action": -2, "action_type": "allin"}]}
+    base.update(kw)
+    return base
+
+
+# 4-7) 行为：河牌公对（board 葫芦）+ 对手全下 + 手里 72 → 弃牌
+#      （假葫芦不再豁免公对陷阱：对手有 T 即四条，有 9 即同款葫芦平局）
+st = parse_request(allin_river_req())
+a = decide(st, OpponentModel())
+check("规则4:board葫芦+72 对手全下→弃牌", a == {"act": "fold"}, str(a))
+
+# 4-8) 对照：同 board + 手里 T♠（真四条）→ 不弃
+st = parse_request(allin_river_req(my_cards=[40, 10]))
+a = decide(st, OpponentModel())
+check("规则4:board葫芦+手里T 对手全下→不弃",
+      a.get("act") in ("call", "raise", "allin"), str(a))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
