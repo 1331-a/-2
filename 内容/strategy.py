@@ -1565,6 +1565,12 @@ def _normalize(state, action):
                     not _allin_high_bet_allowed(state):
                 return {"act": "fold"}
             return {"act": "allin"}
+        # 【用户规则 2026-08-23 严格执行】翻后跟注额 > 2000 即「投入超过 2000」，
+        # 与 raise/allin 同口径受第二优先级限制：非 ≥ 三条 且非 doomed → 弃。
+        # 第 12 手教训：A 一对弱踢脚 call 3223 是假投入——假强牌不应跟大注。
+        if state.stage != "preflop" and to_call > HIGH_BET_LIMIT and \
+                not _allin_high_bet_allowed(state):
+            return {"act": "fold"}
         return {"act": "call"}
 
     if act == "raise":
