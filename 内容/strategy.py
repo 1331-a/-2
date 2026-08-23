@@ -22,7 +22,8 @@ strategy.py — AI 决策引擎（升级版）。
 
 import time
 
-from evaluator import TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND, evaluate_7
+from evaluator import (TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND,
+                       FULL_HOUSE, evaluate_7)
 from equity import monte_carlo_equity
 from ranges import hand_percentile
 from opponent import OpponentModel
@@ -111,16 +112,18 @@ ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总
 LEAD_NO_ALLIN = 2000         # 优势阈值：超过则进入锁定模式
 LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
 
-# ---- 加注增量上限（全局，用户规则）----
-# 我方任何加注的「增量」（跟平之外额外下注）≤ MAX_RAISE_INCR，避免
-# 一次加注把大筹码打进去（风控）。注意与 LEAD_LOCK 区别：本规则全局生效，
-# LEAD_LOCK（总注额≤1000）在优势时更严格。
-MAX_RAISE_INCR = 1000         # 我方加注最大增量（10BB）
+# ---- 总注额上限（用户规则 2026-08-23，取代原增量限制）----
+# 原「加注增量 ≤1000」已删除（与总注额 2000 上限冲突），统一为：
+#   - 翻前：非超强牌总注额 ≤ PREFLOP_MAX_BET(1000)；超强牌/次强牌(仅落后)
+#     可超，但全部 ≤ HIGH_BET_LIMIT(2000)；
+#   - 翻后：总注额 ≤ HIGH_BET_LIMIT(2000)，牌面≥三条或抢锁赢(steal)可超。
+#   - 单次下注金额（含 allin）以 HIGH_BET_LIMIT 为封顶（例外见
+#     _allin_high_bet_allowed），不再有独立的「增量」限制。
 
 # ---- 翻牌前总注额上限（用户规则）----
 # 翻牌前下注超过 1000 仅限超强牌（AA/KK/QQ/JJ/AKs）；其他牌翻前
 # 总注额不允许超过 PREFLOP_MAX_BET（在 _normalize 统一执行，
-# 超强牌豁免仍受全局增量上限 MAX_RAISE_INCR 约束）。
+# 超强牌可超 1000 但仍受 HIGH_BET_LIMIT(2000) 封顶；次强牌仅落后时豁免）。
 PREFLOP_MAX_BET = 1000       # 翻牌前非超强牌总注额上限（10BB）
 
 # ---- 翻后大注牌型门槛（用户规则）----
@@ -184,16 +187,11 @@ BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 # 【用户规则】牌面有利于自己（两对+非弱两对，或胜率≥MUSTWIN_EQ）且
 # 本次下注（跟注额 或 0.65 池的主动注）后若落败将导致对手锁胜：
 #   落败后 lead_new = lead - 2×本手投入（我 -2倍投入，对手 +同额，差 -2倍）；
-#   对手锁胜需 对手领先 > 2.5×大盲×(剩余手数-1)（与 _fold_out_active 同口径）
+#   对手锁胜需 对手领先 > 1.5×大盲×(剩余手数-1)（与 _fold_out_active 同口径）
 #   ⇒ 当 2×投入后 > 我方领先 + 2.5×大盲×(剩余手数-1) 时，本手即生死局。
 # → 无条件全下：输了反正对手锁胜，赢面大就该全力搏——allin 兼具弃牌权益
 #   与最大价值（若对手弃牌则直接赢下底池）。优先级高于规则2 与 LEAD_LOCK
 #   的注码限制（这些场景下保守小注与全下面对同样的失败后果）；
-#   但锁胜弃牌（fold-out）仍优先——能零方差锁胜就不冒险。
-MUSTWIN_EQ = 0.65             # 「牌面有利」的胜率底线（两对+ 免 MC 直接判有利）
-                              # 0.65 = 明显占优；顶对弱踢脚(~0.55)不触发，避免生死局乱推
-MUSTWIN_NEXT_BET_FRAC = 0.65  # 估算「下次下注」的底池比例（面对下注时用跟注额）
-
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
@@ -294,19 +292,32 @@ def _allin_floor_guard(state, action):
 
 # ---------------- 规则2/规则3（用户规则，优先级 2/3） ----------------
 def _is_super_hand(hole):
-    """超强牌定义（规则3/翻前上限豁免）：AA/KK/QQ/JJ（对子点数≥J=11）、
-    AQ/AK/KQ（含同花与不同花，2026-08-22 用户扩展）。
-
-    这类牌即使投入超过 BET_CAP/PREFLOP_MAX_BET 也允许大注（榨取价值），
-    其余牌受规则3 / 翻前 1000 上限限制。
+    """超强牌（最严格版，用户规则 2026-08-23）：AA/KK/QQ/JJ（对子点数≥J=11）
+    或 AKs（同花 AK）。唯一获得翻前 1000 上限豁免的牌（可超 1000 但 ≤2000）。
     """
     r = sorted(c // 4 for c in hole)
     hi, lo = r[1], r[0]
     if hi == lo and hi >= 11:            # JJ+（口袋对 J 及以上）
         return True
-    if hi == 14 and lo >= 12:            # AQ / AK（含 AQs/AQo/AKs/AKo）
+    suited = (hole[0] % 4) == (hole[1] % 4)
+    return hi == 14 and lo == 13 and suited   # AKs（同花 AK）
+
+
+def _is_sub_strong(hole):
+    """次强牌：AQ/AK/KQ（含同花与不同花；AKo 属次强，AKs 是超强）。
+    仅大幅落后（desperate/doomed）时豁免翻前 1000 上限（用户规则），
+    其余时段与普通牌一样受 PREFLOP_MAX_BET 约束。
+    """
+    r = sorted(c // 4 for c in hole)
+    hi, lo = r[1], r[0]
+    if hi == lo and hi >= 11:
+        return False                      # 超强对子不在此列
+    suited = (hole[0] % 4) == (hole[1] % 4)
+    if hi == 14 and lo == 13 and suited:
+        return False                      # AKs 是超强牌
+    if hi == 14 and lo >= 12:             # AQ / AK（含 AQs/AQo/AKo）
         return True
-    return hi == 13 and lo == 12         # KQ（含 KQs/KQo）
+    return hi == 13 and lo == 12          # KQ（含 KQs/KQo）
 
 
 def _profit_lock_allin(state):
@@ -335,25 +346,6 @@ def _profit_lock_allin(state):
         return eq > PROFIT_LOCK_EQ
     except Exception:
         return False
-
-
-def _despair_allin(state):
-    """弃牌亏损线：本手弃牌会让累计亏损跌破 DESPAIR_ALLIN_LIMIT → 无条件全下。
-
-    【业务逻辑】弃牌后累计盈亏 = total_win_chips[我方] - 本局已投入
-    （INIT_CHIPS - my_chips，弃牌时已投部分全部输掉）。若该值 < -3000，
-    说明弃牌 = 彻底认输且无翻盘可能，此时无条件 allin 搏一把：
-    全下即使输掉也是同样的结局，赢了则起死回生（用户规则，优先级高于
-    常规决策——放在 decide 入口规则2 之后执行）。
-    """
-    try:
-        from game_state import INIT_CHIPS
-        invested = INIT_CHIPS - state.my_chips
-        if state.total_win_chips[state.my_id] - invested < DESPAIR_ALLIN_LIMIT:
-            return True
-    except Exception:
-        pass
-    return False
 
 
 def _allin_high_bet_allowed(state):
@@ -443,10 +435,6 @@ def decide(state, model, ctx=None):
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
-    # 【MUST-WIN】牌面有利 + 本次下注落败即致对手锁胜 → 无条件全下
-    # （用户规则，优先级高于规则2 与 LEAD_LOCK 注码限制；fold-out 仍优先）
-    if _must_win_allin(state, model):
-        return {"act": "allin"}
     # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
     # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
     if not _LEAD_LOCK and _profit_lock_allin(state):
@@ -527,51 +515,29 @@ def should_avoid_risk(state):
 
 
 def _river_paired_trap(state):
-    """
-    河牌「裸公对」陷阱检测（硬性风险规避，不经过任何数学计算）。
+    """【合并规则 2026-08-23】河牌圈公对存在 + 我方非(葫芦/三条/较大对≥Q 的
+    顶两对) → 面对对手全下直接弃牌（结构性风险，不做数学计算）。
 
-    【业务逻辑（供算法文档）】
-    用户规则：河牌圈，公共牌 ≥3 个不同点数且无 A、公对存在、我方最终
-    牌型仅为 ONE_PAIR 且对子全部来自公共牌（手牌两张均未配对）→ 面对
-    对手全下直接弃牌。
-
-    【改良——对子大小与公共牌关系优先，不看踢脚】
-    裸公对面对全下时，对手任意配对都是两对/三条，踢脚在「一对 vs 两对」
-    的比较中完全不参与——第 49 手 K♣8♥ 对公对 9 + 公面 Q，对手 Q5 配成
-    两对 QQ99，K 踢脚毫无意义。真正决定胜负的是：
-      1. 公面是否存在比公对更高的单张 → 对手拿它配公对即成更大两对；
-      2. 公对本身是否太小（<T）→ 能赢的对手牌（更小口袋对）太少。
-    满足任一 → 硬弃。只有「公对 ≥T 且是公面最高」的裸公对才走数学决策。
+    合并了原「河牌裸公对硬弃」与「领先弱两对弃牌」两条规则：
+      - 豁免：葫芦/四条/同花顺（FULL_HOUSE+）、三条、两对且较大对 ≥ Q(12)
+        （Q 高顶两对是强牌，可继续对抗）；
+      - 其余（裸公对一对/低两对/公对+踢脚等）遇对手全下 → 弃牌。
+    第 49 手（K♣8♥ 对公对9+公面Q）即命中：一对且非豁免 → 弃。
     """
     if state.current_round < 3 or len(state.board) != 5:
         return False                      # 仅河牌圈
     rc = {}
     for r in (c // 4 for c in state.board):
         rc[r] = rc.get(r, 0) + 1
-    if 14 in rc:
-        return False                      # 公面有 A → 规则排除
-    pair_rank = 0
-    for r, n in rc.items():
-        if n >= 2:
-            pair_rank = r
-            break
-    if pair_rank == 0:
+    if max(rc.values()) < 2:
         return False                      # 无公对
-    if len(rc) < 3:
-        return False                      # 不同点数 < 3（如 AAJ）→ 不触发
-    my = sorted((c // 4 for c in state.hole))
-    if my[0] == my[1]:
-        return False                      # 手牌口袋对 → 对子来自手牌，非裸公对
-    if evaluate_7(state.hole + state.board)[0] != ONE_PAIR:
-        return False                      # 两对/三条/… → 走其他逻辑（如弱两对）
-    # 对子大小与公共牌关系（不看踢脚）：
-    if any(r > pair_rank for r in rc):
-        return True                       # 公面有更高单张 → 对手配公对即成更大两对
-    if pair_rank < 10:
-        return True                       # 公对 < T：太小，能赢的对手牌太少
-    return False
-
-
+    e = evaluate_7(state.hole + state.board)
+    cat = e[0]
+    if cat >= THREE_OF_A_KIND:            # 三条/顺子/同花/葫芦/四条/同花顺 → 豁免
+        return False                      # （顺子在公对牌面是强牌，绝不弃）
+    if cat == TWO_PAIR and e[1] >= 12:    # 较大对 ≥ Q → 顶两对豁免
+        return False
+    return True
 def _risk_avoid_route(state, model):
     """
     公对弱两对的保守路线（规则3：与累计盈亏联动）。
@@ -628,58 +594,7 @@ def _fold_out_active(state):
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         hands_left = state.max_hand - state.hand_num
-        return lead > 2.5 * state.big_blind * hands_left
-    except Exception:
-        return False
-
-
-def _must_win_allin(state, model):
-    """【用户规则】必须赢下（must-win）判定：牌面有利 + 本次下注落败即致对手锁胜
-    → 返回 True，调用方无条件 allin。
-
-    条件A 牌面有利于自己：
-        - 两对及以上（且非弱两对，见 should_avoid_risk）→ 直接判有利（免 MC）；
-        - 否则胜率 ≥ MUSTWIN_EQ(0.60)（对抗对手当前范围）。
-    条件B 本次下注后若落败将导致对手锁胜：
-        落败时领先差变化 = -2×本手投入（我亏投入、对手赚同额，差变 2 倍），
-        对手锁胜（与 _fold_out_active 同口径）需 对手领先 > 2.5×大盲×剩余手数；
-        本手落败后剩余 hands_left-1 手 ⇒ 触发条件：
-            2 × invested_after > lead + 2.5 × big_blind × (hands_left - 1)
-        其中 invested_after = 本手已投 + 下次投入（跟注额，或 0.65 池的主动注）。
-    两条件同时成立 → 本手即生死局：输了下把都是对手锁胜，赢面大就该全力搏。
-
-    注意：本规则在 decide 中位于锁胜弃牌（fold-out）之后——若我能零方差
-    锁胜（fold-out 触发）则直接弃牌不冒险，本规则不越权；其余情况（含
-    LEAD_LOCK 生效区间）均按无条件全下处理（用户规则，优先级最高）。
-    """
-    try:
-        hands_left = state.max_hand - state.hand_num
-        if hands_left <= 0:
-            return False
-        from game_state import INIT_CHIPS
-        invested_now = INIT_CHIPS - state.my_chips           # 本手已投（含本轮）
-        if state.to_call > 0:
-            extra = min(state.my_left, state.to_call)        # 跟注投入
-        else:
-            extra = min(state.my_left,
-                        int(MUSTWIN_NEXT_BET_FRAC * max(state.pot, 1)))
-        invested_after = invested_now + extra
-        lead = (state.total_win_chips[state.my_id]
-                - state.total_win_chips[state.opp_id])
-        # 条件B（廉价预判，不满足直接返回，避免每次决策白跑 MC）
-        if 2 * invested_after - lead <= 2.5 * state.big_blind * max(hands_left - 1, 0):
-            return False
-        # 条件A：牌面有利
-        weak_pair = should_avoid_risk(state)
-        category = evaluate_7(state.hole + state.board)[0]
-        if category >= TWO_PAIR and not weak_pair:
-            return True
-        opp_raised = _opp_raised_preflop(state)
-        eq = monte_carlo_equity(
-            state.hole, state.board, iterations=MC_ITERATIONS,
-            opp_range_pct=_opp_range_pct(model, opp_raised),
-            deadline=time.time() + TIME_BUDGET)
-        return eq >= MUSTWIN_EQ
+        return lead > 1.5 * state.big_blind * hands_left
     except Exception:
         return False
 
@@ -723,7 +638,7 @@ def _match_adjust(state):
         # 2.5 倍余量兜底），则立即转入「放开一切豪赌」的冲刺模式。
         # 数学上比「最后十几把」的拍脑袋闸门更早、更准——只要对手锁胜
         # 条件在本局失败后成立，就该放弃稳健、全力搏翻盘。
-        if lead - 2 * bb <= -2.5 * bb * max(hands_left - 1, 1):
+        if lead - 2 * bb <= -1.5 * bb * max(hands_left - 1, 1):
             return "doomed"
 
         if hands_left <= 15:
@@ -912,10 +827,10 @@ def _button_vs_3bet(state, model, pct, arch, adj):
     elif adj in ("desperate", "doomed"):
         # 劣势追分：反加注也几乎全接（要翻盘必须先留在局里）
         call_pct = min(0.90, call_pct + 0.30)
-    # 【突袭大注】对手突然大幅加注（如 799→5300）→ 跟注范围收缩一半，
-    # 只留强牌（防止「理论上不该跟还是跟了」）
+    # 【突袭大注】对手突然大幅加注（如 799→5300）→ 跟注所需胜率门槛提高
+    # 10%（可量化：跟注范围百分位门槛收紧 0.10，等效胜率要求 +10%）
     if _OPP_JUMPED:
-        call_pct = max(0.05, call_pct * 0.5)
+        call_pct = max(0.05, call_pct - 0.10)
     if pct <= call_pct:
         return {"act": "call"}
     return {"act": "fold"}
@@ -962,9 +877,10 @@ def _bb_defend(state, model, pct, arch, adj):
         if adj in ("desperate", "doomed"):
             defend_pct = 1.0   # 劣势追分：任何牌都防守（含垃圾牌），留在局里搏翻盘
 
-    # 【突袭大注】对手突然大幅加注 → 防守范围收缩一半（只留强牌）
+    # 【突袭大注】对手突然大幅加注 → 防守所需胜率门槛提高 10%
+    # （可量化：防守范围百分位门槛收紧 0.10，等效胜率要求 +10%）
     if _OPP_JUMPED:
-        defend_pct = max(0.10, defend_pct * 0.5)
+        defend_pct = max(0.10, defend_pct - 0.10)
 
     if pct <= threebet_pct:
         return _raise_to(state, 3.0 * state.curbet[state.opp_id])
@@ -1086,9 +1002,11 @@ def _opp_checked_this_round(state):
 
 
 def _opp_check_bet(state, opp_checked):
-    """对手 check 后立刻下小注（用户规则）；否则过牌。"""
+    """对手 check 后立刻下小注（用户规则）：min(0.40×底池, 1000)；否则过牌。
+    （深底池时 0.40 池可能超 1000，受 PREFLOP/翻后注码上限约束取 min。）"""
     if opp_checked:
-        return _bet_fraction(state, OPP_CHECK_BET)
+        frac = min(OPP_CHECK_BET, 1000.0 / max(state.pot, 1))
+        return _bet_fraction(state, frac)
     return {"act": "check"}
 
 
@@ -1351,8 +1269,16 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
     # 【延迟施压】双方持续过牌后突然加注 / 对手连续过牌≥2次直接加注：
-    # 弃牌率额外加成（所有档位生效，normal 也适用）
-    fold_eq = min(0.95, fold_eq + _delayed_aggression_bonus(state))
+    # 弃牌率额外加成（所有档位生效，normal 也适用）。
+    # 【前置条件 2026-08-23】累计盈亏 > -3000（非深亏）且 对手面对下注弃牌率
+    # > 40% 才生效——落后时滥用延迟施压会白送筹码。
+    _pnl_now = 0
+    try:
+        _pnl_now = state.total_win_chips[state.my_id]
+    except Exception:
+        pass
+    if _pnl_now > -3000 and model.eff_fold_to_bet() > 0.40:
+        fold_eq = min(0.95, fold_eq + _delayed_aggression_bonus(state))
     # 【响应学习】诈唬用「该尺寸实测弃牌率」替代全局弃牌率（更准）：
     # 计划下注 BLUFF(0.55 池) → 查对手对 medium 桶的真实反应，
     # 比如「我下注 550 后对手 8 次弃 6 次」→ 用 0.75 而非全局估计。
@@ -1559,31 +1485,25 @@ def _normalize(state, action):
     if state.any_allin:
         if _LEAD_LOCK:
             return {"act": "fold"}   # LEAD_LOCK 时对手全下也弃（不 allin）
-        # 【用户规则】弃牌亏损线：对手全押下弃牌会致累计亏损跌破 -3000
-        # → 不弃，全下搏（无条件，不看牌力）
         # 【doomed 禁弃】本局失败后对手即可锁胜 → 弃牌=直接认输，全下搏翻盘
-        if act == "fold" and (_despair_allin(state) or
-                              _match_adjust(state) == "doomed"):
+        # （doomed 已在 decide 入口无条件 allin，此处为兜底——决策层若漏判）
+        if act == "fold" and _match_adjust(state) == "doomed":
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         if act == "fold":
             return {"act": "fold"}
         # 【用户规则】allin 金额 ≤2000（仅翻后；例外见 _allin_high_bet_allowed）：
         # 对手全押下我方全下金额超限且无例外 → 弃牌（规则5 内只允许弃/全押）。
         # 翻前 allin 由「翻前全下分档」控制（eq+盈亏档位），不受金额上限约束。
-        # 例外补充：despair（弃牌即深亏）时跟全下=弃牌升级 allin 的等价行为
-        # （弃牌会触发 _despair_allin → allin），故放行。
         if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
-                not _allin_high_bet_allowed(state) and not _despair_allin(state):
+                not _allin_high_bet_allowed(state):
             return {"act": "fold"}
         return {"act": "allin"} if my_left > 0 else {"act": "fold"}
 
     if act == "fold":
-        # 【用户规则】弃牌亏损线：弃牌会致累计亏损跌破 -3000 → 无条件全下；
         # 【doomed 禁弃】本局失败后对手即可锁胜（_match_adjust==doomed）→
-        # 弃牌=直接认输，任何弃牌一律升级为全下搏翻盘。
-        # （LEAD_LOCK 领先锁定优先：领先时绝不 allin，且领先不可能亏损超线）
-        if not _LEAD_LOCK and (_despair_allin(state) or
-                               _match_adjust(state) == "doomed"):
+        # 弃牌=直接认输，任何弃牌一律升级为全下搏翻盘（doomed 已在 decide
+        # 入口无条件 allin，此处为兜底）。LEAD_LOCK 领先锁定优先（不可能 doomed）。
+        if not _LEAD_LOCK and _match_adjust(state) == "doomed":
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         return {"act": "fold"}
 
@@ -1600,9 +1520,6 @@ def _normalize(state, action):
                 # 主动全下超限 → 降级为 2000 上限的普通加注（保持游戏进行）
                 num = HIGH_BET_LIMIT
                 min_r = state.min_raise()
-                after_call = state.curbet[state.my_id] + state.to_call
-                if num > after_call + MAX_RAISE_INCR:
-                    num = after_call + MAX_RAISE_INCR
                 if _LEAD_LOCK:
                     num = min(num, LEAD_MAX_BET)
                 if num < min_r:
@@ -1616,9 +1533,8 @@ def _normalize(state, action):
             return {"act": "check"}
         if to_call >= my_left:      # 需严格 my_left > to_call 才能跟注
             # 【用户规则】跟注即全下且金额超 2000 无例外 → 弃（仅翻后）
-            # （despair 除外：弃牌会升级 allin，跟全下等价）
             if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
-                    not _allin_high_bet_allowed(state) and not _despair_allin(state):
+                    not _allin_high_bet_allowed(state):
                 return {"act": "fold"}
             return {"act": "allin"}
         return {"act": "call"}
@@ -1630,23 +1546,24 @@ def _normalize(state, action):
             num = 0
         min_r = state.min_raise()
         max_r = state.max_raise()
-        # 【全局规则】我方加注增量 ≤ MAX_RAISE_INCR：总注额 ≤ 跟平后注额 + 1000。
-        # 跟平后注额 = 我方本轮已投 + 需跟注额（再往上加才是「增量」）。
-        after_call = state.curbet[state.my_id] + state.to_call
-        if num > after_call + MAX_RAISE_INCR:
-            num = after_call + MAX_RAISE_INCR
+        # 【用户规则 2026-08-23】原「加注增量≤1000」已删除，统一由
+        # 下方 HIGH_BET_LIMIT(2000) 总注额封顶管控（无独立增量限制）。
         if _LEAD_LOCK:
             # 优势锁定：单次注码 ≤ LEAD_MAX_BET；若最小加注已超上限
             # （对手注已很大），则无法合法加注 → 降级 call/check
             num = min(num, LEAD_MAX_BET)
             if num < min_r:
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
-        # 【用户规则】翻牌前总注额 ≤ PREFLOP_MAX_BET，仅超强牌可超限：
-        # 非超强牌面对大反加（min_raise 已超上限）→ 无法合法加注 → 降级
+        # 【用户规则】翻牌前总注额 ≤ PREFLOP_MAX_BET(1000)：
+        #   超强牌（AA/KK/QQ/JJ/AKs）豁免；
+        #   次强牌（AQ/AK/KQ）仅大幅落后（desperate/doomed）豁免；
+        #   其余牌面对大反加（min_raise 已超上限）→ 无法合法加注 → 降级
         if state.stage == "preflop" and not _is_super_hand(state.hole):
-            num = min(num, PREFLOP_MAX_BET)
-            if num < min_r:
-                return {"act": "call"} if to_call > 0 else {"act": "check"}
+            _pf_adj = _match_adjust(state)
+            if not (_is_sub_strong(state.hole) and _pf_adj in ("desperate", "doomed")):
+                num = min(num, PREFLOP_MAX_BET)
+                if num < min_r:
+                    return {"act": "call"} if to_call > 0 else {"act": "check"}
         # 【用户规则】每次下注/加注 ≤ HIGH_BET_LIMIT(2000)，除非：
         #   ①翻后牌型 ≥ 三条（顺子/同花/葫芦/四条/同花顺）；
         #   ②抢对方锁赢（steal 偷盲档——对手疑似锁胜时高频 C-Bet 允许大注）。

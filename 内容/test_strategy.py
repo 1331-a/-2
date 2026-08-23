@@ -210,7 +210,8 @@ check("领先不足不锁胜(AA正常开池)", a == {"act": "raise", "num": 500}
 mid70 = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=10, max_hand=70,
             total_win_chips=[12000, -12000], total_win_games=[10, 0])
 a = act(mid70)
-check("中期大领先不触发(AA正常开池)", a == {"act": "raise", "num": 500}, str(a))
+# 【锁胜系数 1.5】中期大领先（lead 24000 > 1.5×200×60=18000）→ 锁胜弃牌触发
+check("中期大领先触发锁胜弃牌(fold)", a == {"act": "fold"}, str(a))
 
 # ---------- 5. 诱敌深入（反制激进对手）----------
 def aggressive():
@@ -434,13 +435,16 @@ a = decide(st49, OpponentModel())
 check("公对陷阱:第49手对手全下直接弃牌", a == {"act": "fold"}, str(a))
 # 对照组：公对K + 无更高单张（A踢脚裸公对）→ 不硬弃（数学决策）
 stk = parse_request(req(my_id=0, my_cards=[51, 24], public_cards=[46, 44, 29, 16, 11]))
-check("公对陷阱:公对K无更高单张不触发", _river_paired_trap(stk) is False, "")
+# 【合并规则 2026-08-23】公对K + A踢脚（一对，非豁免）→ 触发弃牌
+check("公对陷阱:公对K+A踢脚触发弃牌", _river_paired_trap(stk) is True, "")
 # 对照组：手牌口袋对 → 对子来自手牌，不触发
 stp = parse_request(req(my_id=0, my_cards=[24, 25], public_cards=[42, 29, 16, 11, 30]))
-check("公对陷阱:口袋对不触发", _river_paired_trap(stp) is False, "")
+# 【合并规则】口袋对66 + 公对9 → 两对99-66（最大对9<Q）→ 触发弃牌
+check("公对陷阱:口袋对+公对低两对触发", _river_paired_trap(stp) is True, "")
 # 对照��：公面有 A → 规则排除
 sta = parse_request(req(my_id=0, my_cards=[47, 24], public_cards=[50, 29, 16, 11, 30]))
-check("公对陷阱:公面有A不触发", _river_paired_trap(sta) is False, "")
+# 【合并规则】公面有A不再排除：公对9 + 高牌 → 触发弃牌
+check("公对陷阱:公面A+公对触发弃牌", _river_paired_trap(sta) is True, "")
 # 对照组：转牌（4张）→ 不触发
 stt = parse_request(req(my_id=0, my_cards=[47, 24], public_cards=[42, 29, 16, 11]))
 check("公对陷阱:非河牌不触发", _river_paired_trap(stt) is False, "")
@@ -561,37 +565,6 @@ for _ in range(6):
     m2.update("call", False, street=3)
 check("河牌弃牌率识别", m2.river_fold_rate() >= 0.40, "%.2f" % m2.river_fold_rate())
 
-# ---------- 11. MUST-WIN 无条件全下（用户规则 2026-08-23） ----------
-from strategy import _must_win_allin   # noqa: E402
-
-# 触发：翻牌两对 + 深投入 + 落后 + 剩2手 → 无条件全下
-mw_spot = req(my_id=0, my_chips=8000, my_cards=[45, 21],
-              public_cards=[46, 22, 5],
-              hand=68, max_hand=70, total_win_chips=[-1000, 1000],
-              history=[{"round": 0, "player_id": 0, "action": 12000, "action_type": "raise"},
-                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"}])
-st_mw = parse_request(mw_spot)
-check("MUST-WIN 触发判定", _must_win_allin(st_mw, OpponentModel()) is True)
-a = act(mw_spot)
-check("MUST-WIN 无条件全下", a == {"act": "allin"}, str(a))
-
-# 不触发：同两对但投入小、手数多 → 非生死局
-mw_safe = req(my_id=0, my_chips=19800, my_cards=[45, 21],
-              public_cards=[46, 22, 5],
-              hand=10, max_hand=70, total_win_chips=[-1000, 1000],
-              history=[{"round": 0, "player_id": 0, "action": 200, "action_type": "raise"},
-                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"}])
-st_safe = parse_request(mw_safe)
-check("MUST-WIN 非生死局不触发", _must_win_allin(st_safe, OpponentModel()) is False)
-
-# fold-out 优先：领先巨大 → 即使两对也弃牌（不冒险）
-mw_lead = req(my_id=0, my_chips=8000, my_cards=[45, 21],
-              public_cards=[46, 22, 5],
-              hand=68, max_hand=70, total_win_chips=[8000, -8000],
-              history=[{"round": 0, "player_id": 0, "action": 12000, "action_type": "raise"},
-                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"}])
-a = act(mw_lead)
-check("fold-out 优先于 MUST-WIN", a == {"act": "fold"}, str(a))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

@@ -113,10 +113,20 @@ class MatchContext:
         allin_cnt = sum(1 for h in q if h[1])
         self.direct_blind_rate = blind / len(wins) if wins else 0.0
         self.opp_allin_freq = allin_cnt / len(q) if q else 0.0
-        self.opponent_locking = (
-            len(wins) >= LOCK_MIN_SAMPLES
-            and self.direct_blind_rate > LOCK_RATE
-            and self.opp_allin_freq < LOCK_ALLIN_FREQ)
+        # 分阶段锁胜判定（2026-08-23）：
+        #   <10 局：数据不足不判定（前 10 局正常打）；
+        #   10~20 局：阈值放宽（弃牌率 > 70% 才触发，防小样本误判）；
+        #   ≥20 局：正常阈值（弃牌率 > LOCK_RATE 0.65 且 全下频率 < 10%）。
+        if len(wins) < 10:
+            self.opponent_locking = False
+        elif len(wins) < 20:
+            self.opponent_locking = (
+                self.direct_blind_rate > 0.70
+                and self.opp_allin_freq < LOCK_ALLIN_FREQ)
+        else:
+            self.opponent_locking = (
+                self.direct_blind_rate > LOCK_RATE
+                and self.opp_allin_freq < LOCK_ALLIN_FREQ)
 
         # 模块三：回撤降档 + 连续盈利计数
         if net <= -DRAWDOWN_PCT * INIT_CHIPS:

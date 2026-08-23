@@ -134,16 +134,16 @@ check("翻前2000封顶:AKs 4-bet≤2000或降级",
       (a.get("act") == "raise" and a["num"] <= 2000), str(a))
 
 # ============ D. 超强牌扩展（AQ/AK/KQ）============
-from strategy import _is_super_hand   # noqa: E402
+from strategy import _is_super_hand, _is_sub_strong   # noqa: E402
 
 
 def _I(n):
     return n + 8   # 平台牌号 → 内部编码
 
 
-check("超强牌:AKo是", _is_super_hand([_I(48), _I(45)]) is True, "")
-check("超强牌:AQo是", _is_super_hand([_I(48), _I(41)]) is True, "")
-check("超强牌:KQo是", _is_super_hand([_I(44), _I(41)]) is True, "")
+check("超强牌:AKo是次强非超强", _is_super_hand([_I(48), _I(45)]) is False and _is_sub_strong([_I(48), _I(45)]) is True, "")
+check("超强牌:AQo是次强非超强", _is_super_hand([_I(48), _I(41)]) is False and _is_sub_strong([_I(48), _I(41)]) is True, "")
+check("超强牌:KQo是次强非超强", _is_super_hand([_I(44), _I(41)]) is False and _is_sub_strong([_I(44), _I(41)]) is True, "")
 check("超强牌:AJo不是", _is_super_hand([_I(48), _I(37)]) is False, "")
 check("超强牌:KJo不是", _is_super_hand([_I(44), _I(37)]) is False, "")
 
@@ -151,19 +151,21 @@ check("超强牌:KJo不是", _is_super_hand([_I(44), _I(37)]) is False, "")
 r = req(my_id=1, my_chips=19500, my_cards=[48, 45],
         history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"}])
 a = decide(parse_request(r), OpponentModel())
-check("超强牌:AKo 3-bet豁免>1000",
-      a.get("act") == "raise" and a["num"] > 1000, str(a))
+check("超强牌:AKo次强正常档3-bet≤1000",
+      a.get("act") == "raise" and a["num"] <= 1000, str(a))
 
 # ============ E. 弃牌亏损线：弃牌致累计亏损超 -3000 → 无条件 allin ============
 # E1) pnl=-2000 + 已投1500 → 弃牌后-3500 < -3000 → 72o 也 allin
 r = req(my_cards=[23, 2], my_chips=18500, total_win_chips=[-2000, 2000])
 a = decide(parse_request(r), OpponentModel())
-check("弃牌亏损线:弃牌-3500→无条件allin", a == {"act": "allin"}, str(a))
+# 【2026-08-23】despair 已删除统一 doomed：该场景（pnl=-2000 未到 doomed）
+# 弃牌不再升级 allin
+check("despair删除:弃牌-3500不再强制allin", a.get("act") != "allin", str(a))
 
 # E2) pnl=-5000 + 已投500 → 弃牌后-5500 → allin
 r = req(my_cards=[23, 2], my_chips=19500, total_win_chips=[-5000, 5000])
 a = decide(parse_request(r), OpponentModel())
-check("弃牌亏损线:弃牌-5500→allin", a == {"act": "allin"}, str(a))
+check("despair删除:弃牌-5500不再强制allin", a.get("act") != "allin", str(a))
 
 # E3) 对照组：pnl=-1000 + 已投1500 → 弃牌后-2500 未超线 → 不触发（正常决策）
 r = req(my_cards=[23, 2], my_chips=18500, total_win_chips=[-1000, 1000])
@@ -177,7 +179,7 @@ r = req(my_id=0, my_cards=[23, 2], my_chips=18500, total_win_chips=[-2000, 2000]
                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                  {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}])
 a = decide(parse_request(r), OpponentModel())
-check("弃牌亏损线:翻后弱牌面对全下allin", a == {"act": "allin"}, str(a))
+check("despair删除:翻后弱牌面对全下不再allin", a.get("act") != "allin", str(a))
 
 # ============ F. allin 金额 ≤2000（仅翻后，用户反馈修复） ============
 # F1) 翻后两对 + 对手全下 + 深筹码（非 despair）→ 跟全下超限 → 弃

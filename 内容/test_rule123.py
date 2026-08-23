@@ -15,7 +15,7 @@ sys.path.insert(0, ".")
 from game_state import parse_request  # noqa: E402
 from opponent import OpponentModel  # noqa: E402
 from match_ctx import MatchContext  # noqa: E402
-from strategy import decide, _is_super_hand, _match_adjust  # noqa: E402
+from strategy import decide, _is_super_hand, _is_sub_strong, _match_adjust  # noqa: E402
 
 fails = 0
 
@@ -113,7 +113,9 @@ st8 = parse_request(req(my_chips=12000, my_cards=[48, 44],
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st8, OpponentModel())
-check("规则2:MUST-WIN覆盖LEAD_LOCK全下", a == {"act": "allin"}, str(a))
+# 【2026-08-23】MUST-WIN 已删除统一 doomed：本场景 LEAD_LOCK 生效（注≤1000）
+check("规则2:领先2500深投入受LEAD_LOCK限(≤1000非allin)",
+      a.get("act") != "allin" and (a.get("act") != "raise" or a["num"] <= 1000), str(a))
 
 # 9) 盈利≤0 → 规则2 本身不触发；但本局为生死局（深投入+AKs 顶对）→
 #    由 MUST-WIN 无条件全下接管（新规则 2026-08-23）
@@ -124,7 +126,8 @@ st9 = parse_request(req(my_chips=16000, my_cards=[48, 44],
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st9, OpponentModel())
-check("规则2:不盈利但生死局MUST-WIN全下", a == {"act": "allin"}, str(a))
+# MUST-WIN 已删：盈利0 非 doomed → 正常决策（受 2000 封顶）
+check("规则2:不盈利不再MUST-WIN全下", a.get("act") != "allin", str(a))
 
 # ================= 规则3：下注额限制 =================
 print("===== 规则3 =====")
@@ -149,7 +152,8 @@ st10b = parse_request(req(my_chips=15000, my_cards=[46, 13],
                                    {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                    {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st10b, OpponentModel())
-check("规则3:生死局MUST-WIN覆盖规则3全下", a == {"act": "allin"}, str(a))
+# MUST-WIN 已删：非 doomed → 规则3/2000 封顶正常生效
+check("规则3:非doomed不再MUST-WIN全下", a.get("act") != "allin", str(a))
 
 # 11) pot≤2000 触发降级 → 总注额 ≤ 1000
 st11 = parse_request(req(my_chips=19200, my_cards=[46, 13],
@@ -177,9 +181,9 @@ check("规则3:AA超强", _is_super_hand([56, 58]) is True, "")
 check("规则3:KK超强", _is_super_hand([52, 54]) is True, "")
 check("规则3:JJ超强", _is_super_hand([44, 46]) is True, "")
 check("规则3:AKs超强", _is_super_hand([56, 52]) is True, "")
-check("规则3:AKo超强(2026-08-22扩展)", _is_super_hand([56, 53]) is True, "")
-check("规则3:AQo超强(2026-08-22扩展)", _is_super_hand([56, 49]) is True, "")
-check("规则3:KQo超强(2026-08-22扩展)", _is_super_hand([52, 49]) is True, "")
+check("规则3:AKo次强非超强(2026-08-23)", _is_super_hand([56, 53]) is False and _is_sub_strong([56, 53]) is True, "")
+check("规则3:AQo次强非超强(2026-08-23)", _is_super_hand([56, 49]) is False and _is_sub_strong([56, 49]) is True, "")
+check("规则3:KQo次强非超强(2026-08-23)", _is_super_hand([52, 49]) is False and _is_sub_strong([52, 49]) is True, "")
 check("规则3:TT非超强", _is_super_hand([40, 42]) is False, "")
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))

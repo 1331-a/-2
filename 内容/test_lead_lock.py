@@ -72,7 +72,8 @@ st = parse_request(req(total_win_chips=[-2000, 2000], public_cards=[46, 6, 1],
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st, OpponentModel())
-check("锁注对照:落后2000生死局被MUST-WIN接管全下", a == {"act": "allin"}, str(a))
+# MUST-WIN 已删：落后2000 非 doomed → 2000 封顶普通注
+check("锁注对照:落后2000不再MUST-WIN全下", a.get("act") != "allin", str(a))
 
 # ---------- 加注增量上限（全局：增量≤1000） ----------
 # 翻后无人下注大底池价值注（pot 3000）→ 增量≤1000 → 总注额≤1000
@@ -81,14 +82,16 @@ st = parse_request(req(total_win_chips=[0, 0], public_cards=[46, 6, 1], my_chips
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st, OpponentModel())
-check("增量上限:大底池价值注增量≤1000", a.get("act") == "raise" and a["num"] <= 1000, str(a))
+# 【2026-08-23】增量上限已删，统一 2000 总注额封顶
+check("注码封顶:大底池价值注≤2000", a.get("act") == "raise" and a["num"] <= 2000, str(a))
 # 面对下注加注（to_call=300）→ 总注额 ≤ 300+1000=1300
 st = parse_request(req(total_win_chips=[0, 0], public_cards=[46, 6, 1], my_chips=18500,
                        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 300, "action_type": "raise"}]))
 a = decide(st, OpponentModel())
-check("增量上限:面对下注加注增量≤1000", a.get("act") == "raise" and a["num"] <= 1300, str(a))
+# 增量已删：面对下注加注 ≤2000 封顶
+check("注码封顶:面对下注加注≤2000", a.get("act") == "raise" and a["num"] <= 2000, str(a))
 # 对照组：翻前开池 2.5BB（增量 200<1000）不受影响
 st = parse_request(req(total_win_chips=[0, 0], my_chips=19950, my_cards=[48, 51], history=[]))
 a = decide(st, OpponentModel())
