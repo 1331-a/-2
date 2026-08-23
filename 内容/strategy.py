@@ -180,6 +180,20 @@ BET_CAP = 1000                # 非超强牌主动下注总注额上限
 BET_CAP_POT = 2000            # 底池超过此值时完全放弃主动下注（过牌/跟注）
 BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 
+# ---- 必须赢下（MUST-WIN）：本次下注落败即致对手锁胜 → 无条件全下 ----
+# 【用户规则】牌面有利于自己（两对+非弱两对，或胜率≥MUSTWIN_EQ）且
+# 本次下注（跟注额 或 0.65 池的主动注）后若落败将导致对手锁胜：
+#   落败后 lead_new = lead - 2×本手投入（我 -2倍投入，对手 +同额，差 -2倍）；
+#   对手锁胜需 对手领先 > 2.5×大盲×(剩余手数-1)（与 _fold_out_active 同口径）
+#   ⇒ 当 2×投入后 > 我方领先 + 2.5×大盲×(剩余手数-1) 时，本手即生死局。
+# → 无条件全下：输了反正对手锁胜，赢面大就该全力搏——allin 兼具弃牌权益
+#   与最大价值（若对手弃牌则直接赢下底池）。优先级高于规则2 与 LEAD_LOCK
+#   的注码限制（这些场景下保守小注与全下面对同样的失败后果）；
+#   但锁胜弃牌（fold-out）仍优先——能零方差锁胜就不冒险。
+MUSTWIN_EQ = 0.65             # 「牌面有利」的胜率底线（两对+ 免 MC 直接判有利）
+                              # 0.65 = 明显占优；顶对弱踢脚(~0.55)不触发，避免生死局乱推
+MUSTWIN_NEXT_BET_FRAC = 0.65  # 估算「下次下注」的底池比例（面对下注时用跟注额）
+
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
@@ -397,6 +411,10 @@ def decide(state, model, ctx=None):
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
+    # 【MUST-WIN】牌面有利 + 本次下注落败即致对手锁胜 → 无条件全下
+    # （用户规则，优先级高于规则2 与 LEAD_LOCK 注码限制；fold-out 仍优先）
+    if _must_win_allin(state, model):
+        return {"act": "allin"}
     # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
     # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
     if not _LEAD_LOCK and _profit_lock_allin(state):
@@ -579,6 +597,57 @@ def _fold_out_active(state):
                 - state.total_win_chips[state.opp_id])
         hands_left = state.max_hand - state.hand_num
         return lead > 2.5 * state.big_blind * hands_left
+    except Exception:
+        return False
+
+
+def _must_win_allin(state, model):
+    """【用户规则】必须赢下（must-win）判定：牌面有利 + 本次下注落败即致对手锁胜
+    → 返回 True，调用方无条件 allin。
+
+    条件A 牌面有利于自己：
+        - 两对及以上（且非弱两对，见 should_avoid_risk）→ 直接判有利（免 MC）；
+        - 否则胜率 ≥ MUSTWIN_EQ(0.60)（对抗对手当前范围）。
+    条件B 本次下注后若落败将导致对手锁胜：
+        落败时领先差变化 = -2×本手投入（我亏投入、对手赚同额，差变 2 倍），
+        对手锁胜（与 _fold_out_active 同口径）需 对手领先 > 2.5×大盲×剩余手数；
+        本手落败后剩余 hands_left-1 手 ⇒ 触发条件：
+            2 × invested_after > lead + 2.5 × big_blind × (hands_left - 1)
+        其中 invested_after = 本手已投 + 下次投入（跟注额，或 0.65 池的主动注）。
+    两条件同时成立 → 本手即生死局：输了下把都是对手锁胜，赢面大就该全力搏。
+
+    注意：本规则在 decide 中位于锁胜弃牌（fold-out）之后——若我能零方差
+    锁胜（fold-out 触发）则直接弃牌不冒险，本规则不越权；其余情况（含
+    LEAD_LOCK 生效区间）均按无条件全下处理（用户规则，优先级最高）。
+    """
+    try:
+        hands_left = state.max_hand - state.hand_num
+        if hands_left <= 0:
+            return False
+        from game_state import INIT_CHIPS
+        invested_now = INIT_CHIPS - state.my_chips           # 本手已投（含本轮）
+        if state.to_call > 0:
+            extra = min(state.my_left, state.to_call)        # 跟注投入
+        else:
+            extra = min(state.my_left,
+                        int(MUSTWIN_NEXT_BET_FRAC * max(state.pot, 1)))
+        invested_after = invested_now + extra
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        # 条件B（廉价预判，不满足直接返回，避免每次决策白跑 MC）
+        if 2 * invested_after - lead <= 2.5 * state.big_blind * max(hands_left - 1, 0):
+            return False
+        # 条件A：牌面有利
+        weak_pair = should_avoid_risk(state)
+        category = evaluate_7(state.hole + state.board)[0]
+        if category >= TWO_PAIR and not weak_pair:
+            return True
+        opp_raised = _opp_raised_preflop(state)
+        eq = monte_carlo_equity(
+            state.hole, state.board, iterations=MC_ITERATIONS,
+            opp_range_pct=_opp_range_pct(model, opp_raised),
+            deadline=time.time() + TIME_BUDGET)
+        return eq >= MUSTWIN_EQ
     except Exception:
         return False
 

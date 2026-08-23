@@ -561,5 +561,37 @@ for _ in range(6):
     m2.update("call", False, street=3)
 check("河牌弃牌率识别", m2.river_fold_rate() >= 0.40, "%.2f" % m2.river_fold_rate())
 
+# ---------- 11. MUST-WIN 无条件全下（用户规则 2026-08-23） ----------
+from strategy import _must_win_allin   # noqa: E402
+
+# 触发：翻牌两对 + 深投入 + 落后 + 剩2手 → 无条件全下
+mw_spot = req(my_id=0, my_chips=8000, my_cards=[45, 21],
+              public_cards=[46, 22, 5],
+              hand=68, max_hand=70, total_win_chips=[-1000, 1000],
+              history=[{"round": 0, "player_id": 0, "action": 12000, "action_type": "raise"},
+                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"}])
+st_mw = parse_request(mw_spot)
+check("MUST-WIN 触发判定", _must_win_allin(st_mw, OpponentModel()) is True)
+a = act(mw_spot)
+check("MUST-WIN 无条件全下", a == {"act": "allin"}, str(a))
+
+# 不触发：同两对但投入小、手数多 → 非生死局
+mw_safe = req(my_id=0, my_chips=19800, my_cards=[45, 21],
+              public_cards=[46, 22, 5],
+              hand=10, max_hand=70, total_win_chips=[-1000, 1000],
+              history=[{"round": 0, "player_id": 0, "action": 200, "action_type": "raise"},
+                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"}])
+st_safe = parse_request(mw_safe)
+check("MUST-WIN 非生死局不触发", _must_win_allin(st_safe, OpponentModel()) is False)
+
+# fold-out 优先：领先巨大 → 即使两对也弃牌（不冒险）
+mw_lead = req(my_id=0, my_chips=8000, my_cards=[45, 21],
+              public_cards=[46, 22, 5],
+              hand=68, max_hand=70, total_win_chips=[8000, -8000],
+              history=[{"round": 0, "player_id": 0, "action": 12000, "action_type": "raise"},
+                       {"round": 0, "player_id": 1, "action": 0, "action_type": "call"}])
+a = act(mw_lead)
+check("fold-out 优先于 MUST-WIN", a == {"act": "fold"}, str(a))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

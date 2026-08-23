@@ -102,7 +102,10 @@ st7 = parse_request(req(my_chips=18000, my_cards=[48, 44],
 a = decide(st7, OpponentModel())
 check("规则2:已投不足不触发", a.get("act") != "allin", str(a))
 
-# 8) LEAD_LOCK 优先：盈利2500（lead5000>2000）→ 即使深投入也不 allin（注码≤1000）
+# 8) MUST-WIN 覆盖 LEAD_LOCK：盈利2500（lead5000>2000 本应锁定不 allin），
+#    但本局已深投入（8000）且牌面有利（AKs 顶对，eq~0.75）——落败即致对手
+#    锁胜（2×投入后-领先 > 2.5bb×剩余手数）→ 按用户新规则【无条件全下】。
+#    （LEAD_LOCK 的小注方案同样会输掉生死局，故 MUST-WIN 优先）
 st8 = parse_request(req(my_chips=12000, my_cards=[48, 44],
                         total_win_chips=[2500, -2500],
                         public_cards=[46, 6, 1],
@@ -110,9 +113,10 @@ st8 = parse_request(req(my_chips=12000, my_cards=[48, 44],
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st8, OpponentModel())
-check("规则2:LEAD_LOCK优先不allin", a.get("act") != "allin", str(a))
+check("规则2:MUST-WIN覆盖LEAD_LOCK全下", a == {"act": "allin"}, str(a))
 
-# 9) 盈利≤0 → 不触发
+# 9) 盈利≤0 → 规则2 本身不触发；但本局为生死局（深投入+AKs 顶对）→
+#    由 MUST-WIN 无条件全下接管（新规则 2026-08-23）
 st9 = parse_request(req(my_chips=16000, my_cards=[48, 44],
                         total_win_chips=[0, 0],
                         public_cards=[46, 6, 1],
@@ -120,21 +124,32 @@ st9 = parse_request(req(my_chips=16000, my_cards=[48, 44],
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st9, OpponentModel())
-check("规则2:不盈利不触发", a.get("act") != "allin", str(a))
+check("规则2:不盈利但生死局MUST-WIN全下", a == {"act": "allin"}, str(a))
 
 # ================= 规则3：下注额限制 =================
 print("===== 规则3 =====")
-# 10) pot>2000（已投2500×2）非超强牌（顶对K）→ 放弃主动下注（check）
-#     total_win 用 [0,0] 隔离规则2（盈利+深投入会优先触发全下）
-st10 = parse_request(req(my_chips=15000, my_cards=[46, 13],
-                         total_win_chips=[0, 0],
+# 10) 非生死局 pot>2000（已投1500×2）非超强牌（顶对K）→ 放弃主动下注（check）。
+#     用剩 65 手把 MUST-WIN 隔离掉（2×投入后 6900 < 2.5×100×64=16000）→ 规则3 生效
+st10 = parse_request(req(my_chips=18500, my_cards=[46, 13],
+                         total_win_chips=[0, 0], hand=5,
                          public_cards=[44, 38, 30],
-                         history=[{"round": 0, "player_id": 0, "action": 2500, "action_type": "raise"},
+                         history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"},
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st10, OpponentModel())
 check("规则3:pot>2000非超强牌只过牌/跟注",
       a.get("act") in ("check", "call"), str(a))
+
+# 10b) 生死局 pot>2000（已投2500×2,剩30手）+ 顶对K（eq≈0.69 明显占优）→
+#      MUST-WIN 覆盖规则3：无条件全下（用户规则 2026-08-23）
+st10b = parse_request(req(my_chips=15000, my_cards=[46, 13],
+                          total_win_chips=[0, 0],
+                          public_cards=[44, 38, 30],
+                          history=[{"round": 0, "player_id": 0, "action": 2500, "action_type": "raise"},
+                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+a = decide(st10b, OpponentModel())
+check("规则3:生死局MUST-WIN覆盖规则3全下", a == {"act": "allin"}, str(a))
 
 # 11) pot≤2000 触发降级 → 总注额 ≤ 1000
 st11 = parse_request(req(my_chips=19200, my_cards=[46, 13],

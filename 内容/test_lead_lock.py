@@ -65,13 +65,14 @@ st = parse_request(req(total_win_chips=[1000, -1000], public_cards=[46, 6, 1],
 a = decide(st, OpponentModel())
 check("锁注对照:领先1000深投入被规则2接管全下", a == {"act": "allin"}, str(a))
 
-# 对照组：落后 2000 不受限
+# 对照组：落后 2000 → 原预期"不锁但增量上限1000"；现深投入（已投5000）+
+# AA 强牌 = 生死局（落败即致对手锁胜）→ 被 MUST-WIN 新规则接管为无条件全下
 st = parse_request(req(total_win_chips=[-2000, 2000], public_cards=[46, 6, 1],
                        history=[{"round": 0, "player_id": 0, "action": 2500, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st, OpponentModel())
-check("锁注对照:落后2000不锁但增量上限1000", a == {"act": "raise", "num": 1000}, str(a))
+check("锁注对照:落后2000生死局被MUST-WIN接管全下", a == {"act": "allin"}, str(a))
 
 # ---------- 加注增量上限（全局：增量≤1000） ----------
 # 翻后无人下注大底池价值注（pot 3000）→ 增量≤1000 → 总注额≤1000
