@@ -274,5 +274,65 @@ a = decide(st, OpponentModel())
 check("规则4:board葫芦+手里T 对手全下→不弃",
       a.get("act") in ("call", "raise", "allin"), str(a))
 
+# 4-9) 单元：board 三条 K♥K♦K♣9♠7♣ + 手里 7♦2♦（未用手牌）→ 降级高牌
+#      （2026-08-23 严格化：纯公共牌组成的牌型含三条也降级）
+st = parse_request(river_req(public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15]))
+check("规则4:board三条+无升级手牌→降级高牌",
+      _effective_category(st) == HIGH_CARD,
+      "cat=%s" % _effective_category(st))
+
+# 4-10) 对照：同 board + 手里 K♠（补成四条 K）→ 真四条保留
+st = parse_request(river_req(public_cards=[53, 54, 55, 36, 31], my_cards=[52, 10]))
+check("规则4:board三条+手里K→真四条保留",
+      _effective_category(st) == FOUR_OF_A_KIND,
+      "cat=%s" % _effective_category(st))
+
+# 4-11) 行为：river 对手下注 1500，board 三条 K + 手里 72（假三条降级）→
+#       不投入超过 2000（call/fold/raise≤2000）
+st = parse_request(allin_river_req(
+    public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15],
+    history=[{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+             {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+             {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+             {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+             {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+             {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+             {"round": 3, "player_id": 1, "action": 1500, "action_type": "raise"}]))
+a = decide(st, OpponentModel())
+check("规则4:board三条+72 面对1500不超2000",
+      a.get("act") in ("call", "fold") or
+      (a.get("act") == "raise" and a["num"] <= 2000), str(a))
+
+# 4-12) 对照：同 board + 手里 K♠（真四条）→ 可大注/全下
+st = parse_request(allin_river_req(
+    public_cards=[53, 54, 55, 36, 31], my_cards=[52, 10],
+    history=[{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+             {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+             {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+             {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+             {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+             {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+             {"round": 3, "player_id": 1, "action": 1500, "action_type": "raise"}]))
+a = decide(st, OpponentModel())
+check("规则4:board三条+手里K 面对1500可大注",
+      a.get("act") in ("raise", "allin"), str(a))
+
+# 4-13) 单元：>2000 限制仅 doomed 豁免——steal 档不再豁免（2026-08-23 严格化）
+import strategy as _S  # noqa: E402
+from strategy import _allin_high_bet_allowed  # noqa: E402
+_S._CTX = locking_ctx()                     # 对手锁胜 → _match_adjust 返回 steal
+st = parse_request(allin_river_req(public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15]))
+check("规则4:steal档弱牌不再豁免allin>2000",
+      _allin_high_bet_allowed(st) is False,
+      "allowed=%s" % _allin_high_bet_allowed(st))
+# 对照：doomed（防锁赢 allin）仍豁免——需普通 ctx（非锁胜档）
+_S._CTX = None
+st = parse_request(allin_river_req(total_win_chips=[-5000, 5000],
+                                   public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15]))
+check("规则4:doomed仍豁免allin>2000",
+      _allin_high_bet_allowed(st) is True,
+      "allowed=%s" % _allin_high_bet_allowed(st))
+_S._CTX = None
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

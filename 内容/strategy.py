@@ -351,19 +351,17 @@ def _profit_lock_allin(state):
 def _allin_high_bet_allowed(state):
     """allin 金额超过 HIGH_BET_LIMIT(2000) 是否允许（用户规则例外集）。
 
-    【业务逻辑】「每次下注金额 ≤2000，除非牌面≥三条或抢对方锁赢」——
-    allin 也是下注，金额 = 我方剩余筹码。允许超 2000 的例外：
-      1. 翻后牌面 ≥ 三条（顺子+，结构性强牌豁免，与 raise 上限同口径）；
-      2. 抢对方锁赢（steal 档：对手疑似锁胜，高频偷盲需要大注）；
-      3. 本局输即对手锁胜（doomed：弃牌=认输，必须全下搏）。
-    注意：despair（弃牌亏损线）不在此列——「弃牌致深亏→无条件 allin」只在
-    决策结果为弃牌时升级（fold 分支），主动 allin 仍受 2000 上限约束
-    （用户反馈：两对+非锁胜却 allin>2000 属违规）。
-    其余场景（常规/领先保护/普通落后且牌面<三条）一律 ≤2000。
+    【业务逻辑】「只有 ≥ 三条的牌型才投入超过 2000」——allin 也是投入，
+    金额 = 我方剩余筹码。允许超 2000 的唯一例外：
+      1. 本局输即对手锁胜（doomed：弃牌=认输，必须全下搏，第一优先级）；
+      2. 翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
+         三条/顺子/同花/葫芦/四条/同花顺降级为高牌，不豁免）。
+    【2026-08-23 严格化】steal（抢锁赢偷盲）不再是例外：>2000 限制
+    处于第二优先级，仅 doomed（防锁赢 allin）可豁免。其余场景一律 ≤2000。
     """
     try:
         adj = _match_adjust(state)
-        if adj in ("steal", "doomed"):
+        if adj == "doomed":
             return True
         if state.stage != "preflop" and \
                 _effective_category(state) >= HIGH_BET_MIN_CAT:
@@ -516,25 +514,26 @@ def should_avoid_risk(state):
 
 
 def _effective_category(state):
-    """有效牌型等级（用户规则 2026-08-23）：大于三条的牌型不能仅由公共牌组成。
+    """有效牌型等级（用户规则 2026-08-23）：纯公共牌组成的牌型降级。
 
-    公共牌自身已构成顺子/同花/葫芦/四条/同花顺（5 张公共牌全用上、未用到任何
-    一张手牌）时，对手必然同样拥有该牌型（最多平分），且对手仅需一张升级牌即可
-    击败我们：
+    公共牌自身已构成三条/顺子/同花/葫芦/四条/同花顺（5 张公共牌全用上、
+    未用到任何一张手牌）时，对手必然同样拥有该牌型（最多平分），且对手仅需
+    一张升级牌即可击败我们：
+      - board 三条（K K K 9 7）→ 对手有 K 即四条，有 9 即葫芦；
       - board 顺子（9 8 7 6 5）→ 对手有 T 即更高顺子；
-      - board 同花 → 对手有任意同花牌即更高踢脚；
+      - board 同花 → 对手有同花牌即更高踢脚；
       - board 葫芦/四条 → 对手有对应牌即升级。
     这种「假强牌」不能作为个人牌力 → 降级为 HIGH_CARD 处理，避免据此
     价值下注 / 超池 / 跟大注 / 豁免注额上限 / 豁免河牌公对弃牌。
 
-    仅当 5 张公共牌且最强牌型 > 三条时检查（翻牌/转牌阶段 3~4 张公共牌
+    仅当 5 张公共牌且最强牌型 ≥ 三条时检查（翻牌/转牌阶段 3~4 张公共牌
     组合必然用到手牌，无需净化）。
     """
     if len(state.board) != 5:
         return evaluate_7(state.hole + state.board)[0]
     full = evaluate_7(state.hole + state.board)
-    if full[0] <= THREE_OF_A_KIND:
-        return full[0]                    # 只有「大于三条」才需要检查
+    if full[0] < THREE_OF_A_KIND:
+        return full[0]                    # 只有「≥ 三条」才需要检查（纯公共牌降级）
     if full == evaluate_7(state.board):
         return HIGH_CARD                  # 最强 5 张全为公共牌 → 假强牌
     return full[0]
@@ -1593,12 +1592,14 @@ def _normalize(state, action):
                 num = min(num, PREFLOP_MAX_BET)
                 if num < min_r:
                     return {"act": "call"} if to_call > 0 else {"act": "check"}
-        # 【用户规则】每次下注/加注 ≤ HIGH_BET_LIMIT(2000)，除非：
-        #   ①翻后牌型 ≥ 三条（顺子/同花/葫芦/四条/同花顺）；
-        #   ②抢对方锁赢（steal 偷盲档——对手疑似锁胜时高频 C-Bet 允许大注）。
-        # 翻前无牌面 → 一律 2000 封顶（超强牌翻前可超 1000 但仍 ≤2000）。
+        # 【用户规则 2026-08-23 严格化】投入 > HIGH_BET_LIMIT(2000) 仅限：
+        #   ①翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
+        #     三条/顺子/同花/葫芦/四条/同花顺降级为高牌，不豁免）；
+        #   ②doomed（防锁赢 allin，第一优先级，在 decide 入口已返回）。
+        # 其余一律 2000 封顶（含 steal——>2000 限制处于第二优先级，仅
+        # doomed 例外；翻前无牌面 → 一律 ≤2000）。
         # 若对手注已大到最小加注超上限 → 无法合法加注 → 降级 call/check。
-        if num > HIGH_BET_LIMIT and _match_adjust(state) != "steal":
+        if num > HIGH_BET_LIMIT:
             if state.stage == "preflop" or \
                     _effective_category(state) < HIGH_BET_MIN_CAT:
                 num = HIGH_BET_LIMIT
