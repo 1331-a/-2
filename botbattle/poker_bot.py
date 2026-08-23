@@ -1763,6 +1763,13 @@ def decide(state, model, ctx=None):
                       - state.total_win_chips[state.opp_id]) > LEAD_NO_ALLIN
     except Exception:
         _LEAD_LOCK = False
+    # 【用户规则·最高优先级】对手将要锁赢（doomed：本局失败后对手即可
+    # 用剩余手数全程弃牌锁胜）→ 无条件全下，置于所有其他限制之上：
+    # 不查 2000 上限、不查牌型≥三条、不查公对陷阱/公对风险、不看牌力——
+    # 弃牌=直接认输，任何其他动作都拖慢翻盘，必须全下搏。
+    # （与锁胜弃牌 fold_out 互斥：doomed 是大幅落后，fold_out 是大幅领先）
+    if _match_adjust(state) == "doomed":
+        return {"act": "allin"}
     # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
     if _fold_out_active(state):
         return {"act": "fold"}
