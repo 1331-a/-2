@@ -317,13 +317,14 @@ a = decide(st, OpponentModel())
 check("规则4:board三条+手里K 面对1500可大注",
       a.get("act") in ("raise", "allin"), str(a))
 
-# 4-13) 单元：>2000 限制仅 doomed 豁免——steal 档不再豁免（2026-08-23 严格化）
+# 4-13) 单元：>2000 限制豁免集 = steal/doomed/有效牌型≥三条
+#      （2026-08-24 恢复 steal 豁免：强制下注防锁赢为第二优先级，高于 >2000 限制）
 import strategy as _S  # noqa: E402
 from strategy import _allin_high_bet_allowed  # noqa: E402
 _S._CTX = locking_ctx()                     # 对手锁胜 → _match_adjust 返回 steal
 st = parse_request(allin_river_req(public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15]))
-check("规则4:steal档弱牌不再豁免allin>2000",
-      _allin_high_bet_allowed(st) is False,
+check("规则4:steal档弱牌豁免allin>2000(第二优先级)",
+      _allin_high_bet_allowed(st) is True,
       "allowed=%s" % _allin_high_bet_allowed(st))
 # 对照：doomed（防锁赢 allin）仍豁免——需普通 ctx（非锁胜档）
 _S._CTX = None
@@ -333,6 +334,14 @@ check("规则4:doomed仍豁免allin>2000",
       _allin_high_bet_allowed(st) is True,
       "allowed=%s" % _allin_high_bet_allowed(st))
 _S._CTX = None
+
+# 4-14) 行为：steal（强制下注防锁赢）第二优先级——对手锁胜预警 + 我大幅领先
+#       本可锁胜弃牌（fold_out: lead 16000 > 7500），但 steal 优先 → 强制开池
+st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2], hand=45, max_hand=70,
+                       total_win_chips=[8000, -8000], total_win_games=[40, 5]))
+a = decide(st, OpponentModel(), locking_ctx())
+check("规则4:steal第二优先级覆盖锁胜弃牌(强制下注)",
+      a == {"act": "raise", "num": 250}, str(a))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

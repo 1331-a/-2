@@ -1692,16 +1692,17 @@ def _allin_high_bet_allowed(state):
     """allin 金额超过 HIGH_BET_LIMIT(2000) 是否允许（用户规则例外集）。
 
     【业务逻辑】「只有 ≥ 三条的牌型才投入超过 2000」——allin 也是投入，
-    金额 = 我方剩余筹码。允许超 2000 的唯一例外：
+    金额 = 我方剩余筹码。允许超 2000 的例外：
       1. 本局输即对手锁胜（doomed：弃牌=认输，必须全下搏，第一优先级）；
-      2. 翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
+      2. 抢对方锁赢（steal 偷盲档：对手疑似锁胜时高频强制下注施压——
+         2026-08-24 恢复豁免，steal 为第二优先级，高于 >2000 限制）；
+      3. 翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
          三条/顺子/同花/葫芦/四条/同花顺降级为高牌，不豁免）。
-    【2026-08-23 严格化】steal（抢锁赢偷盲）不再是例外：>2000 限制
-    处于第二优先级，仅 doomed（防锁赢 allin）可豁免。其余场景一律 ≤2000。
+    其余场景一律 ≤2000。
     """
     try:
         adj = _match_adjust(state)
-        if adj == "doomed":
+        if adj in ("steal", "doomed"):
             return True
         if state.stage != "preflop" and \
                 _effective_category(state) >= HIGH_BET_MIN_CAT:
@@ -1771,8 +1772,11 @@ def decide(state, model, ctx=None):
     # （与锁胜弃牌 fold_out 互斥：doomed 是大幅落后，fold_out 是大幅领先）
     if _match_adjust(state) == "doomed":
         return {"act": "allin"}
-    # 锁胜弃牌：领先足够大时直接弃牌拖到终局（零方差锁定胜局）
-    if _fold_out_active(state):
+    # 【2026-08-24 优先级调整】steal（强制下注防止对手锁赢）第二优先级：
+    # 对手疑似锁胜（收盲率>65%）→ 强制下注偷盲施压，优先于锁胜弃牌
+    # （fold_out）等其他规则——我方弃牌/过牌都会让对手白拿盲注加速锁胜，
+    # 必须主动下注。steal 档走下方决策层（_preflop/_postflop 内部偷盲逻辑）。
+    if _match_adjust(state) != "steal" and _fold_out_active(state):
         return {"act": "fold"}
     # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
     # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
@@ -2968,14 +2972,15 @@ def _normalize(state, action):
                         not _allin_high_bet_allowed(state):
                     return {"act": "fold"}
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
-        # 【用户规则 2026-08-23 严格化】投入 > HIGH_BET_LIMIT(2000) 仅限：
+        # 【用户规则】投入 > HIGH_BET_LIMIT(2000) 仅限：
         #   ①翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
         #     三条/顺子/同花/葫芦/四条/同花顺降级为高牌，不豁免）；
-        #   ②doomed（防锁赢 allin，第一优先级，在 decide 入口已返回）。
-        # 其余一律 2000 封顶（含 steal——>2000 限制处于第二优先级，仅
-        # doomed 例外；翻前无牌面 → 一律 ≤2000）。
+        #   ②doomed（防锁赢 allin，第一优先级，在 decide 入口已返回）；
+        #   ③steal（强制下注防锁赢，第二优先级——2026-08-24 恢复豁免，
+        #     对手疑似锁胜时高频大额 C-Bet 施压）。
+        # 其余一律 2000 封顶（翻前无牌面 → 一律 ≤1000，见上方翻前限制）。
         # 若对手注已大到最小加注超上限 → 无法合法加注 → 降级 call/check。
-        if num > HIGH_BET_LIMIT:
+        if num > HIGH_BET_LIMIT and _match_adjust(state) != "steal":
             if state.stage == "preflop" or \
                     _effective_category(state) < HIGH_BET_MIN_CAT:
                 num = HIGH_BET_LIMIT
