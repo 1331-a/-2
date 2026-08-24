@@ -94,12 +94,14 @@ st = parse_request(pf_jump)
 check("翻前突袭:799→5300检测", _opp_bet_jumped(st) is True, "")
 a = decide(st, OpponentModel())
 check("翻前突袭:KJo面对5300弃牌", a == {"act": "fold"}, str(a))
-# 对照组：正常节奏 799→1400，KJo 正常跟注（不被误伤）
+# 对照组：正常节奏 799→1400，KJo 面对 1400 跟注需 1300 > 1000
+# （2026-08-24 新规：翻前投入≤1000）→ 弃牌（jumped 检测不误伤验证改由
+# 上一场景体现；本场景按新规翻前大额跟注一律弃）
 pf_norm = dict(pf_base)
 pf_norm["my_cards"] = [44, 31]
 pf_norm["history"][2] = {"round": 0, "player_id": 0, "action": 1400, "action_type": "raise"}
 a = decide(parse_request(pf_norm), OpponentModel())
-check("翻前对照:正常节奏KJo跟注不误伤", a.get("act") in ("call", "raise"), str(a))
+check("翻前对照:正常节奏KJo面对1400新规弃牌", a == {"act": "fold"}, str(a))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

@@ -361,10 +361,11 @@ check("全下分档:大幅领先72o弃牌", a == {"act": "fold"}, str(a))
 # 小幅领先(+2000) + KK：lead=4000 > 2000 → LEAD_LOCK → 弃（不 allin）
 a = act(allin_req([44, 46], 2000))
 check("全下分档:小幅领先KK被LEAD_LOCK弃牌", a == {"act": "fold"}, str(a))
-# 均势 + TT：eq≈0.60（边界 0.55，MC 随机性偶尔低于阈值会 fold ——放宽）
+# 均势 + TT：翻前跟全下 19500 > 1000（用户新规 2026-08-24：翻前投入≤1000）
+# → 不再跟全下，直接弃牌（翻前手牌最多一对，无法支撑大额投入；doomed 例外）
 a = act(allin_req([32, 33], 0))
-check("全下分档:均势TT跟全下",
-      a.get("act") in ("allin", "call"), str(a))
+check("全下分档:均势TT翻前大额跟全下→弃",
+      a == {"act": "fold"}, str(a))
 # 均势 + 72o：eq≈0.30 < 0.55 → 弃
 a = act(allin_req([23, 2], 0))
 check("全下分档:均势72o弃牌", a == {"act": "fold"}, str(a))

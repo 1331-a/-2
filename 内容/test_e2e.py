@@ -48,10 +48,10 @@ def check(name, got, want):
     print("[%s] %s -> %s (期望 %s)" % ("PASS" if ok else "FAIL", name, got, want))
 
 
-# ---- 回合1：BB AA 面对加注 400，应 3-bet 到 1200 ----
+# ---- 回合1：BB AA 面对加注 400，应 3-bet（2026-08-24 新规：翻前投入≤1000）----
 r1 = req(history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"}])
 o1 = run_turn(wrap(r1))
-check("回合1 response", o1["response"], 1200)
+check("回合1 response", o1["response"], 1000)
 gd = o1["globaldata"]
 m = json.loads(gd)
 check("回合1 对手翻前加注计数", m["preflop_raise"], 1)
@@ -59,7 +59,7 @@ check("回合1 对手翻前加注计数", m["preflop_raise"], 1)
 # ---- 回合2：同一手牌，对手 call 后翻牌 check，回传 globaldata，不应重复计数 ----
 r2 = req(my_chips=18200, public_cards=[46, 6, 1], history=[
     {"round": 0, "player_id": 0, "action": 400, "action_type": "raise"},
-    {"round": 0, "player_id": 1, "action": 1200, "action_type": "raise"},
+    {"round": 0, "player_id": 1, "action": 1000, "action_type": "raise"},
     {"round": 0, "player_id": 0, "action": 0, "action_type": "call"},
     {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
 ])
@@ -92,7 +92,7 @@ check("空 requests 兜底 response=0", o5["response"], 0)
 # ---- 计时：最重场景（翻牌后需蒙特卡洛）----
 worst = req(my_chips=18200, public_cards=[46, 6, 1], history=[
     {"round": 0, "player_id": 0, "action": 400, "action_type": "raise"},
-    {"round": 0, "player_id": 1, "action": 1200, "action_type": "raise"},
+    {"round": 0, "player_id": 1, "action": 1000, "action_type": "raise"},
     {"round": 0, "player_id": 0, "action": 0, "action_type": "call"},
     {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
 ])

@@ -1519,9 +1519,14 @@ def _normalize(state, action):
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         if act == "fold":
             return {"act": "fold"}
+        # 【用户规则 2026-08-24】翻前跟全下金额 > 1000 且非 doomed → 弃。
+        # 「翻前投入不能大于 1000」沿用到翻前：翻前无公共牌、手牌最多一对
+        # （< 三条），任何大额投入都无法由牌型支撑 → 一律 1000 封顶。
+        if state.stage == "preflop" and my_left > PREFLOP_MAX_BET and \
+                not _allin_high_bet_allowed(state):
+            return {"act": "fold"}
         # 【用户规则】allin 金额 ≤2000（仅翻后；例外见 _allin_high_bet_allowed）：
         # 对手全押下我方全下金额超限且无例外 → 弃牌（规则5 内只允许弃/全押）。
-        # 翻前 allin 由「翻前全下分档」控制（eq+盈亏档位），不受金额上限约束。
         if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
                 not _allin_high_bet_allowed(state):
             return {"act": "fold"}
@@ -1540,6 +1545,19 @@ def _normalize(state, action):
 
     if act == "allin":
         if my_left > 0:
+            # 【用户规则 2026-08-24】翻前全下金额 > 1000 且非 doomed → 降级：
+            #   跟全下 → 弃；主动全下 → 降级为 1000 上限加注（保持游戏进行）。
+            if state.stage == "preflop" and my_left > PREFLOP_MAX_BET and \
+                    not _allin_high_bet_allowed(state):
+                if to_call > 0:
+                    return {"act": "fold"}
+                num = PREFLOP_MAX_BET
+                min_r = state.min_raise()
+                if _LEAD_LOCK:
+                    num = min(num, LEAD_MAX_BET)
+                if num < min_r:
+                    return {"act": "check"}
+                return {"act": "raise", "num": num}
             # 【用户规则】allin 金额 ≤2000（仅翻后；例外见 _allin_high_bet_allowed）
             if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
                     not _allin_high_bet_allowed(state):
@@ -1560,11 +1578,20 @@ def _normalize(state, action):
         if to_call <= 0:
             return {"act": "check"}
         if to_call >= my_left:      # 需严格 my_left > to_call 才能跟注
+            # 【用户规则 2026-08-24】翻前跟注即全下且金额 > 1000 非 doomed → 弃
+            if state.stage == "preflop" and my_left > PREFLOP_MAX_BET and \
+                    not _allin_high_bet_allowed(state):
+                return {"act": "fold"}
             # 【用户规则】跟注即全下且金额超 2000 无例外 → 弃（仅翻后）
             if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
                     not _allin_high_bet_allowed(state):
                 return {"act": "fold"}
             return {"act": "allin"}
+        # 【用户规则 2026-08-24】翻前跟注额 > 1000 且非 doomed → 弃。
+        # 翻前手牌最多一对（< 三条），无法支撑大额跟注（与翻后 >2000 同逻辑）。
+        if state.stage == "preflop" and to_call > PREFLOP_MAX_BET and \
+                not _allin_high_bet_allowed(state):
+            return {"act": "fold"}
         # 【用户规则 2026-08-23 严格执行】翻后跟注额 > 2000 即「投入超过 2000」，
         # 与 raise/allin 同口径受第二优先级限制：非 ≥ 三条 且非 doomed → 弃。
         # 第 12 手教训：A 一对弱踢脚 call 3223 是假投入——假强牌不应跟大注。
@@ -1588,16 +1615,19 @@ def _normalize(state, action):
             num = min(num, LEAD_MAX_BET)
             if num < min_r:
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
-        # 【用户规则】翻牌前总注额 ≤ PREFLOP_MAX_BET(1000)：
-        #   超强牌（AA/KK/QQ/JJ/AKs）豁免；
-        #   次强牌（AQ/AK/KQ）仅大幅落后（desperate/doomed）豁免；
-        #   其余牌面对大反加（min_raise 已超上限）→ 无法合法加注 → 降级
-        if state.stage == "preflop" and not _is_super_hand(state.hole):
-            _pf_adj = _match_adjust(state)
-            if not (_is_sub_strong(state.hole) and _pf_adj in ("desperate", "doomed")):
-                num = min(num, PREFLOP_MAX_BET)
-                if num < min_r:
-                    return {"act": "call"} if to_call > 0 else {"act": "check"}
+        # 【用户规则 2026-08-24】翻牌前总注额 ≤ PREFLOP_MAX_BET(1000)：
+        #   所有手牌一律 1000 封顶（超强牌/次强牌不再豁免——翻前手牌最多
+        #   一对，任何牌都无法支撑「投入 > 1000」；doomed 防锁赢第一优先级
+        #   例外，已在 decide 入口无条件 allin）。
+        #   面对大反加（min_raise 已超上限）→ 无法合法加注 → 降级 call/check；
+        #   降级 call 也受翻前 ≤1000 约束（to_call > 1000 且非 doomed → 弃）。
+        if state.stage == "preflop":
+            num = min(num, PREFLOP_MAX_BET)
+            if num < min_r:
+                if to_call > PREFLOP_MAX_BET and \
+                        not _allin_high_bet_allowed(state):
+                    return {"act": "fold"}
+                return {"act": "call"} if to_call > 0 else {"act": "check"}
         # 【用户规则 2026-08-23 严格化】投入 > HIGH_BET_LIMIT(2000) 仅限：
         #   ①翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
         #     三条/顺子/同花/葫芦/四条/同花顺降级为高牌，不豁免）；

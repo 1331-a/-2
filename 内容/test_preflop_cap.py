@@ -26,7 +26,7 @@ def req(**kw):
     return base
 
 
-# ============ A. 翻牌前总注额上限（非超强牌 ≤1000，超强牌豁免） ============
+# ============ A. 翻牌前总注额上限（2026-08-24：所有手牌 ≤1000） ============
 # A1) BB 位 KQo 面对按钮 raise 400 → 3-bet → 总注额 ≤ 1000
 r = req(my_id=1, my_chips=19500, my_cards=[46, 30],
         history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"}])
@@ -34,25 +34,25 @@ a = decide(parse_request(r), OpponentModel())
 check("翻前上限:非超强牌KQo 3-bet≤1000",
       a.get("act") == "raise" and a["num"] <= 1000, str(a))
 
-# A2) BB 位 AA 面对 raise 400 → 3-bet → 超强牌豁免可超 1000
+# A2) BB 位 AA 面对 raise 400 → 3-bet → 超强牌也 ≤1000（用户新规：翻前投入≤1000）
 r = req(my_id=1, my_chips=19500, my_cards=[48, 50],
         history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"}])
 a = decide(parse_request(r), OpponentModel())
-check("翻前上限:AA 超强牌豁免>1000",
-      a.get("act") == "raise" and a["num"] > 1000, str(a))
+check("翻前上限:AA 也≤1000(2026-08-24)",
+      a.get("act") == "raise" and a["num"] <= 1000, str(a))
 
-# A3) BB 位 AKs 面对 raise 400 → 3-bet → 超强牌豁免
+# A3) BB 位 AKs 面对 raise 400 → 3-bet → 也 ≤1000
 r = req(my_id=1, my_chips=19500, my_cards=[48, 44],
         history=[{"round": 0, "player_id": 0, "action": 400, "action_type": "raise"}])
 a = decide(parse_request(r), OpponentModel())
-check("翻前上限:AKs 超强牌豁免>1000",
-      a.get("act") == "raise" and a["num"] > 1000, str(a))
+check("翻前上限:AKs 也≤1000(2026-08-24)",
+      a.get("act") == "raise" and a["num"] <= 1000, str(a))
 
-# A4) BB 位 KQo 面对 raise 2000（最小加注>1000）→ 无法合法加注 → 降级 call
+# A4) BB 位 KQo 面对 raise 2000（最小加注>1000）→ 无法合法加注 → 降级 call/fold
 r = req(my_id=1, my_chips=19000, my_cards=[46, 30],
         history=[{"round": 0, "player_id": 0, "action": 2000, "action_type": "raise"}])
 a = decide(parse_request(r), OpponentModel())
-check("翻前上限:非超强牌面对超大反加降级call",
+check("翻前上限:非超强牌面对超大反加降级call/fold",
       a.get("act") in ("call", "fold"), str(a))
 
 # A5) 开池 2.5BB（250 ≤ 1000）不受影响：中等牌 A9o 开池正常
@@ -207,7 +207,23 @@ r = req(my_id=0, my_chips=19500, my_cards=[32, 34],  # TT 均势面对翻前全�
         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                  {"round": 0, "player_id": 1, "action": -2, "action_type": "allin"}])
 a = decide(parse_request(r), OpponentModel())
-check("allin上限:翻前全下分档不受金额约束", a.get("act") in ("allin", "call", "fold"), str(a))
+check("allin上限:翻前均势TT大额全下→弃(2026-08-24)",
+      a == {"act": "fold"}, str(a))
+
+# ============ G. 翻前投入 ≤1000（2026-08-24 新规，doomed 例外） ============
+# G1) 翻前对手 raise 1500，我 AA（BB 已投 100）→ to_call=1400 > 1000 → 弃
+#     （超强牌也不豁免翻前大额跟注；raise 降级 call 同样受约束）
+r = req(my_id=1, my_chips=19900, my_cards=[48, 50],
+        history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"}])
+a = decide(parse_request(r), OpponentModel())
+check("翻前上限:AA面对1500跟注超限→弃", a == {"act": "fold"}, str(a))
+
+# G2) 翻前 doomed（本局输即对手锁胜）→ 仍无条件 allin（第一优先级例外）
+r = req(my_id=1, my_cards=[23, 2], hand=60, max_hand=70,
+        total_win_chips=[5000, -5000],   # my_id=1 落后 10000
+        history=[{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"}])
+a = decide(parse_request(r), OpponentModel())
+check("翻前上限:doomed仍可allin(防锁赢)", a == {"act": "allin"}, str(a))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
