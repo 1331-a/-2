@@ -26,7 +26,9 @@ game_state.py — BotZone 德州扑克官方协议解析与牌局状态重建。
 """
 
 INIT_CHIPS = 20000        # 每手牌重置的初始筹码
-DEFAULT_BIG_BLIND = 200   # 盲注默认值（仅用于下注尺寸，不影响合法性）
+DEFAULT_BIG_BLIND = 100   # 盲注默认值（平台 HU 固定 50/100；翻前由 my_total_in
+                          # 动态推导覆盖，翻后无法从 request 得知官方盲注 → 用此默认值，
+                          # 2026-08-25 由 200 修正为 100：翻后 doom/阈值曾按 2 倍漂移）
 
 
 class GameState:

@@ -361,7 +361,9 @@ game_state.py — BotZone 德州扑克官方协议解析与牌局状态重建。
 """
 
 INIT_CHIPS = 20000        # 每手牌重置的初始筹码
-DEFAULT_BIG_BLIND = 200   # 盲注默认值（仅用于下注尺寸，不影响合法性）
+DEFAULT_BIG_BLIND = 100   # 盲注默认值（平台 HU 固定 50/100；翻前由 my_total_in
+                          # 动态推导覆盖，翻后无法从 request 得知官方盲注 → 用此默认值，
+                          # 2026-08-25 由 200 修正为 100：翻后 doom/阈值曾按 2 倍漂移）
 
 
 class GameState:
@@ -1765,17 +1767,19 @@ def decide(state, model, ctx=None):
                       - state.total_win_chips[state.opp_id]) > LEAD_NO_ALLIN
     except Exception:
         _LEAD_LOCK = False
-    # 【用户规则·最高优先级】对手将要锁赢（doomed：本局失败后对手即可
-    # 用剩余手数全程弃牌锁胜）→ 无条件全下，置于所有其他限制之上：
-    # 不查 2000 上限、不查牌型≥三条、不查公对陷阱/公对风险、不看牌力——
-    # 弃牌=直接认输，任何其他动作都拖慢翻盘，必须全下搏。
-    # （与锁胜弃牌 fold_out 互斥：doomed 是大幅落后，fold_out 是大幅领先）
+    # 【用户规则·最高优先级】防锁赢——确定性判断「这把输了对面能锁胜」
+    # （doom 公式）时：
+    #   · 我方被动（对手本轮已主动下注）→ 无条件 allin 搏翻盘：
+    #     弃牌=直接认输，任何其他动作都拖慢翻盘（第一优先级）；
+    #   · 我方主动（轮到我们决定下注）→ 不 allin，进入强制施压
+    #     （_match_adjust 返回 steal，决策层开池/C-Bet 偷盲让对手弃牌，
+    #      避免输掉这手导致锁胜）——第二优先级，优先于锁胜弃牌 fold_out。
+    # 注：2026-08-24 删除「疑似锁胜」（opponent_locking）判断，只用确定性公式。
     if _match_adjust(state) == "doomed":
         return {"act": "allin"}
-    # 【2026-08-24 优先级调整】steal（强制下注防止对手锁赢）第二优先级：
-    # 对手疑似锁胜（收盲率>65%）→ 强制下注偷盲施压，优先于锁胜弃牌
-    # （fold_out）等其他规则——我方弃牌/过牌都会让对手白拿盲注加速锁胜，
-    # 必须主动下注。steal 档走下方决策层（_preflop/_postflop 内部偷盲逻辑）。
+    # 【2026-08-24 优先级调整】steal（强制施压防锁赢）第二优先级：
+    # 主动侧防锁赢时优先于锁胜弃牌（fold_out）——弃牌/过牌=送盲注加速
+    # 对手锁胜，必须主动下注施压。
     if _match_adjust(state) != "steal" and _fold_out_active(state):
         return {"act": "fold"}
     # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
@@ -1976,20 +1980,41 @@ def _clamp(x, lo, hi):
 
 
 # ---------------- 对局状态调整（风控·宏观层） ----------------
+def _passive_side(state):
+    """我方是否被动（对手本轮已主动下注/全押，须响应其注额）。
+
+    - 本局有人全押 → 被动（只能跟/弃/全押，无主动下注空间）；
+    - 翻前：对手本轮下注 > 大盲 = 主动加注 → 被动；仅放盲注（=大盲）→ 主动
+      （SB 补盲 to_call=50 不算被动，仍可主动加注施压）；
+    - 翻后：对手本轮已下注 → 被动；对手 check（下注 0）→ 主动。
+    """
+    try:
+        if state.any_allin or state.opp_is_allin:
+            return True
+        if state.stage == "preflop":
+            return state.opp_round_bet > state.big_blind
+        return state.opp_round_bet > 0
+    except Exception:
+        return state.to_call > 0
+
+
 def _match_adjust(state):
     """
     max_hand 手定胜负的比赛中，根据领先量与剩余手数调整风险偏好：
       protect   —— 大幅领先且临近终局：降波动（少诈唬、跟注更严）；
       pressure  —— 领先且对手短码：ICM 压力下放宽全下/加注（对手弃牌率高）；
       desperate —— 大幅落后且临近终局：极限激进追分，阻止对手锁胜；
-      doomed    —— 落后到数学上不可追（对手同款锁胜逻辑已成立）：放开一切豪赌；
-      steal     —— 对手疑似锁胜（弃牌率飙升）：关闭诈唬、高频小额偷盲；
+      doomed    —— 「这把输了对面能锁胜」（确定性 doom 公式）且我方被动
+                   （对手已下注/全下）：放弃稳健、allin 搏翻盘（第一优先级）；
+      steal     —— 同一确定性公式且我方主动（轮到下注）：强制施压防锁赢
+                   （第二优先级，开池/C-Bet 偷盲，非疑似判断）；
       normal    —— 常规。
 
-    赛制上下文（match_ctx）只在此处调整阈值：
-      - opponent_locking → 直接返回 steal 档；
+   赛制上下文（match_ctx）只调整激进等级阈值偏移：
       - 激进等级 → 对 lead 做 ±LEVEL_SHIFT_BB 偏移（激进=负偏移早追分，
         保守=正偏移早保收益），即「调整触发阈值」而非新增决策路径。
+   注：2026-08-24 删除「疑似锁胜」（opponent_locking 收盲率统计）判定——
+       强制施压只用确定性数学条件（本局输后对手可锁胜）。
     """
     try:
         hands_left = state.max_hand - state.hand_num
@@ -1997,21 +2022,18 @@ def _match_adjust(state):
                 - state.total_win_chips[state.opp_id])
         bb = state.big_blind
 
-        # 模块一：疑似锁胜 → 偷盲档（关闭诈唬 + 高频小额偷盲）
-        if _CTX is not None and _CTX.opponent_locking:
-            return "steal"
-        # 模块二/三：激进等级 → 阈值偏移（大盲单位）
+        # 激进等级 → 阈值偏移（大盲单位）
         if _CTX is not None:
             lead += _CTX.threshold_offset(state) * bb
 
-        # 劣势冲刺（doomed）——随时计算，不设「剩 15 手」闸门：
+        # 劣势冲刺（防锁赢）——随时计算，不设「剩 15 手」闸门：
         # 若本局失败（lead 再降 2×大盲，弃牌级最坏损失）后，对手用剩余
-        # hands_left-1 手全程弃牌即可锁胜（对手每手弃牌净赚 2×大盲领先差，
-        # 2.5 倍余量兜底），则立即转入「放开一切豪赌」的冲刺模式。
-        # 数学上比「最后十几把」的拍脑袋闸门更早、更准——只要对手锁胜
-        # 条件在本局失败后成立，就该放弃稳健、全力搏翻盘。
+        # hands_left-1 手全程弃牌即可锁胜，则：
+        #   · 我方被动（对手本轮已主动下注）→ doomed：allin 搏翻盘；
+        #   · 我方主动（轮到我们决定下注）→ steal：强制施压防锁赢
+        #     （主动下注让对手弃牌，避免输掉这手导致锁胜，而非弃牌/过牌送盲）。
         if lead - 2 * bb <= -1.5 * bb * max(hands_left - 1, 1):
-            return "doomed"
+            return "doomed" if _passive_side(state) else "steal"
 
         if hands_left <= 15:
             if lead >= 30 * bb and state.opp_chips <= 0.7 * state.my_chips:

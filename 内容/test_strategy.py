@@ -320,28 +320,35 @@ nuts_shallow = req(my_id=0, my_chips=4000, my_cards=[50, 46],
 a = act(nuts_shallow)
 check("防输光:坚果浅筹码可全下", a.get("act") == "allin", str(a))
 
-# ---------- 6b. 偷盲档（对手疑似锁胜 → 关闭诈唬+高频小额偷盲）----------
+# ---------- 6b. 强制施压防锁赢（主动侧 doom 公式：这把输了对面能锁胜）----------
 from match_ctx import MatchContext   # noqa: E402
 
-lock_ctx = MatchContext()
-lock_ctx.opponent_locking = True
-# 偷盲档：庄家位任何牌（含 72o）2.5BB 开池（规则1；my_chips=19950 → 盲注50/100）
+# 主动 doomed 基准：my_id=0, lead=-6000, hand=45/max=70 → 阈值-3600 → 命中
+DOOM_PNL = [-3000, 3000]
+# 庄家位任何牌（含 72o）→ 强制开池 2.5BB（规则1；my_chips=19950 → 盲注50/100）
 st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2],
-                       hand=45, max_hand=70, total_win_chips=[0, 0]))
-a = decide(st, OpponentModel(), lock_ctx)
-check("偷盲档:庄家72o小额偷盲(2.5BB)", a == {"act": "raise", "num": 250}, str(a))
-# 偷盲档：空气牌翻后也高频 C-Bet（规则1：对手弃牌率高，C-Bet 有利可图）
+                       hand=45, max_hand=70, total_win_chips=DOOM_PNL))
+a = decide(st, OpponentModel())
+check("施压档:主动doomed庄家72o强制开池(2.5BB)",
+      a == {"act": "raise", "num": 250}, str(a))
+# 空气牌翻后也高频 C-Bet（施压防锁赢）
 st = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                        public_cards=[46, 22, 5], hand=45, max_hand=70,
-                       total_win_chips=[0, 0],
+                       total_win_chips=DOOM_PNL,
                        history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
-a = decide(st, foldy(), lock_ctx)   # 偷盲档：空气牌也 C-Bet（规则1，非关诈唬）
-check("偷盲档:空气牌C-Bet", a.get("act") == "raise", str(a))
-# 对照组：无 ctx（正常）→ 同场景空气牌对高弃牌对手会诈唬
-a = decide(st, foldy())
-check("对照���:正常档空气诈唬恢复", a.get("act") == "raise", str(a))
+a = decide(st, foldy())   # 施压档：空气牌也 C-Bet（非关诈唬）
+check("施压档:主动doomed空气牌C-Bet", a.get("act") == "raise", str(a))
+# 对照组：正常（lead=0，非防锁赢）→ 同场景空气牌对高弃牌对手会诈唬
+st2 = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
+                        public_cards=[46, 22, 5], hand=45, max_hand=70,
+                        total_win_chips=[0, 0],
+                        history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
+                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+a = decide(st2, foldy())
+check("对照组:正常档空气诈唬恢复", a.get("act") == "raise", str(a))
 
 # ---------- 6c. 翻前对手全下：按累计盈亏动态分档（盈利越多越不跟）----------
 def allin_req(my_cards, pnl_me, hand=30, max_hand=70):
