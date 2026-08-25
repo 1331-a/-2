@@ -1531,8 +1531,9 @@ BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 # 【用户规则】牌面有利于自己（两对+非弱两对，或胜率≥MUSTWIN_EQ）且
 # 本次下注（跟注额 或 0.65 池的主动注）后若落败将导致对手锁胜：
 #   落败后 lead_new = lead - 2×本手投入（我 -2倍投入，对手 +同额，差 -2倍）；
-#   对手锁胜需 对手领先 > 1.5×大盲×(剩余手数-1)（与 _fold_out_active 同口径）
-#   ⇒ 当 2×投入后 > 我方领先 + 2.5×大盲×(剩余手数-1) 时，本手即生死局。
+#   对手锁胜需 对手领先 > 盲注线（剩余手数-1）——2026-08-25 起用精确
+#   位置轮换公式 _blind_line(own=False)（原 1.5×大盲×(剩余手数-1) 极值估算）
+#   ⇒ 当 2×投入后 > 我方领先 + 盲注线 时，本手即生死局。
 # → 无条件全下：输了反正对手锁胜，赢面大就该全力搏——allin 兼具弃牌权益
 #   与最大价值（若对手弃牌则直接赢下底池）。优先级高于规则2 与 LEAD_LOCK
 #   的注码限制（这些场景下保守小注与全下面对同样的失败后果）；
@@ -1954,6 +1955,38 @@ def _risk_avoid_route(state, model):
     return _postflop_decide(state, model)
 
 
+def _blind_line(state, hands, own=True):
+    """未来 hands 局（从下一局起、位置每局轮换）的精确盲注线。
+
+    【用户规则 2026-08-25】锁赢判定不再用 1.5×BB×手数 的极值估算，
+    而是按位置轮换精确计算每局盲注（精确锁赢公式）：
+      - HU 每局 dealer 互换 → 我方位置每局翻转；
+      - 下一局我方位置 = 当前局位置取反（当前局 my_id==dealer_id → 小盲，
+        下一局必为大盲，反之亦然）；
+      - 当小盲的局投入 SB、当大盲的局投入 BB。
+
+    own=True  （保守/损失视角）：我方每局弃牌的累计损失
+              = 我方小盲次数×SB + 我方大盲次数×BB
+              —— 领先方「绝对安全」锁赢线：剩余 hands 局即使全程弃牌
+              也只损失盲注线，lead 大于它则必然保持领先 → 稳赢；
+    own=False （收益/追回视角）：我方每局收对手弃牌盲注的累计净赢
+              = 我方小盲次数×BB + 我方大盲次数×SB
+              —— 落后方追平线：领先方全程弃牌时我方最多可追回该值，
+              lead（负）小于 -它 即数学上追不上（doomed）。
+    """
+    try:
+        sb, bb = state.small_blind, state.big_blind
+        # 下一局我方是否小盲（当前小盲 → 下局大盲）
+        next_my_sb = state.my_id != state.dealer_id
+        n_sb = (hands + 1) // 2 if next_my_sb else hands // 2
+        n_bb = hands - n_sb
+        if own:
+            return n_sb * sb + n_bb * bb
+        return n_sb * bb + n_bb * sb
+    except Exception:
+        return int(0.75 * state.big_blind * hands)  # 兜底：平均每局 1.5BB/2
+
+
 def _fold_out_active(state):
     """
     锁胜弃牌（fold-out）判定：领先优势能否靠全程弃牌保证最终获胜。
@@ -1961,16 +1994,16 @@ def _fold_out_active(state):
     【数学推导】比赛按 total_win_chips（累计净赢）定胜负，盲注 50/100：
       - 我 SB 弃牌：我净 -50，对手净 +50 → 领先差 -100
       - 我 BB 弃牌：我净 -100，对手净 +100 → 领先差 -200
-      即每手弃牌最多消耗 2×大盲 的领先优势（BB 弃牌时）。
-    剩余 R 手 → 最坏消耗 2×大盲×R。
-    当 领先 > 2.5×大盲×R（2.5 倍余量覆盖盲注估计偏差/平局判负等边界）
-    时，全程弃牌后领先仍为正 → 稳赢。此模式自动只会在后期大领先时触发。
+    即每手弃牌最多消耗我的盲注（SB 或 BB），且大小盲按位置每局轮换。
+    【2026-08-25 精确公式】剩余 R 手（从下一局起、位置逐局翻转）的最大
+    总消耗 = 小盲次数×SB + 大盲次数×BB（_blind_line，非 1.5×BB×R 估算）。
+    当 领先 > 该精确消耗线 时，全程弃牌后领先仍为正 → 绝对稳赢。
     """
     try:
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         hands_left = state.max_hand - state.hand_num
-        return lead > 1.5 * state.big_blind * hands_left
+        return lead > _blind_line(state, hands_left)
     except Exception:
         return False
 
@@ -2032,7 +2065,10 @@ def _match_adjust(state):
         #   · 我方被动（对手本轮已主动下注）→ doomed：allin 搏翻盘；
         #   · 我方主动（轮到我们决定下注）→ steal：强制施压防锁赢
         #     （主动下注让对手弃牌，避免输掉这手导致锁胜，而非弃牌/过牌送盲）。
-        if lead - 2 * bb <= -1.5 * bb * max(hands_left - 1, 1):
+        # 【2026-08-25 精确公式】对手全程弃牌时我方最多可追回的盲注
+        #  = _blind_line(剩余手数, own=False)（位置轮换精确计算），
+        #    取代旧的 1.5×BB×(剩余手数-1) 极值估算。
+        if lead - 2 * bb <= -_blind_line(state, max(hands_left - 1, 1), own=False):
             return "doomed" if _passive_side(state) else "steal"
 
         if hands_left <= 15:

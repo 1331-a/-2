@@ -150,9 +150,11 @@ doom_early = req(my_id=1, my_chips=19900, my_cards=[23, 2], hand=30, max_hand=70
                  history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"}])
 a = act(doom_early)
 check("doomed档:剩40手也冲刺(72o 3bet/跟注)", a.get("act") in ("raise", "call", "allin"), str(a))
-# 对照组：同样剩 40 手但落后不足锁胜线（-5000）→ 不 doomed，正常防守
+# 对照组：同样剩 40 手但落后不足锁胜线 → 不 doomed，正常防守
+#   【2026-08-25 精确公式】doom 线 = 盲注线(39局,own=False)=20×100+19×50=2950
+#   （我方大盲位起始，下一局小盲）；lead=-2000 → -2200 > -2950 未越线
 not_doom = req(my_id=1, my_chips=19900, my_cards=[23, 2], hand=30, max_hand=70,
-               total_win_chips=[2500, -2500], total_win_games=[15, 30],
+               total_win_chips=[1000, -1000], total_win_games=[15, 30],
                history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"}])
 a = act(not_doom)
 check("doomed档:未到锁胜线正常防守(72o弃牌)", a == {"act": "fold"}, str(a))
@@ -201,9 +203,10 @@ lock70 = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=65, max_hand=70,
              total_win_chips=[30000, -30000], total_win_games=[40, 25])
 a = act(lock70)
 check("70手赛制锁胜触发(AA也弃)", a == {"act": "fold"}, str(a))
-# 同位置但领先不足（[400,-400], 阈值2500）→ 不触发，AA 正常开池
+# 同位置但领先不足（[300,-300] lead=600 < 盲注线800：本用例 SB 已投100→推导
+# 100/200，剩5局线=2×100+3×200=800）→ 不触发，AA 正常开池
 nolock = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=65, max_hand=70,
-             total_win_chips=[400, -400], total_win_games=[40, 25])
+             total_win_chips=[300, -300], total_win_games=[40, 25])
 a = act(nolock)
 check("领先不足不锁胜(AA正常开池)", a == {"act": "raise", "num": 500}, str(a))
 # 70 手中期（第 10 手）大领先 24000（<阈值30000）→ 不触发
@@ -212,6 +215,39 @@ mid70 = req(my_id=0, my_chips=19900, my_cards=[48, 51], hand=10, max_hand=70,
 a = act(mid70)
 # 【锁胜系数 1.5】中期大领先（lead 24000 > 1.5×200×60=18000）→ 锁胜弃牌触发
 check("中期大领先触发锁胜弃牌(fold)", a == {"act": "fold"}, str(a))
+
+# ---------- 4c. 精确锁赢公式（位置轮换，2026-08-25）----------
+# 【用户规则】锁赢/doom 判定不再用 1.5×BB×手数 极值估算，改用精确盲注线：
+#   剩余 R 局从下一局起位置逐局翻转；own=True=小盲次×SB+大盲次×BB（保守损失），
+#   own=False=小盲次×BB+大盲次×SB（追回收益）。盲注 50/100。
+from strategy import _blind_line  # noqa: E402
+
+
+def blind_req(my_id, dealer_id, hand, max_hand):
+    return parse_request({"num_players": 2, "dealer_id": dealer_id, "my_id": my_id,
+                          "my_chips": 20000, "my_cards": [23, 2], "public_cards": [],
+                          "history": [], "hand": hand, "max_hand": max_hand,
+                          "total_win_chips": [0, 0], "total_win_games": [0, 0]})
+
+
+# 偶数局 + 当前小盲（下一局大盲）：小盲5次×50 + 大盲5次×100
+st = blind_req(0, 0, 10, 20)  # hands_left=10
+check("精确盲注线:偶10局损失视角=750", _blind_line(st, 10) == 750,
+      "got=%s" % _blind_line(st, 10))
+check("精确盲注线:偶10局追回视角=750", _blind_line(st, 10, own=False) == 750,
+      "got=%s" % _blind_line(st, 10, own=False))
+# 奇数局 + 当前小盲（下一局大盲）：小盲4次×50 + 大盲5次×100
+st = blind_req(0, 0, 11, 20)  # hands_left=9
+check("精确盲注线:奇9局损失视角=700", _blind_line(st, 9) == 700,
+      "got=%s" % _blind_line(st, 9))
+check("精确盲注线:奇9局追回视角=650", _blind_line(st, 9, own=False) == 650,
+      "got=%s" % _blind_line(st, 9, own=False))
+# 奇数局 + 当前大盲（下一局小盲）：小盲5次×50 + 大盲4次×100
+st = blind_req(1, 0, 11, 20)
+check("精确盲注线:奇9局大盲起始损失=650", _blind_line(st, 9) == 650,
+      "got=%s" % _blind_line(st, 9))
+check("精确盲注线:奇9局大盲起始追回=700", _blind_line(st, 9, own=False) == 700,
+      "got=%s" % _blind_line(st, 9, own=False))
 
 # ---------- 5. 诱敌深入（反制激进对手）----------
 def aggressive():

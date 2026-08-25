@@ -30,7 +30,7 @@ def req(**kw):
 
 
 # 场景1：领先 3000（>2000）翻后强牌（AA）无人下注 → 注码 ≤1000 且非 allin
-st = parse_request(req(total_win_chips=[3000, -3000], public_cards=[46, 6, 1],
+st = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
                        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
@@ -40,7 +40,7 @@ check("锁注:领先3000注码≤1000", a.get("act") in ("raise", "check") and
 check("锁注:领先3000不allin", a.get("act") != "allin", str(a))
 
 # 场景2：领先 3000 面对 800 下注（min_raise=1600>1000 无法加注）→ call
-st = parse_request(req(total_win_chips=[3000, -3000], public_cards=[46, 6, 1],
+st = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
                        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 800, "action_type": "raise"}]))
@@ -48,7 +48,7 @@ a = decide(st, OpponentModel())
 check("锁注:领先3000面对大注降级call", a.get("act") in ("call", "fold"), str(a))
 
 # 场景3：领先 3000 + 对手全下 → 无论如何不 allin（弃牌）
-st = parse_request(req(total_win_chips=[3000, -3000], public_cards=[46, 6, 1],
+st = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
                        my_chips=6000,
                        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
