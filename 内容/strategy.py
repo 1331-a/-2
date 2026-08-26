@@ -112,18 +112,19 @@ ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总
 LEAD_NO_ALLIN = 2000         # 优势阈值：超过则进入锁定模式
 LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
 
-# ---- 总注额上限（用户规则 2026-08-25，取代旧 2000 上限体系）----
+# ---- 总注额上限（用户规则 2026-08-25/26，翻后分级）----
 # 【用户规则】牌型注额分级（翻后，总注额/跟注/allin 统一口径）：
 #   - 有效牌型 ≥ 三条（经 _effective_category 净化）：不限（可 allin）；
-#   - 小两对（小 2 对）：总注额 ≤ SMALL_TWO_PAIR_LIMIT(2000)；
-#   - 其余 < 三条（高牌/一对/普通两对）：总注额 ≤ HIGH_BET_LIMIT(3000)；
+#   - 大两对（普通两对，非小两对）：总注额 ≤ HIGH_BET_LIMIT(3000)；
+#   - 小两对及以下（小两对/一对/高牌）：总注额 ≤ SMALL_TWO_PAIR_LIMIT(2000)
+#     （2026-08-26 用户规则「小两对以下都只能下 2000 以下」）；
 #   - doomed（确定本局失败对手锁赢）：无条件 allin（第一优先级，decide 入口）。
 #   - 翻前：一律 ≤ PREFLOP_MAX_BET(1000)（手牌最多一对，无牌面支撑大注）。
 # 单次下注金额（含 allin）以上述分级为封顶（例外见 _bet_limit）。
 PREFLOP_MAX_BET = 1000       # 翻牌前总注额上限（10BB，2026-08-24 用户规则）
 
-HIGH_BET_LIMIT = 3000        # 翻后 <三条 总注额上限（30BB）
-SMALL_TWO_PAIR_LIMIT = 2000  # 翻后小两对总注额上限（20BB，用户规则「小2对≤2000」）
+HIGH_BET_LIMIT = 3000        # 翻后大两对总注额上限（30BB）
+SMALL_TWO_PAIR_LIMIT = 2000  # 翻后小两对及以下总注额上限（20BB，用户规则）
 HIGH_BET_MIN_CAT = THREE_OF_A_KIND  # 允许超限的最低牌型（三条）
 
 # ---- 弃牌亏损线（用户规则）----
@@ -368,13 +369,14 @@ def _is_small_two_pair(state):
 
 
 def _bet_limit(state):
-    """当前手牌允许的最大总注额（用户规则 2026-08-25 牌型分级，翻后口径；
+    """当前手牌允许的最大总注额（用户规则 2026-08-25/26 牌型分级，翻后口径；
     翻前由 _normalize 单独按 PREFLOP_MAX_BET 处理）。
 
     - doomed（确定本局失败对手锁赢）→ 不限（无条件 allin，第一优先级）；
     - 翻后有效牌型 ≥ 三条（净化后）→ 不限（可 allin）；
-    - 小两对 → SMALL_TWO_PAIR_LIMIT(2000)；
-    - 其余 < 三条（高牌/一对/普通两对）→ HIGH_BET_LIMIT(3000)。
+    - 大两对（普通两对，非小两对）→ HIGH_BET_LIMIT(3000)；
+    - 小两对及以下（小两对/一对/高牌）→ SMALL_TWO_PAIR_LIMIT(2000)
+      （2026-08-26 用户规则：小两对以下都只能下 2000 以下）。
     """
     try:
         if _match_adjust(state) == "doomed":
@@ -382,7 +384,8 @@ def _bet_limit(state):
         if state.stage != "preflop" and \
                 _effective_category(state) >= HIGH_BET_MIN_CAT:
             return 1 << 60
-        if _is_small_two_pair(state):
+        # 小两对及以下（一对/高牌牌型强度更弱，同受 2000 上限）
+        if _effective_category(state) < TWO_PAIR or _is_small_two_pair(state):
             return SMALL_TWO_PAIR_LIMIT
         return HIGH_BET_LIMIT
     except Exception:

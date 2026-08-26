@@ -323,8 +323,8 @@ a = decide(st, OpponentModel())
 check("规则4:board三条+手里K 面对1500可大注",
       a.get("act") in ("raise", "allin"), str(a))
 
-# 4-13) 单元：注额分级上限 _bet_limit（2026-08-25 用户规则）
-#      ≥三条（净化后）不限 / 小两对 ≤2000 / 其余 <三条 ≤3000 / doomed 不限
+# 4-13) 单元：注额分级上限 _bet_limit（2026-08-25/26 用户规则）
+#      ≥三条（净化后）不限 / 大两对 ≤3000 / 小两对及以下（一对/高牌/小两对）≤2000
 import strategy as _S  # noqa: E402
 from strategy import _bet_limit, HIGH_BET_LIMIT, SMALL_TWO_PAIR_LIMIT  # noqa: E402
 INF = 1 << 60
@@ -346,13 +346,29 @@ st = parse_request(allin_river_req(total_win_chips=[-5000, 5000],
                                    public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15]))
 check("规则4:doomed不限注额(被动侧)", _bet_limit(st) >= INF,
       "limit=%s" % _bet_limit(st))
-# 普通 <三条（顶对 A，非小两对）→ 上限 3000
+# 一对（顶对 A，小两对以下）→ 上限 2000（2026-08-26 用户规则）
 st = parse_request(allin_river_req(total_win_chips=[0, 0],
                                    public_cards=[46, 22, 5], my_cards=[48, 10],
                                    history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                             {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                             {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
-check("规则4:普通<三条上限3000", _bet_limit(st) == HIGH_BET_LIMIT,
+check("规则4:一对上限2000", _bet_limit(st) == SMALL_TWO_PAIR_LIMIT,
+      "limit=%s" % _bet_limit(st))
+# 高牌（A high 无对）→ 上限 2000
+st = parse_request(allin_river_req(total_win_chips=[0, 0],
+                                   public_cards=[46, 22, 5], my_cards=[48, 20],
+                                   history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                            {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                            {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+check("规则4:高牌上限2000", _bet_limit(st) == SMALL_TWO_PAIR_LIMIT,
+      "limit=%s" % _bet_limit(st))
+# 大两对（非小两对：两对中最大对 >9，如 K-Q 两对）→ 上限 3000
+st = parse_request(allin_river_req(total_win_chips=[0, 0],
+                                   public_cards=[44, 40, 5], my_cards=[44, 40],
+                                   history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                            {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                            {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+check("规则4:大两对上限3000", _bet_limit(st) == HIGH_BET_LIMIT,
       "limit=%s" % _bet_limit(st))
 # 真四条（≥三条）→ 不限
 st = parse_request(allin_river_req(total_win_chips=[0, 0],
