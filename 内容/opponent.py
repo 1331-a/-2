@@ -64,6 +64,12 @@ class OpponentModel:
         self.resp_done = {}         # hand -> [已处理的 my-bet 历史索引]
         self.resp_tail = None       # 上一手尾部: (hand, is_preflop, bucket, is_my_bet_end)
         self.resp_window = 20       # 学习窗口（手牌数）
+        # ---- 对手每局下注数量（2026-08-25 用户规则）----
+        # 统计对手每手牌内主动下注/加注的次数（per-hand 激进度），驱动
+        # 策略重心：每局下注多 = 高侵略 → 收紧跟注/多诱敌；少 = 被动 → 多诈唬。
+        self.cur_hand_bets = 0      # 当前手牌对手 bet/raise 次数（累计中）
+        self.hand_bet_counts = []   # 最近 BETS_WINDOW 手每手次数（FIFO）
+        self.bets_window = 12       # 每局下注数量统计窗口（手牌数）
         # ---- 赛制上下文（match_ctx.MatchContext.to_dict 的容器，
         #      随本模型一起经 globaldata 持久化） ----
         self.ctx_dict = {}
@@ -114,6 +120,22 @@ class OpponentModel:
         if n == 0:
             return _PRIOR["af"]
         return self.postflop_bet / n
+
+    def avg_bets_per_hand(self):
+        """对手每局下注数量（主动 bet/raise 次数/手，最近 bets_window 手均值）。
+
+        【用户规则 2026-08-25】记录对手每局下注数量并依此调整策略重心：
+        - >1.5 次/手 → 高侵略（持续施压型）：收紧跟注、减少无谓诈唬；
+        - <0.7 次/手 → 被动（过牌跟注型）：可多诈唬、价值注更易被跟。
+        样本 < 3 时向先验（0.9 次/手）收缩，避免小样本噪声。
+        """
+        n = len(self.hand_bet_counts)
+        if n == 0:
+            return 0.9
+        raw = sum(self.hand_bet_counts) / n
+        if n < 3:
+            return (raw * n + 0.9 * (3 - n)) / 3   # 收缩到先验
+        return raw
 
     # ---------------- 小样本收缩后的稳定估计 ----------------
     def _shrunk(self, raw, n, key):
@@ -311,6 +333,8 @@ class OpponentModel:
         if kind == "allin":
             self.allin_count += 1
             kind = "raise"
+        if kind in ("raise", "bet"):
+            self.cur_hand_bets += 1   # 每局下注数量（2026-08-25）
         if is_preflop:
             if kind in ("raise", "bet"):
                 self.preflop_raise += 1
@@ -389,6 +413,12 @@ def build_model_from_history(model, request, state):
 
     if is_new_hand:
         model.last_hand = hand
+        # 每局下注数量：上一手结束 → 推入滑动窗口（FIFO），重置当前手计数
+        if hand is not None:
+            model.hand_bet_counts.append(model.cur_hand_bets)
+            if len(model.hand_bet_counts) > model.bets_window:
+                model.hand_bet_counts = model.hand_bet_counts[-model.bets_window:]
+            model.cur_hand_bets = 0
         if model.last_opp_count > 0:
             model.hands_seen += 1  # 上一手牌对手有动作，计一手样本
             # 指数衰减：每 _DECAY_EVERY 手让旧数据权重减半（近期数据主导）

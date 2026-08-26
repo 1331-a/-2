@@ -112,26 +112,18 @@ ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总
 LEAD_NO_ALLIN = 2000         # 优势阈值：超过则进入锁定模式
 LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
 
-# ---- 总注额上限（用户规则 2026-08-23，取代原增量限制）----
-# 原「加注增量 ≤1000」已删除（与总注额 2000 上限冲突），统一为：
-#   - 翻前：非超强牌总注额 ≤ PREFLOP_MAX_BET(1000)；超强牌/次强牌(仅落后)
-#     可超，但全部 ≤ HIGH_BET_LIMIT(2000)；
-#   - 翻后：总注额 ≤ HIGH_BET_LIMIT(2000)，牌面≥三条或抢锁赢(steal)可超。
-#   - 单次下注金额（含 allin）以 HIGH_BET_LIMIT 为封顶（例外见
-#     _allin_high_bet_allowed），不再有独立的「增量」限制。
+# ---- 总注额上限（用户规则 2026-08-25，取代旧 2000 上限体系）----
+# 【用户规则】牌型注额分级（翻后，总注额/跟注/allin 统一口径）：
+#   - 有效牌型 ≥ 三条（经 _effective_category 净化）：不限（可 allin）；
+#   - 小两对（小 2 对）：总注额 ≤ SMALL_TWO_PAIR_LIMIT(2000)；
+#   - 其余 < 三条（高牌/一对/普通两对）：总注额 ≤ HIGH_BET_LIMIT(3000)；
+#   - doomed（确定本局失败对手锁赢）：无条件 allin（第一优先级，decide 入口）。
+#   - 翻前：一律 ≤ PREFLOP_MAX_BET(1000)（手牌最多一对，无牌面支撑大注）。
+# 单次下注金额（含 allin）以上述分级为封顶（例外见 _bet_limit）。
+PREFLOP_MAX_BET = 1000       # 翻牌前总注额上限（10BB，2026-08-24 用户规则）
 
-# ---- 翻牌前总注额上限（用户规则）----
-# 翻牌前下注超过 1000 仅限超强牌（AA/KK/QQ/JJ/AKs）；其他牌翻前
-# 总注额不允许超过 PREFLOP_MAX_BET（在 _normalize 统一执行，
-# 超强牌可超 1000 但仍受 HIGH_BET_LIMIT(2000) 封顶；次强牌仅落后时豁免）。
-PREFLOP_MAX_BET = 1000       # 翻牌前非超强牌总注额上限（10BB）
-
-# ---- 翻后大注牌型门槛（用户规则）----
-# 只有牌型 ≥ 三条（THREE_OF_A_KIND）才能下注/加注总注额超过
-# HIGH_BET_LIMIT；两对及以下（高牌/一对/两对）总注额上限 2000
-#（在 _normalize 统一执行，翻前不受此规则约束——翻前已有
-# PREFLOP_MAX_BET 非超强牌 1000 上限，超强牌翻前按增量上限走）。
-HIGH_BET_LIMIT = 2000         # 翻后大注总注额上限（20BB）
+HIGH_BET_LIMIT = 3000        # 翻后 <三条 总注额上限（30BB）
+SMALL_TWO_PAIR_LIMIT = 2000  # 翻后小两对总注额上限（20BB，用户规则「小2对≤2000」）
 HIGH_BET_MIN_CAT = THREE_OF_A_KIND  # 允许超限的最低牌型（三条）
 
 # ---- 弃牌亏损线（用户规则）----
@@ -179,7 +171,7 @@ PROFIT_LOCK_EQ = 0.30         # 对抗随机牌的胜率底线（防纯垃圾牌
 # 【规则】手牌不属于超强牌（AA/KK/QQ/JJ/AKs）时，主动下注/加注的总注额
 # > 1000 → 自动降级：底池≤2000 下注底池 50%；否则过牌/跟注。
 # 仅在规则1（偷盲档）与规则2 均未触发时生效。
-BET_CAP = 1000                # 非超强牌主动下注总注额上限
+BET_CAP = 3000                # 非超强牌主动下注总注额上限（2026-08-25: 1000→3000）
 BET_CAP_POT = 2000            # 底池超过此值时完全放弃主动下注（过牌/跟注）
 BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 
@@ -197,6 +189,8 @@ BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
 _LEAD_LOCK = False    # 优势锁定模式：领先>LEAD_NO_ALLIN 时不 allin、注码≤LEAD_MAX_BET
+_OPP_BETS_PER_HAND = 0.9  # 对手每局下注数量（decide 入口从 model 读取，
+                          # 2026-08-25：驱动跟注门槛微调——高侵略收紧/被动放宽）
 
 
 def _opp_bet_jumped(state):
@@ -349,39 +343,73 @@ def _profit_lock_allin(state):
         return False
 
 
-def _allin_high_bet_allowed(state):
-    """allin 金额超过 HIGH_BET_LIMIT(2000) 是否允许（用户规则例外集）。
+def _is_small_two_pair(state):
+    """小两对（小 2 对）：有效牌型 = 两对，且属于易被统治的弱两对。
 
-    【业务逻辑】「只有 ≥ 三条的牌型才投入超过 2000」——allin 也是投入，
-    金额 = 我方剩余筹码。允许超 2000 的例外：
-      1. 本局输即对手锁胜（doomed：弃牌=认输，必须全下搏，第一优先级）；
-      2. 抢对方锁赢（steal 偷盲档：对手疑似锁胜时高频强制下注施压——
-         2026-08-24 恢复豁免，steal 为第二优先级，高于 >2000 限制）；
-      3. 翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
-         三条/顺子/同花/葫芦/四条/同花顺降级为高牌，不豁免）。
-    其余场景一律 ≤2000。
+    【用户规则 2026-08-25】小两对总注额 ≤ SMALL_TWO_PAIR_LIMIT(2000)。
+    判定两条件任一：
+      1. should_avoid_risk —— 公对面上底部两对 / 踢脚被公面高张（Q/K/A）
+         压制的弱两对（翻牌/转牌公对场景）；
+      2. 两对中最大的一对 ≤ 9（小牌两对，如 5-2 两对、6-4 两对）——
+         任何阶段通用，低对两对极易被更高两对/三条统治。
     """
+    if _effective_category(state) != TWO_PAIR:
+        return False
     try:
-        adj = _match_adjust(state)
-        if adj in ("steal", "doomed"):
-            return True
-        if state.stage != "preflop" and \
-                _effective_category(state) >= HIGH_BET_MIN_CAT:
+        if should_avoid_risk(state):
             return True
     except Exception:
         pass
-    return False
+    counts = {}
+    for c in state.hole + state.board:
+        counts[c // 4] = counts.get(c // 4, 0) + 1
+    pairs = sorted((r for r, n in counts.items() if n >= 2), reverse=True)
+    return len(pairs) >= 2 and pairs[0] <= 9
+
+
+def _bet_limit(state):
+    """当前手牌允许的最大总注额（用户规则 2026-08-25 牌型分级，翻后口径；
+    翻前由 _normalize 单独按 PREFLOP_MAX_BET 处理）。
+
+    - doomed（确定本局失败对手锁赢）→ 不限（无条件 allin，第一优先级）；
+    - 翻后有效牌型 ≥ 三条（净化后）→ 不限（可 allin）；
+    - 小两对 → SMALL_TWO_PAIR_LIMIT(2000)；
+    - 其余 < 三条（高牌/一对/普通两对）→ HIGH_BET_LIMIT(3000)。
+    """
+    try:
+        if _match_adjust(state) == "doomed":
+            return 1 << 60
+        if state.stage != "preflop" and \
+                _effective_category(state) >= HIGH_BET_MIN_CAT:
+            return 1 << 60
+        if _is_small_two_pair(state):
+            return SMALL_TWO_PAIR_LIMIT
+        return HIGH_BET_LIMIT
+    except Exception:
+        return HIGH_BET_LIMIT
+
+
+def _over_limit(state, amount):
+    """amount 是否超过当前手牌允许的总注额上限（_normalize 统一调用）。
+
+    - 翻前：上限 PREFLOP_MAX_BET(1000)，仅 doomed（防锁赢第一优先级）豁免；
+    - 翻后：上限 = _bet_limit(state)（≥三条/doomed 不限；小两对 2000；
+      其余 <三条 3000）。
+    """
+    if state.stage == "preflop":
+        return amount > PREFLOP_MAX_BET and _match_adjust(state) != "doomed"
+    return amount > _bet_limit(state)
 
 
 def _bet_cap_guard(state, action):
-    """规则3：下注额限制（第三优先级）。
+    """规则3：主动下注克制（第三优先级，兜底）。
 
     【业务逻辑】手牌不属于超强牌（AA/KK/QQ/JJ/AKs）时，主动下注/加注的
-    总注额 > BET_CAP(1000) → 自动降级：
-      - 底池 ≤ 2000 → 只下注底池 50%（BET_CAP_FRAC）；
-      - 底池 > 2000 → 放弃主动下注（能跟就跟、否则过牌）。
-    目的：避免边缘牌投入过多筹码（用户规则）。仅在规则1（偷盲档）与
-    规则2 均未触发时生效。
+    总注额 > BET_CAP(3000) → 自动降级（底池 ≤ 2000 → 底池 50%；
+    底池 > 2000 → 放弃主动下注，能跟就跟、否则过牌）。
+    2026-08-25：BET_CAP 由 1000 放宽到 3000，与用户新分级上限
+    （<三条 ≤3000）一致——主动下注克制让位于总注额分级上限
+    （_normalize 的 _bet_limit 统一压限）。
     """
     if action.get("act") != "raise":
         return action
@@ -392,8 +420,8 @@ def _bet_cap_guard(state, action):
     if _is_super_hand(state.hole):
         return action
     # 【用户规则】牌型 ≥ 三条（顺子/同花/葫芦/四条/同花顺）同样豁免：
-    # 只有牌型 ≥ 三条才能下注超过 HIGH_BET_LIMIT(2000)，故此类牌力
-    # 不受本规则 1000 上限约束（由 _normalize 的牌型门槛放行/压限）。
+    # 只有牌型 ≥ 三条才能下注超过 HIGH_BET_LIMIT(3000)，故此类牌力
+    # 不受本规则 3000 上限约束（由 _normalize 的牌型门槛放行/压限）。
     # 注：经 _effective_category 净化——公共牌拼的强牌型不豁免。
     if _effective_category(state) >= HIGH_BET_MIN_CAT:
         return action
@@ -419,6 +447,13 @@ def decide(state, model, ctx=None):
     # 【对手突袭大注】全局标志：翻前/翻后所有决策共享（优先级最高——
     # 领先较大时不 allin、面对突袭大注收紧防守，都在决策一开始生效）
     _OPP_JUMPED = _opp_bet_jumped(state)
+    # 【2026-08-25 用户规则】对手每局下注数量（最近窗口均值）→ 全局标志，
+    # _face_bet 跟注门槛据此微调（高侵略收紧 / 被动放宽）
+    try:
+        _OPP_BETS_PER_HAND = float(model.avg_bets_per_hand()) \
+            if model is not None else 0.9
+    except Exception:
+        _OPP_BETS_PER_HAND = 0.9
     # 【优势锁定】领先 > LEAD_NO_ALLIN → 不 allin + 注码≤LEAD_MAX_BET
     # （用户规则，优先级最高：决策一开始就进入锁定模式）
     try:
@@ -427,19 +462,16 @@ def decide(state, model, ctx=None):
     except Exception:
         _LEAD_LOCK = False
     # 【用户规则·最高优先级】防锁赢——确定性判断「这把输了对面能锁胜」
-    # （doom 公式）时：
-    #   · 我方被动（对手本轮已主动下注）→ 无条件 allin 搏翻盘：
-    #     弃牌=直接认输，任何其他动作都拖慢翻盘（第一优先级）；
-    #   · 我方主动（轮到我们决定下注）→ 不 allin，进入强制施压
-    #     （_match_adjust 返回 steal，决策层开池/C-Bet 偷盲让对手弃牌，
-    #      避免输掉这手导致锁胜）——第二优先级，优先于锁胜弃牌 fold_out。
-    # 注：2026-08-24 删除「疑似锁胜」（opponent_locking）判断，只用确定性公式。
+    # （doom 公式）→ 无条件 allin 搏翻盘：弃牌=直接认输，任何其他动作
+    # （含主动侧小额施压）都拖慢翻盘；allin 兼具弃牌权益与最大价值。
+    # 注：2026-08-25 起不再区分主动/被动（删除 steal 施压档）——
+    #     主动侧 doom 同样无条件 allin；2026-08-24 删除「疑似锁胜」
+    #     （opponent_locking）判断，只用确定性公式。
     if _match_adjust(state) == "doomed":
         return {"act": "allin"}
-    # 【2026-08-24 优先级调整】steal（强制施压防锁赢）第二优先级：
-    # 主动侧防锁赢时优先于锁胜弃牌（fold_out）——弃牌/过牌=送盲注加速
-    # 对手锁胜，必须主动下注施压。
-    if _match_adjust(state) != "steal" and _fold_out_active(state):
+    # 【2026-08-25】锁胜弃牌（fold_out）不再被 steal 跳过（steal 已删除）；
+    # 领先到绝对安全（lead > 精确盲注线）→ 直接弃牌锁胜。
+    if _fold_out_active(state):
         return {"act": "fold"}
     # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
     # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
@@ -455,10 +487,8 @@ def decide(state, model, ctx=None):
         action = _postflop_decide(state, model)
     # 全下下限：投入须超过「当前总盈利 + 1000」才允许 allin（用户规则）
     action = _allin_floor_guard(state, action)
-    # 【规则3】下注额限制（第三优先级）：规则1（偷盲档）触发时不生效——
-    # 偷盲 C-Bet 允许超过 1000（对手弃牌率高，高频 C-Bet 是主动收益策略）
-    if _match_adjust(state) != "steal":
-        action = _bet_cap_guard(state, action)
+    # 【规则3】下注额限制（第三优先级）：注额分级上限由 _normalize 统一执行
+    action = _bet_cap_guard(state, action)
     return _normalize(state, action)
 
 
@@ -713,21 +743,21 @@ def _match_adjust(state):
                 - state.total_win_chips[state.opp_id])
         bb = state.big_blind
 
-        # 激进等级 → 阈值偏移（大盲单位）
+        # 激进等级 → 阈值偏移（大盲单位）+ 赢牌策略重心偏移（2026-08-25：
+        # 记录我方赢牌时采取的策略，胜率高者强化——strategy_shift 叠加）
         if _CTX is not None:
-            lead += _CTX.threshold_offset(state) * bb
+            lead += (_CTX.threshold_offset(state) + _CTX.strategy_shift()) * bb
 
         # 劣势冲刺（防锁赢）——随时计算，不设「剩 15 手」闸门：
-        # 若本局失败（lead 再降 2×大盲，弃牌级最坏损失）后，对手用剩余
-        # hands_left-1 手全程弃牌即可锁胜，则：
-        #   · 我方被动（对手本轮已主动下注）→ doomed：allin 搏翻盘；
-        #   · 我方主动（轮到我们决定下注）→ steal：强制施压防锁赢
-        #     （主动下注让对手弃牌，避免输掉这手导致锁胜，而非弃牌/过牌送盲）。
-        # 【2026-08-25 精确公式】对手全程弃牌时我方最多可追回的盲注
-        #  = _blind_line(剩余手数, own=False)（位置轮换精确计算），
-        #    取代旧的 1.5×BB×(剩余手数-1) 极值估算。
+        # 【2026-08-25 用户规则】只要确定「本局失败对手即锁胜」
+        # （确定性 doom 公式）→ 无条件 allin，不再区分主动/被动：
+        #   弃牌=直接认输，任何其他动作（含主动侧小额施压）都不如 allin
+        #   最大化本局翻盘期望——allin 兼具弃牌权益与最大价值。
+        # 【精确公式】本局失败（lead 再降 2×大盲）后，对手用剩余
+        # hands_left-1 手全程弃牌即可锁胜的判定，用 _blind_line
+        # （位置轮换精确盲注线，own=False 追回视角）替代旧极值估算。
         if lead - 2 * bb <= -_blind_line(state, max(hands_left - 1, 1), own=False):
-            return "doomed" if _passive_side(state) else "steal"
+            return "doomed"
 
         if hands_left <= 15:
             if lead >= 30 * bb and state.opp_chips <= 0.7 * state.my_chips:
@@ -1409,6 +1439,14 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     # 街级修正：对手转牌加注率飙升 → 河牌下注更可能是真强牌，跟注更严
     if is_river and model.turn_aggr() >= 0.45:
         eff_req += 0.05
+    # 【2026-08-25 用户规则】对手每局下注数量 → 跟注门槛微调：
+    # 每局主动下注 ≥1.5 次（持续施压型）→ 收紧 3%（其下注更可能是真强牌）；
+    # 每局 ≤0.7 次（被动过牌型）→ 放宽 2%（其下注更可能是鱼注，价值被低估）
+    opp_hand_bets = _OPP_BETS_PER_HAND
+    if opp_hand_bets >= 1.5:
+        eff_req += 0.03
+    elif opp_hand_bets <= 0.7:
+        eff_req -= 0.02
     if adj == "protect":
         margin += 0.06       # 领先时只打好赔率
     elif adj in ("desperate", "doomed"):
@@ -1582,13 +1620,12 @@ def _normalize(state, action):
         # 【用户规则 2026-08-24】翻前跟全下金额 > 1000 且非 doomed → 弃。
         # 「翻前投入不能大于 1000」沿用到翻前：翻前无公共牌、手牌最多一对
         # （< 三条），任何大额投入都无法由牌型支撑 → 一律 1000 封顶。
-        if state.stage == "preflop" and my_left > PREFLOP_MAX_BET and \
-                not _allin_high_bet_allowed(state):
+        if _over_limit(state, my_left):
             return {"act": "fold"}
-        # 【用户规则】allin 金额 ≤2000（仅翻后；例外见 _allin_high_bet_allowed）：
-        # 对手全押下我方全下金额超限且无例外 → 弃牌（规则5 内只允许弃/全押）。
-        if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
-                not _allin_high_bet_allowed(state):
+        # 【用户规则 2026-08-25】翻后 allin 超当前牌型上限 → 弃牌
+        # （分级上限 _bet_limit：小两对 2000 / 其余<三条 3000 / ≥三条 不限；
+        #  doomed 不限——规则5 内只允许弃/全押）。
+        if state.stage != "preflop" and my_left > _bet_limit(state):
             return {"act": "fold"}
         return {"act": "allin"} if my_left > 0 else {"act": "fold"}
 
@@ -1607,8 +1644,7 @@ def _normalize(state, action):
         if my_left > 0:
             # 【用户规则 2026-08-24】翻前全下金额 > 1000 且非 doomed → 降级：
             #   跟全下 → 弃；主动全下 → 降级为 1000 上限加注（保持游戏进行）。
-            if state.stage == "preflop" and my_left > PREFLOP_MAX_BET and \
-                    not _allin_high_bet_allowed(state):
+            if _over_limit(state, my_left):
                 if to_call > 0:
                     return {"act": "fold"}
                 num = PREFLOP_MAX_BET
@@ -1618,13 +1654,12 @@ def _normalize(state, action):
                 if num < min_r:
                     return {"act": "check"}
                 return {"act": "raise", "num": num}
-            # 【用户规则】allin 金额 ≤2000（仅翻后；例外见 _allin_high_bet_allowed）
-            if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
-                    not _allin_high_bet_allowed(state):
+            # 【用户规则 2026-08-25】翻后 allin 超当前牌型上限 → 降级
+            if state.stage != "preflop" and my_left > _bet_limit(state):
                 if to_call > 0:
                     return {"act": "fold"}   # 跟全下超限 → 弃
-                # 主动全下超限 → 降级为 2000 上限的普通加注（保持游戏进行）
-                num = HIGH_BET_LIMIT
+                # 主动全下超限 → 降级为该牌型上限的普通加注（保持游戏进行）
+                num = _bet_limit(state)
                 min_r = state.min_raise()
                 if _LEAD_LOCK:
                     num = min(num, LEAD_MAX_BET)
@@ -1639,24 +1674,20 @@ def _normalize(state, action):
             return {"act": "check"}
         if to_call >= my_left:      # 需严格 my_left > to_call 才能跟注
             # 【用户规则 2026-08-24】翻前跟注即全下且金额 > 1000 非 doomed → 弃
-            if state.stage == "preflop" and my_left > PREFLOP_MAX_BET and \
-                    not _allin_high_bet_allowed(state):
+            if _over_limit(state, my_left):
                 return {"act": "fold"}
-            # 【用户规则】跟注即全下且金额超 2000 无例外 → 弃（仅翻后）
-            if state.stage != "preflop" and my_left > HIGH_BET_LIMIT and \
-                    not _allin_high_bet_allowed(state):
+            # 【用户规则 2026-08-25】跟注即全下且金额超当前牌型上限 → 弃（翻后）
+            if state.stage != "preflop" and my_left > _bet_limit(state):
                 return {"act": "fold"}
             return {"act": "allin"}
         # 【用户规则 2026-08-24】翻前跟注额 > 1000 且非 doomed → 弃。
-        # 翻前手牌最多一对（< 三条），无法支撑大额跟注（与翻后 >2000 同逻辑）。
-        if state.stage == "preflop" and to_call > PREFLOP_MAX_BET and \
-                not _allin_high_bet_allowed(state):
+        # 翻前手牌最多一对（< 三条），无法支撑大额跟注（与翻后大注同逻辑）。
+        if _over_limit(state, to_call):
             return {"act": "fold"}
-        # 【用户规则 2026-08-23 严格执行】翻后跟注额 > 2000 即「投入超过 2000」，
-        # 与 raise/allin 同口径受第二优先级限制：非 ≥ 三条 且非 doomed → 弃。
+        # 【用户规则 2026-08-25】翻后跟注额超当前牌型上限 → 弃
+        # （分级上限：小两对 2000 / 其余<三条 3000；≥三条/doomed 不限）。
         # 第 12 手教训：A 一对弱踢脚 call 3223 是假投入——假强牌不应跟大注。
-        if state.stage != "preflop" and to_call > HIGH_BET_LIMIT and \
-                not _allin_high_bet_allowed(state):
+        if state.stage != "preflop" and to_call > _bet_limit(state):
             return {"act": "fold"}
         return {"act": "call"}
 
@@ -1684,22 +1715,18 @@ def _normalize(state, action):
         if state.stage == "preflop":
             num = min(num, PREFLOP_MAX_BET)
             if num < min_r:
-                if to_call > PREFLOP_MAX_BET and \
-                        not _allin_high_bet_allowed(state):
+                if _over_limit(state, to_call):
                     return {"act": "fold"}
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
-        # 【用户规则】投入 > HIGH_BET_LIMIT(2000) 仅限：
-        #   ①翻后有效牌型 ≥ 三条（经 _effective_category 净化——纯公共牌拼的
-        #     三条/顺子/同花/葫芦/四条/同花顺降级为高牌，不豁免）；
-        #   ②doomed（防锁赢 allin，第一优先级，在 decide 入口已返回）；
-        #   ③steal（强制下注防锁赢，第二优先级——2026-08-24 恢复豁免，
-        #     对手疑似锁胜时高频大额 C-Bet 施压）。
-        # 其余一律 2000 封顶（翻前无牌面 → 一律 ≤1000，见上方翻前限制）。
-        # 若对手注已大到最小加注超上限 → 无法合法加注 → 降级 call/check。
-        if num > HIGH_BET_LIMIT and _match_adjust(state) != "steal":
+        # 【用户规则 2026-08-25】注额分级上限（翻后，_bet_limit）：
+        #   ≥三条（净化后）不限 / 小两对 ≤2000 / 其余 <三条 ≤3000；
+        #   doomed 第一优先级已在 decide 入口无条件 allin（此处兜底不限）。
+        # 翻前一律 ≤1000（见上方翻前限制）。若对手注已大到最小加注超上限
+        # → 无法合法加注 → 降级 call/check。
+        if num > _bet_limit(state):
             if state.stage == "preflop" or \
                     _effective_category(state) < HIGH_BET_MIN_CAT:
-                num = HIGH_BET_LIMIT
+                num = _bet_limit(state)
                 if num < min_r:
                     return {"act": "call"} if to_call > 0 else {"act": "check"}
         if num < min_r:

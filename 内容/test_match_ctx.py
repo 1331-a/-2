@@ -152,5 +152,71 @@ check("序列化:往返一致", ctx7.level == ctx5.level and
 ctx8 = MatchContext.from_dict({"bad": "data", "level": 2})
 check("序列化:脏数据防护", ctx8.level == 2 and ctx8.consec_profit == 0)
 
+# ---------- 6. 赢牌策略学习（2026-08-25 用户规则） ----------
+from match_ctx import _tag_from_history, STRAT_MIN_SAMPLES  # noqa: E402
+
+
+def tag_state(history):
+    return type("Stub", (), {
+        "my_id": 0, "opp_id": 1,
+        "total_win_chips": [0, 0],
+        "request": {"history": history}})()
+
+
+# 标签提取：翻后主动下注次数分档
+h_aggro = [{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
+           {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+           {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+           {"round": 1, "player_id": 0, "action": 200, "action_type": "bet"},
+           {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+           {"round": 2, "player_id": 0, "action": 400, "action_type": "bet"}]
+check("策略标签:翻后两注=aggro", _tag_from_history(tag_state(h_aggro)) == "aggro")
+h_allin = h_aggro[:-2] + [{"round": 2, "player_id": 0, "action": -2, "action_type": "allin"}]
+check("策略标签:有全下=aggro", _tag_from_history(tag_state(h_allin)) == "aggro")
+h_cbet = h_aggro[:-2]
+check("策略标签:翻后一注=cbet", _tag_from_history(tag_state(h_cbet)) == "cbet")
+h_passive = [{"round": 0, "player_id": 1, "action": 250, "action_type": "raise"},
+             {"round": 0, "player_id": 0, "action": 0, "action_type": "call"},
+             {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+             {"round": 1, "player_id": 0, "action": 0, "action_type": "check"}]
+check("策略标签:翻后零注=passive", _tag_from_history(tag_state(h_passive)) == "passive")
+
+# 策略-结果记录 + 重心偏移
+ctx9 = MatchContext()
+ctx9._record_hand(tag_state([]), 800, False)      # 无标签不记录
+ctx9.cur_hand_tag = "aggro"
+ctx9._record_hand(tag_state([]), 800, False)
+ctx9.cur_hand_tag = "aggro"
+ctx9._record_hand(tag_state([]), 800, False)
+ctx9.cur_hand_tag = "aggro"
+ctx9._record_hand(tag_state([]), 800, False)
+ctx9.cur_hand_tag = "aggro"
+ctx9._record_hand(tag_state([]), 800, False)
+ctx9.cur_hand_tag = "aggro"
+ctx9._record_hand(tag_state([]), -300, False)     # 4 胜 1 负 → 胜率 0.8 > 0.62
+check("策略学习:aggro胜率高→负偏移(更激进)",
+      ctx9.strategy_shift() == -1, "shift=%s" % ctx9.strategy_shift())
+# 样本不足不偏移
+ctx10 = MatchContext()
+ctx10.cur_hand_tag = "passive"
+for _ in range(2):
+    ctx10._record_hand(tag_state([]), 800, False)
+check("策略学习:样本不足不偏移", ctx10.strategy_shift() == 0,
+      "shift=%s" % ctx10.strategy_shift())
+# 胜率不足不偏移
+ctx11 = MatchContext()
+ctx11.cur_hand_tag = "passive"
+for _ in range(4):
+    ctx11._record_hand(tag_state([]), 800, False)
+ctx11.cur_hand_tag = "passive"
+ctx11._record_hand(tag_state([]), -300, False)     # 4 胜 1 负→0.8，但 passive 该偏 +1
+check("策略学习:passive胜率高→正偏移(更保守)",
+      ctx11.strategy_shift() == 1, "shift=%s" % ctx11.strategy_shift())
+# 平局忽略
+ctx12 = MatchContext()
+ctx12.cur_hand_tag = "cbet"
+ctx12._record_hand(tag_state([]), 0, False)
+check("策略学习:平局不计数", ctx12.strat_stats.get("cbet") is None)
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

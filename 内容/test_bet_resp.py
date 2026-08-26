@@ -150,5 +150,24 @@ check("学习优先:面对下注加注用学习尺寸(0.35池≈860)", a == {"ac
 a0 = decide(parse_request(aa_bet2), OpponentModel())
 check("学习优先:无数据常规加注(增量已删→0.75池1500)", a0 == {"act": "raise", "num": 1500}, str(a0))
 
+# ---------- 对手每局下注数量（2026-08-25 用户规则） ----------
+m8 = OpponentModel()
+check("每局下注:无数据返回先验0.9", abs(m8.avg_bets_per_hand() - 0.9) < 1e-9,
+      "avg=%s" % m8.avg_bets_per_hand())
+m8.hand_bet_counts = [1, 2, 1]      # 3 手 → 均值 4/3
+check("每局下注:3手均值", abs(m8.avg_bets_per_hand() - 4 / 3) < 1e-9,
+      "avg=%s" % m8.avg_bets_per_hand())
+m8.hand_bet_counts = [0]            # 1 手样本 → 向先验收缩（<0.9）
+check("每局下注:1手样本收缩", m8.avg_bets_per_hand() < 0.9,
+      "avg=%s" % m8.avg_bets_per_hand())
+# 换手牌边界：cur_hand_bets 推入窗口并重置
+m8.cur_hand_bets = 3
+m8.hand_bet_counts = [1, 2]
+st_new = parse_request(req(hand=9, my_id=0, my_cards=[48, 50]))
+build_model_from_history(m8, {"hand": 9, "history": []}, st_new)
+check("每局下注:新手牌推入上一手计数",
+      m8.hand_bet_counts[-1] == 3 and m8.cur_hand_bets == 0,
+      "counts=%s cur=%s" % (m8.hand_bet_counts, m8.cur_hand_bets))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

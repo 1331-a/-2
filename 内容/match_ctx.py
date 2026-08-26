@@ -40,6 +40,13 @@ LEVEL_CONSERVATIVE = 0          # 保守：正常策略，不额外激进
 LEVEL_NORMAL = 1                # 正常
 LEVEL_AGGRESSIVE = 2            # 激进：追分
 
+# ---- 赢牌策略学习（2026-08-25 用户规则）----
+# 记录「我方赢牌时采取的策略」标签（aggro/cbet/passive）与胜负结果，
+# 依胜率调整策略重心（strategy_shift 给状态机阈值提供 ±偏移）。
+STRAT_MIN_SAMPLES = 5           # 某策略至少 5 手样本才参与重心调整
+STRAT_WIN_RATE = 0.62           # 胜率超过此值 → 强化该策略（偏移 1 大盲）
+STRAT_SHIFT_BB = 1              # 策略重心偏移强度（大盲单位）
+
 BRACKET_PCT = 0.20              # 激进等级分档：累计盈亏 ±20% 初始筹码
 DRAWDOWN_PCT = 0.15             # 单局亏损阈值 → 大败降档
 UP_CONSEC_CONSERVATIVE = 3      # 保守档连续盈利升档局数
@@ -62,6 +69,9 @@ class MatchContext:
         self.opponent_locking = False  # 疑似锁胜（弃牌率>65% 且 全下频率<10%）
         self.level = LEVEL_NORMAL    # 激进等级
         self.consec_profit = 0       # 连续盈利局数（用于升档）
+        # ---- 赢牌策略学习（2026-08-25）----
+        self.strat_stats = {}        # tag(aggro/cbet/passive) -> {"w":赢局,"l":输局}
+        self.cur_hand_tag = None     # 当前手牌我方策略标签（每回合从 history 重算）
 
     # ---------------- 序列化 ----------------
     def to_dict(self):
@@ -92,15 +102,26 @@ class MatchContext:
             self.cur_opp_allin = True
         if hand != self.last_hand:
             if self.last_hand is not None and self.last_win is not None:
-                # 结算上一手：此时 cur_opp_allin 仍记录着上一手的全下状态
+                # 结算上一手：此时 cur_opp_allin 仍记录着上一手的全下状态；
+                # cur_hand_tag 仍是上一手最后一次 request 重算的标签（完整）
                 self._record_hand(state, my_win - self.last_win, self.cur_opp_allin)
             self.last_hand = hand
             self.last_win = my_win
             self.cur_opp_allin = False
+        # 每回合重算当前手牌策略标签（history 为当前手完整动作重放）
+        self.cur_hand_tag = _tag_from_history(state)
 
     def _record_hand(self, state, net, opp_allin):
         """上一手已结束：记录单局净赢与对手全下标志，并更新指标。"""
         self.total_hands += 1
+        # 赢牌策略学习：按本手策略标签记录胜负（net>0 赢 / <0 输 / 0 平忽略）
+        tag = self.cur_hand_tag
+        if tag and net != 0:
+            s = self.strat_stats.setdefault(tag, {"w": 0, "l": 0})
+            if net > 0:
+                s["w"] += 1
+            else:
+                s["l"] += 1
         q = self.recent_hands
         q.append([net, opp_allin])
         if len(q) > WINDOW:
@@ -176,3 +197,52 @@ class MatchContext:
         if self.level == LEVEL_CONSERVATIVE:
             return LEVEL_SHIFT_BB
         return 0
+
+    def strategy_shift(self):
+        """赢牌策略重心偏移（大盲单位，2026-08-25 用户规则）。
+
+        依据「我方赢牌时采取的策略」统计调整策略重心：
+          - aggro（翻后持续施压/全下）胜率高 → -1：强化激进（早追分/多施压）；
+          - passive（过牌跟注为主）胜率高   → +1：强化保守（早保收益/少冒险）。
+        样本不足或胜率未过线 → 0（不偏移）。与 threshold_offset 叠加。
+        """
+        for tag, sign in (("aggro", -STRAT_SHIFT_BB), ("passive", STRAT_SHIFT_BB)):
+            s = self.strat_stats.get(tag)
+            if s and s["w"] + s["l"] >= STRAT_MIN_SAMPLES:
+                if s["w"] / (s["w"] + s["l"]) > STRAT_WIN_RATE:
+                    return sign
+        return 0
+
+
+def _tag_from_history(state):
+    """我方本手策略标签（2026-08-25）：按翻后主动下注/加注次数分档。
+
+      aggro   —— 翻后主动下注 ≥2 次，或本手有全下（持续施压/搏命）；
+      cbet    —— 翻后主动下注 1 次（标准持续下注后收手）；
+      passive —— 翻后 0 次主动下注（过牌/跟注为主）。
+    只统计翻后（round≥1）动作——翻前开池/跟注是所有手牌共性，不区分策略。
+    """
+    try:
+        hist = (getattr(state, "request", None) or {}).get("history") or []
+        my_id = state.my_id
+        postflop_bets = 0
+        allin_cnt = 0
+        for r in hist:
+            if r.get("player_id") != my_id:
+                continue
+            if int(r.get("round", 0)) == 0:
+                continue
+            at = r.get("action_type", "")
+            a = r.get("action", 0)
+            if at == "allin" or a == -2:
+                allin_cnt += 1
+            elif at in ("raise", "bet") or \
+                    (isinstance(a, int) and not isinstance(a, bool) and a > 0):
+                postflop_bets += 1
+        if allin_cnt > 0 or postflop_bets >= 2:
+            return "aggro"
+        if postflop_bets == 1:
+            return "cbet"
+        return "passive"
+    except Exception:
+        return None

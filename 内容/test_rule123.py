@@ -46,24 +46,24 @@ def locking_ctx():
     return c
 
 
-# ================= 规则1：强制施压防锁赢（确定性：这把输了对面能锁胜） =================
+# ================= 规则1：确定本局失败对手锁赢 → 无条件 allin =================
 print("===== 规则1 =====")
-# 主动 doomed 基准：my_id=0, lead=-6000, hand=40/max=70 → 阈值-4350 → 命中
+# 主动 doomed 基准：my_id=0, lead=-6000, hand=40/max=70 → doom 公式命中
 DOOM_PNL = [-3000, 3000]
-# 1) 主动侧（to_call=0）BTN 任意两张牌（72o）→ 强制开池 2.5BB=250（施压防锁赢）
+# 1) 主动侧（to_call=0）BTN 任意两张牌（72o）→ 无条件 allin（2026-08-25：
+#    不再主动施压开池，doom 确定即 allin——弃牌=认输，allin 最大化翻盘期望）
 a = decide(parse_request(req(total_win_chips=DOOM_PNL)), OpponentModel())
-check("规则1:主动doomed BTN 72o 强制开池",
-      a == {"act": "raise", "num": 250}, str(a))
+check("规则1:主动doomed BTN 72o 无条件allin",
+      a == {"act": "allin"}, str(a))
 
-# 2) 主动侧翻后空气牌 → 高频 C-Bet（50~60% 池）
+# 2) 主动侧翻后空气牌 → 同样无条件 allin（不看牌力）
 st2 = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[24, 17],
                         total_win_chips=DOOM_PNL,
                         history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st2, OpponentModel())
-check("规则1:主动doomed翻后空气牌C-Bet",
-      a.get("act") == "raise" and 0.4 <= a["num"] / max(st2.pot, 1) <= 0.65, str(a))
+check("规则1:主动doomed翻后空气牌无条件allin", a == {"act": "allin"}, str(a))
 
 # 3) 被动侧（对手已下注）→ allin 搏命（弃牌=直接认输，第一优先级）
 st3 = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[24, 17],
@@ -134,14 +134,15 @@ a = decide(st9, OpponentModel())
 # MUST-WIN 已删：盈利0 非 doomed → 正常决策（受 2000 封顶）
 check("规则2:不盈利不再MUST-WIN全下", a.get("act") != "allin", str(a))
 
-# ================= 规则3：下注额限制 =================
+# ================= 规则3：主动下注克制（BET_CAP=3000） =================
 print("===== 规则3 =====")
-# 10) 非生死局 pot>2000（已投1500×2）非超强牌（顶对K）→ 放弃主动下注（check）。
-#     用剩 65 手把 MUST-WIN 隔离掉（2×投入后 6900 < 2.5×100×64=16000）→ 规则3 生效
-st10 = parse_request(req(my_chips=18500, my_cards=[46, 13],
+# 10) 非生死局 pot>2000（已投4000×2=8000）非超强牌（顶对K）→ 主动下注
+#     （约 0.5~0.75 池 = 4000+）超 BET_CAP(3000) → 规则3 降级：放弃主动下注。
+#     用剩 65 手把 MUST-WIN/doom 隔离掉（lead=0 非锁胜）→ 规则3 生效
+st10 = parse_request(req(my_chips=16000, my_cards=[46, 13],
                          total_win_chips=[0, 0], hand=5,
                          public_cards=[44, 38, 30],
-                         history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"},
+                         history=[{"round": 0, "player_id": 0, "action": 4000, "action_type": "raise"},
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st10, OpponentModel())
@@ -322,11 +323,12 @@ a = decide(st, OpponentModel())
 check("规则4:board三条+手里K 面对1500可大注",
       a.get("act") in ("raise", "allin"), str(a))
 
-# 4-13) 单元：>2000 限制豁免集 = steal(主动防锁赢)/doomed(被动防锁赢)/有效牌型≥三条
-#      （2026-08-24：steal 触发改为确定性 doom 公式的主动侧，仍豁免 >2000）
+# 4-13) 单元：注额分级上限 _bet_limit（2026-08-25 用户规则）
+#      ≥三条（净化后）不限 / 小两对 ≤2000 / 其余 <三条 ≤3000 / doomed 不限
 import strategy as _S  # noqa: E402
-from strategy import _allin_high_bet_allowed  # noqa: E402
-# 主动侧 doomed（to_call=0，river 对手 check 轮到我们）→ steal → 豁免
+from strategy import _bet_limit, HIGH_BET_LIMIT, SMALL_TWO_PAIR_LIMIT  # noqa: E402
+INF = 1 << 60
+# 主动侧 doomed（lead=-6000）→ 不限（无条件 allin，第一优先级）
 st = parse_request(allin_river_req(
     total_win_chips=[-3000, 3000],
     public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15],
@@ -337,25 +339,43 @@ st = parse_request(allin_river_req(
              {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
              {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
              {"round": 3, "player_id": 1, "action": 0, "action_type": "check"}]))
-check("规则4:steal(主动doomed)豁免allin>2000",
-      _allin_high_bet_allowed(st) is True,
-      "allowed=%s" % _allin_high_bet_allowed(st))
-# 对照：被动侧 doomed（to_call>0）仍豁免
+check("规则4:doomed不限注额(主动侧)", _bet_limit(st) >= INF,
+      "limit=%s" % _bet_limit(st))
+# 对照：被动侧 doomed 同样不限
 st = parse_request(allin_river_req(total_win_chips=[-5000, 5000],
                                    public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15]))
-check("规则4:doomed(被动)仍豁免allin>2000",
-      _allin_high_bet_allowed(st) is True,
-      "allowed=%s" % _allin_high_bet_allowed(st))
+check("规则4:doomed不限注额(被动侧)", _bet_limit(st) >= INF,
+      "limit=%s" % _bet_limit(st))
+# 普通 <三条（顶对 A，非小两对）→ 上限 3000
+st = parse_request(allin_river_req(total_win_chips=[0, 0],
+                                   public_cards=[46, 22, 5], my_cards=[48, 10],
+                                   history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                            {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                            {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+check("规则4:普通<三条上限3000", _bet_limit(st) == HIGH_BET_LIMIT,
+      "limit=%s" % _bet_limit(st))
+# 真四条（≥三条）→ 不限
+st = parse_request(allin_river_req(total_win_chips=[0, 0],
+                                   public_cards=[53, 54, 55, 36, 31], my_cards=[52, 10]))
+check("规则4:真四条不限注额", _bet_limit(st) >= INF,
+      "limit=%s" % _bet_limit(st))
+# 小两对（7-5 两对，最大对≤9）→ 上限 2000
+st = parse_request(allin_river_req(total_win_chips=[0, 0],
+                                   public_cards=[12, 20, 46], my_cards=[20, 12],
+                                   history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                            {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                            {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+check("规则4:小两对上限2000", _bet_limit(st) == SMALL_TWO_PAIR_LIMIT,
+      "limit=%s" % _bet_limit(st))
 _S._CTX = None
 
-# 4-14) 行为：steal（强制施压防锁赢）第二优先级——主动侧 doom 公式成立
-#       + 我大幅领先本可锁胜弃牌（fold_out: lead 16000 > 7500）→
-#       强制施压优先（不 fold_out），强制开池
+# 4-14) 行为：主动侧 doom 公式成立（lead=-6000 剩25手）+ 本可锁胜弃牌
+#       （fold_out）→ doom 第一优先级：无条件 allin（覆盖 fold_out）
 st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2], hand=45, max_hand=70,
                        total_win_chips=[-3000, 3000], total_win_games=[20, 25]))
 a = decide(st, OpponentModel())
-check("规则4:主动doomed强制施压覆盖锁胜弃牌",
-      a == {"act": "raise", "num": 250}, str(a))
+check("规则4:主动doomed无条件allin覆盖锁胜弃牌",
+      a == {"act": "allin"}, str(a))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

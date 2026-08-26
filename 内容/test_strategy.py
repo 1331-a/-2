@@ -356,26 +356,27 @@ nuts_shallow = req(my_id=0, my_chips=4000, my_cards=[50, 46],
 a = act(nuts_shallow)
 check("防输光:坚果浅筹码可全下", a.get("act") == "allin", str(a))
 
-# ---------- 6b. 强制施压防锁赢（主动侧 doom 公式：这把输了对面能锁胜）----------
+# ---------- 6b. 防锁赢：确定本局失败对手锁胜 → 无条件 allin（2026-08-25）----------
 from match_ctx import MatchContext   # noqa: E402
 
-# 主动 doomed 基准：my_id=0, lead=-6000, hand=45/max=70 → 阈值-3600 → 命中
+# 主动 doomed 基准：my_id=0, lead=-6000, hand=45/max=70 → doom 公式命中
 DOOM_PNL = [-3000, 3000]
-# 庄家位任何牌（含 72o）→ 强制开池 2.5BB（规则1；my_chips=19950 → 盲注50/100）
+# 庄家位任何牌（含 72o）→ 无条件 allin（不再主动施压开池——弃牌=认输，
+# allin 最大化本局翻盘期望）
 st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2],
                        hand=45, max_hand=70, total_win_chips=DOOM_PNL))
 a = decide(st, OpponentModel())
-check("施压档:主动doomed庄家72o强制开池(2.5BB)",
-      a == {"act": "raise", "num": 250}, str(a))
-# 空气牌翻后也高频 C-Bet（施压防锁赢）
+check("施压档:主动doomed庄家72o无条件allin",
+      a == {"act": "allin"}, str(a))
+# 空气牌翻后同样无条件 allin（不看牌力）
 st = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                        public_cards=[46, 22, 5], hand=45, max_hand=70,
                        total_win_chips=DOOM_PNL,
                        history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
-a = decide(st, foldy())   # 施压档：空气牌也 C-Bet（非关诈唬）
-check("施压档:主动doomed空气牌C-Bet", a.get("act") == "raise", str(a))
+a = decide(st, foldy())
+check("施压档:主动doomed空气牌无条件allin", a == {"act": "allin"}, str(a))
 # 对照组：正常（lead=0，非防锁赢）→ 同场景空气牌对高弃牌对手会诈唬
 st2 = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                         public_cards=[46, 22, 5], hand=45, max_hand=70,
