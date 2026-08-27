@@ -52,6 +52,7 @@ BLOCKER = 0.45             # 中等牌有位置的小注施压
 # ---- 计算预算 ----
 MC_ITERATIONS = 1000       # 蒙特卡洛最大抽样数
 TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，预留充足余量
+DECISION_TIMEOUT = 0.90    # 清单规定的硬超时保护（秒）
 
 # ---- 翻前全下决策（按累计盈亏动态分档，防止「优势下跟 all-in 比运气」）----
 ALLIN_MC = 600             # 全下决策蒙特卡洛抽样数（翻前只需 5 张公共牌，速度快）
@@ -138,6 +139,7 @@ DESPAIR_ALLIN_LIMIT = -3000   # 弃牌后累计亏损超过此值 → 无条件 
 # 时，判定为「突袭大注」——往往代表对手强牌（两对+/听牌/全下前奏），
 # 慎重量考：跟全下/大注时收紧对手范围估计、抬跟注门槛。
 OPP_JUMP_THRESHOLD = 2000      # 对手本手累计已下注超过此值 → 跟注警告（用户规则，无4倍条件）
+OPP_JUMP_RATIO = 4.0           # 单次加注增量超过此前累计投入的 4 倍 → 突袭
 OPP_JUMP_FAC_MARGIN = 0.10       # 检测到突袭大注时，跟全下阈值额外抬高量
 OPP_JUMP_EQ_PENALTY = 0.15     # 突袭大注时 eq 打折（对手范围收紧，顶对级牌力被高估）
 
@@ -192,6 +194,12 @@ _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入�
 _LEAD_LOCK = False    # 优势锁定模式：领先>LEAD_NO_ALLIN 时不 allin、注码≤LEAD_MAX_BET
 _OPP_BETS_PER_HAND = 0.9  # 对手每局下注数量（decide 入口从 model 读取，
                           # 2026-08-25：驱动跟注门槛微调——高侵略收紧/被动放宽）
+_DECISION_STARTED_AT = 0.0
+
+
+def _decision_timed_out():
+    return _DECISION_STARTED_AT > 0 and \
+        time.perf_counter() - _DECISION_STARTED_AT > DECISION_TIMEOUT
 
 
 def _opp_bet_jumped(state):
@@ -209,6 +217,7 @@ def _opp_bet_jumped(state):
     hist = request.get("history") or []
     opp = state.opp_id
     opp_cum = 0          # 对手本手累计投入（call+raise 增量之和）
+    opp_jump = False
     cur_round = None
     rb = {0: 0, 1: 0}    # 本轮双方已投（按轮重置）
     for r in hist:
@@ -229,6 +238,9 @@ def _opp_bet_jumped(state):
                 incr = 0
             rb[p] = int(a)
             if p == opp:
+                if (opp_cum == 0 and incr > OPP_JUMP_THRESHOLD) or \
+                    (opp_cum > 0 and incr > OPP_JUMP_RATIO * opp_cum):
+                    opp_jump = True
                 opp_cum += incr
         elif at == "call":
             cur_max = max(rb.values())
@@ -239,9 +251,7 @@ def _opp_bet_jumped(state):
             if p == opp:
                 opp_cum += incr
         # check/fold/allin(金额未知) 不累计
-    # 【用户规则】跟注警告：对方已下注 > OPP_JUMP_THRESHOLD(2000) 即触发，
-    # 不设置 4 倍增量条件——对手累计投入超过 2000 后，跟注需慎重。
-    return opp_cum > OPP_JUMP_THRESHOLD
+    return opp_jump
 
 
 def _allin_floor_guard(state, action):
@@ -445,7 +455,8 @@ def decide(state, model, ctx=None):
     ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
     （对手弃牌推断/激进等级/回撤保护）通过它只调整状态机阈值偏移。
     """
-    global _CTX, _OPP_JUMPED, _LEAD_LOCK
+    global _CTX, _OPP_JUMPED, _LEAD_LOCK, _OPP_BETS_PER_HAND, _DECISION_STARTED_AT
+    _DECISION_STARTED_AT = time.perf_counter()
     _CTX = ctx
     # 【对手突袭大注】全局标志：翻前/翻后所有决策共享（优先级最高——
     # 领先较大时不 allin、面对突袭大注收紧防守，都在决策一开始生效）
@@ -479,6 +490,8 @@ def decide(state, model, ctx=None):
     # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
     # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
     if not _LEAD_LOCK and _profit_lock_allin(state):
+        if _decision_timed_out():
+            return {"act": "fold"}
         return {"act": "allin"}
 
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
@@ -488,6 +501,8 @@ def decide(state, model, ctx=None):
         action = _preflop_decide(state, model)
     else:
         action = _postflop_decide(state, model)
+    if _decision_timed_out():
+        return {"act": "fold"}
     # 全下下限：投入须超过「当前总盈利 + 1000」才允许 allin（用户规则）
     action = _allin_floor_guard(state, action)
     # 【规则3】下注额限制（第三优先级）：注额分级上限由 _normalize 统一执行
@@ -1484,7 +1499,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             # 常规档跟全下需要胜率 > 赔率要求的边际（margin≥0.02），
             # 避免「小优势就接全下」的高方差打法
             thr = eff_req + margin
-            return {"act": "allin"}
+        return {"act": "allin"} if eq >= thr else {"act": "fold"}
         return {"act": "fold"}
 
     # ---- 强牌：加注求价值；全下门槛按牌力分层 ----
