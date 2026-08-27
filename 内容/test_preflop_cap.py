@@ -98,7 +98,8 @@ check("前几步钓鱼:river顶对恢复正常注(≥0.5池)",
       (a.get("act") == "check" or a["num"] >= 0.5 * st.pot), str(a))
 
 # ============ C. 翻后大注牌型门槛：只有牌型≥三条才能下注超过2000 ============
-deep_pf = [{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+# 浅投入（翻前500，invested≈500 < 盲注线3000/2）→ 非 doom，隔离 doom 测牌型门槛
+deep_pf = [{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
            {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
            {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
            {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
@@ -106,7 +107,7 @@ deep_pf = [{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
            {"round": 2, "player_id": 0, "action": 0, "action_type": "check"}]
 
 # C1) river 对手下注 1500，我顺子级（≥三条）→ 允许大注/全下（绝不只是跟）
-r = req(my_chips=17000, my_cards=[36, 32], public_cards=[44, 30, 29, 16, 12],
+r = req(my_chips=19500, my_cards=[36, 32], public_cards=[44, 30, 29, 16, 12],
         history=deep_pf + [{"round": 3, "player_id": 1, "action": 1500, "action_type": "raise"}])
 st = parse_request(r)
 a = decide(st, OpponentModel())
@@ -114,7 +115,7 @@ check("牌型门槛:顺子面对1500可大注(raise/allin)",
       a.get("act") in ("raise", "allin"), str(a))
 
 # C2) river 对手下注 1500，我两对（<三条）→ 绝不 raise 超 2000（call/弃）
-r = req(my_chips=17000, my_cards=[42, 13], public_cards=[43, 22, 29, 16, 12],
+r = req(my_chips=19500, my_cards=[42, 13], public_cards=[43, 22, 29, 16, 12],
         history=deep_pf + [{"round": 3, "player_id": 1, "action": 1500, "action_type": "raise"}])
 st = parse_request(r)
 a = decide(st, OpponentModel())
@@ -172,8 +173,9 @@ r = req(my_cards=[23, 2], my_chips=18500, total_win_chips=[-1000, 1000])
 a = decide(parse_request(r), OpponentModel())
 check("弃牌亏损线:弃牌-2500未超线不触发", a.get("act") != "allin", str(a))
 
-# E4) 翻后触发：我方翻前投1500（pnl=-2000），对手flop全下 → 弃牌即-3500 → allin
-r = req(my_id=0, my_cards=[23, 2], my_chips=18500, total_win_chips=[-2000, 2000],
+# E4) 翻后对照：我方翻前投1500（pnl=-500 小幅落后），对手flop全下 →
+#     非 doomed（-1000-3000=-4000 > -盲注线3000）→ 不强制 allin
+r = req(my_id=0, my_cards=[23, 2], my_chips=18500, total_win_chips=[-500, 500],
         public_cards=[46, 22, 5],
         history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"},
                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},

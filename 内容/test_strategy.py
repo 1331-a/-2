@@ -317,7 +317,8 @@ no_pair = parse_request(req(my_id=0, my_chips=19500, my_cards=[3, 22],
 check("公对规则:无公对不触发", should_avoid_risk(no_pair) is False, str(state_board(no_pair)))
 
 # 规则3联动：领先(6000) + 弱两对 + 对手转牌全下 → 直接弃牌
-lead_allin = req(my_id=0, my_chips=1000, my_cards=[3, 22],
+# （浅投入 invested 500 < 盲注线1875/2 → 非 doom；fold_out: 12000 > 1875+500 → 锁胜弃牌）
+lead_allin = req(my_id=0, my_chips=19500, my_cards=[3, 22],
                  public_cards=[51, 28, 1, 31], hand=45, max_hand=70,
                  total_win_chips=[6000, -6000],
                  history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
@@ -333,8 +334,8 @@ check("公对规则:弱两对不触发全下", a.get("act") != "allin", str(a))
 
 # ---------- 6c. 防「小优势大注输光」：中强牌克制、坚果才全下 ----------
 # 顶对弱踢脚+湿润面（K♠5♦ + K♥J♠9♠8♠，eq≈0.69 小优势）面对转牌 2000 →
-# 克制加注（0.75 池）而非全下
-tp_deep = req(my_id=0, my_chips=17000, my_cards=[46, 13],
+# 克制加注（0.75 池）而非全下（浅投入 invested 500 → 非 doom，隔离防输光逻辑）
+tp_deep = req(my_id=0, my_chips=19500, my_cards=[46, 13],
               public_cards=[44, 38, 30, 26],
               history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                        {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},

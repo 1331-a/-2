@@ -2145,13 +2145,18 @@ def _fold_out_active(state):
     即每手弃牌最多消耗我的盲注（SB 或 BB），且大小盲按位置每局轮换。
     【2026-08-25 精确公式】剩余 R 手（从下一局起、位置逐局翻转）的最大
     总消耗 = 小盲次数×SB + 大盲次数×BB（_blind_line，非 1.5×BB×R 估算）。
-    当 领先 > 该精确消耗线 时，全程弃牌后领先仍为正 → 绝对稳赢。
+    【2026-08-27 修正（用户规则）】本局弃牌还会损失本局已投入的筹码
+    （盲注+跟注/加注），必须计入总消耗——否则深投入时锁胜弃牌会
+    过早触发（一局范围误差）。修正后：
+        总消耗 = _blind_line(剩余局数, own=True) + 本局已投入
+    当 领先 > 该总消耗 时，即使本局弃牌 + 未来全程弃牌仍保持领先 → 绝对稳赢。
     """
     try:
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         hands_left = state.max_hand - state.hand_num
-        return lead > _blind_line(state, hands_left)
+        invested = INIT_CHIPS - state.my_chips          # 本局已投入（含盲注/跟注/加注）
+        return lead > _blind_line(state, hands_left) + invested
     except Exception:
         return False
 
@@ -2213,10 +2218,15 @@ def _match_adjust(state):
         # （确定性 doom 公式）→ 无条件 allin，不再区分主动/被动：
         #   弃牌=直接认输，任何其他动作（含主动侧小额施压）都不如 allin
         #   最大化本局翻盘期望——allin 兼具弃牌权益与最大价值。
-        # 【精确公式】本局失败（lead 再降 2×大盲）后，对手用剩余
-        # hands_left-1 手全程弃牌即可锁胜的判定，用 _blind_line
-        # （位置轮换精确盲注线，own=False 追回视角）替代旧极值估算。
-        if lead - 2 * bb <= -_blind_line(state, max(hands_left - 1, 1), own=False):
+        # 【2026-08-27 精确公式（用户规则）】修正本局已投入未被计入的误差：
+        #   本局若失败，我方净损失 = 本局已投入 invested（我 -invested、
+        #   对手 +invested → 领先差降 2×invested，而非旧公式的 2×BB 估算）；
+        #   之后对手（领先方）全程弃牌，我方最多可追回
+        #   _blind_line(剩余局数, own=False)（位置轮换精确追平线）。
+        #   锁定条件：lead - 2×invested ≤ -追平线
+        #       即   lead + 追平线 ≤ 2×invested（invested 越大越早 doomed）。
+        invested = INIT_CHIPS - state.my_chips
+        if lead - 2 * invested <= -_blind_line(state, hands_left, own=False):
             return "doomed"
 
         if hands_left <= 15:

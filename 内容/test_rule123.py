@@ -98,8 +98,9 @@ st6 = parse_request(req(my_chips=16000, my_cards=[48, 44],
 a = decide(st6, OpponentModel())
 check("规则2:盈利+深投入→全下锁胜", a == {"act": "allin"}, str(a))
 
-# 7) 已投不足（2000 < 2800）→ 不触发
-st7 = parse_request(req(my_chips=18000, my_cards=[48, 44],
+# 7) 已投不足（2000 < 2800）→ 不触发；hand=30（剩40局盲注线3000）→
+#    非 doom（lead-2×inv=-2400 > -3000）——隔离 doom 测规则2 本身
+st7 = parse_request(req(my_chips=18000, my_cards=[48, 44], hand=30,
                         public_cards=[46, 6, 1],
                         history=[{"round": 0, "player_id": 0, "action": 1000, "action_type": "raise"},
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
@@ -107,27 +108,24 @@ st7 = parse_request(req(my_chips=18000, my_cards=[48, 44],
 a = decide(st7, OpponentModel())
 check("规则2:已投不足不触发", a.get("act") != "allin", str(a))
 
-# 8) MUST-WIN 覆盖 LEAD_LOCK：盈利2500（lead5000>2000 本应锁定不 allin），
-#    但本局已深投入（8000）且牌面有利（AKs 顶对，eq~0.75）——落败即致对手
-#    锁胜（2×投入后-领先 > 2.5bb×剩余手数）→ 按用户新规则【无条件全下】。
-#    （LEAD_LOCK 的小注方案同样会输掉生死局，故 MUST-WIN 优先）
-st8 = parse_request(req(my_chips=12000, my_cards=[48, 44],
+# 8) LEAD_LOCK 生效：盈利2500（lead5000>2000 锁定不 allin），浅投入
+#    （invested 3000）→ 非 doom（5000-6000=-1000 > -2250）、非 fold_out
+#    （5000 < 2250+3000）→ LEAD_LOCK 注码 ≤1000
+st8 = parse_request(req(my_chips=17000, my_cards=[48, 44],
                         total_win_chips=[2500, -2500],
                         public_cards=[46, 6, 1],
-                        history=[{"round": 0, "player_id": 0, "action": 2500, "action_type": "raise"},
+                        history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"},
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st8, OpponentModel())
-# 【2026-08-23】MUST-WIN 已删除统一 doomed：本场景 LEAD_LOCK 生效（注≤1000）
 check("规则2:领先2500深投入受LEAD_LOCK限(≤1000非allin)",
       a.get("act") != "allin" and (a.get("act") != "raise" or a["num"] <= 1000), str(a))
 
-# 9) 盈利≤0 → 规则2 本身不触发；但本局为生死局（深投入+AKs 顶对）→
-#    由 MUST-WIN 无条件全下接管（新规则 2026-08-23）
-st9 = parse_request(req(my_chips=16000, my_cards=[48, 44],
+# 9) 盈利≤0 → 规则2 本身不触发；浅投入（invested 1000）→ 非 doomed → 正常决策
+st9 = parse_request(req(my_chips=19000, my_cards=[48, 44],
                         total_win_chips=[0, 0],
                         public_cards=[46, 6, 1],
-                        history=[{"round": 0, "player_id": 0, "action": 2500, "action_type": "raise"},
+                        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st9, OpponentModel())
@@ -136,9 +134,11 @@ check("规则2:不盈利不再MUST-WIN全下", a.get("act") != "allin", str(a))
 
 # ================= 规则3：主动下注克制（BET_CAP=3000） =================
 print("===== 规则3 =====")
-# 10) 非生死局 pot>2000（已投4000×2=8000）非超强牌（顶对K）→ 主动下注
-#     （约 0.5~0.75 池 = 4000+）超 BET_CAP(3000) → 规则3 降级：放弃主动下注。
-#     用剩 65 手把 MUST-WIN/doom 隔离掉（lead=0 非锁胜）→ 规则3 生效
+# 10) 非生死局 pot>2000（已投2200×2=4400）非超强牌（顶对K）→ 主动下注
+#     （约 0.5~0.75 池 = 2200~3300）超 BET_CAP(3000) → 规则3 降级：放弃主动下注。
+# 10) 深投入大底池（已投4000×2=8000，剩65手）顶对K：本局失败 lead 降
+#     2×4000=8000 > 盲注线4875 → 确定对手锁胜 → doom 第一层接管（无条件 allin）。
+#     （规则3 的 >3000 降级在此类场景被 doom 覆盖——深投入局即生死局）
 st10 = parse_request(req(my_chips=16000, my_cards=[46, 13],
                          total_win_chips=[0, 0], hand=5,
                          public_cards=[44, 38, 30],
@@ -146,15 +146,14 @@ st10 = parse_request(req(my_chips=16000, my_cards=[46, 13],
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st10, OpponentModel())
-check("规则3:pot>2000非超强牌只过牌/跟注",
-      a.get("act") in ("check", "call"), str(a))
+check("规则3:深投入大底池被doom接管→无条件allin",
+      a == {"act": "allin"}, str(a))
 
-# 10b) 生死局 pot>2000（已投2500×2,剩30手）+ 顶对K（eq≈0.69 明显占优）→
-#      MUST-WIN 覆盖规则3：无条件全下（用户规则 2026-08-23）
-st10b = parse_request(req(my_chips=15000, my_cards=[46, 13],
-                          total_win_chips=[0, 0],
+# 10b) 非生死局 pot>2000（已投500×2）+ 顶对K → 非 doomed → 规则3/注额分级生效
+st10b = parse_request(req(my_chips=19000, my_cards=[46, 13],
+                          total_win_chips=[0, 0], hand=30,
                           public_cards=[44, 38, 30],
-                          history=[{"round": 0, "player_id": 0, "action": 2500, "action_type": "raise"},
+                          history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                    {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                    {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st10b, OpponentModel())
@@ -252,12 +251,13 @@ check("规则4:board葫芦+手里T→真四条保留",
 
 
 def allin_river_req(**kw):
-    """河牌对手全下的 request（翻前双方 3000，河牌对手 allin；默认 board 葫芦）。"""
-    base = {"my_id": 0, "my_chips": 16000, "my_cards": [31, 10], "hand": 40,
+    """河牌对手全下的 request（翻前双方 500，河牌对手 allin；默认 board 葫芦）。
+    浅投入（invested≈1000 < 盲注线2250/2）→ 非 doom，隔离 doom 测河牌/注额规则。"""
+    base = {"my_id": 0, "my_chips": 19000, "my_cards": [31, 10], "hand": 40,
             "max_hand": 70, "total_win_chips": [0, 0], "total_win_games": [0, 0],
             "public_cards": [41, 42, 43, 36, 39],
             "history": [
-                {"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+                {"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
                 {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
@@ -297,7 +297,7 @@ check("规则4:board三条+手里K→真四条保留",
 #       不投入超过 2000（call/fold/raise≤2000）
 st = parse_request(allin_river_req(
     public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15],
-    history=[{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+    history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
              {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
              {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
              {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
@@ -312,7 +312,7 @@ check("规则4:board三条+72 面对1500不超2000",
 # 4-12) 对照：同 board + 手里 K♠（真四条）→ 可大注/全下
 st = parse_request(allin_river_req(
     public_cards=[53, 54, 55, 36, 31], my_cards=[52, 10],
-    history=[{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+    history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
              {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
              {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
              {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
@@ -332,7 +332,7 @@ INF = 1 << 60
 st = parse_request(allin_river_req(
     total_win_chips=[-3000, 3000],
     public_cards=[53, 54, 55, 36, 31], my_cards=[10, 15],
-    history=[{"round": 0, "player_id": 0, "action": 3000, "action_type": "raise"},
+    history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
              {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
              {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
              {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
