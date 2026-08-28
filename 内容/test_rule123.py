@@ -136,9 +136,9 @@ check("规则2:不盈利不再MUST-WIN全下", a.get("act") != "allin", str(a))
 print("===== 规则3 =====")
 # 10) 非生死局 pot>2000（已投2200×2=4400）非超强牌（顶对K）→ 主动下注
 #     （约 0.5~0.75 池 = 2200~3300）超 BET_CAP(3000) → 规则3 降级：放弃主动下注。
-# 10) 深投入大底池（已投4000×2=8000，剩65手）顶对K：本局失败 lead 降
-#     2×4000=8000 > 盲注线4875 → 确定对手锁胜 → doom 第一层接管（无条件 allin）。
-#     （规则3 的 >3000 降级在此类场景被 doom 覆盖——深投入局即生死局）
+# 10) 深投入大底池（已投4000×2=8000，剩65手）顶对K：修复 ×2 后追回线
+#     2×4875=9750 > 本局失败损失 8000 → 追得回，非 doom → 规则3 降级生效
+#     （主动下注 >3000 且 pot>2000 → 放弃主动下注）
 st10 = parse_request(req(my_chips=16000, my_cards=[46, 13],
                          total_win_chips=[0, 0], hand=5,
                          public_cards=[44, 38, 30],
@@ -146,8 +146,8 @@ st10 = parse_request(req(my_chips=16000, my_cards=[46, 13],
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st10, OpponentModel())
-check("规则3:深投入大底池被doom接管→无条件allin",
-      a == {"act": "allin"}, str(a))
+check("规则3:pot>2000非超强牌只过牌/跟注",
+      a.get("act") in ("check", "call"), str(a))
 
 # 10b) 非生死局 pot>2000（已投500×2）+ 顶对K → 非 doomed → 规则3/注额分级生效
 st10b = parse_request(req(my_chips=19000, my_cards=[46, 13],

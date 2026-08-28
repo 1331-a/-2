@@ -2147,8 +2147,14 @@ def _fold_out_active(state):
     总消耗 = 小盲次数×SB + 大盲次数×BB（_blind_line，非 1.5×BB×R 估算）。
     【2026-08-27 修正（用户规则）】本局弃牌还会损失本局已投入的筹码
     （盲注+跟注/加注），必须计入总消耗——否则深投入时锁胜弃牌会
-    过早触发（一局范围误差）。修正后：
-        总消耗 = _blind_line(剩余局数, own=True) + 本局已投入
+    过早触发（一局范围误差）。
+    【2026-08-28 关键修复（用户反馈）】lead（我方-对手累计净赢差）变化
+    是筹码损失的 2 倍：每局弃牌我方 -X、对手 +X → 差 -2X。_blind_line
+    只返回筹码损失（SB/BB），故总消耗必须 ×2：
+        总消耗 = 2 × (_blind_line(剩余局数, own=True) + 本局已投入)
+    修复前少算 2 倍 → 剩余局数少时错误触发锁胜弃牌，弃牌后 lead 不足
+    以覆盖未来盲注（拖回均势甚至直接输掉）。旧公式 1.5×BB≈2×平均盲注
+    已含系数，精确化时丢失。
     当 领先 > 该总消耗 时，即使本局弃牌 + 未来全程弃牌仍保持领先 → 绝对稳赢。
     """
     try:
@@ -2156,7 +2162,7 @@ def _fold_out_active(state):
                 - state.total_win_chips[state.opp_id])
         hands_left = state.max_hand - state.hand_num
         invested = INIT_CHIPS - state.my_chips          # 本局已投入（含盲注/跟注/加注）
-        return lead > _blind_line(state, hands_left) + invested
+        return lead > 2 * (_blind_line(state, hands_left) + invested)
     except Exception:
         return False
 
@@ -2221,12 +2227,13 @@ def _match_adjust(state):
         # 【2026-08-27 精确公式（用户规则）】修正本局已投入未被计入的误差：
         #   本局若失败，我方净损失 = 本局已投入 invested（我 -invested、
         #   对手 +invested → 领先差降 2×invested，而非旧公式的 2×BB 估算）；
-        #   之后对手（领先方）全程弃牌，我方最多可追回
-        #   _blind_line(剩余局数, own=False)（位置轮换精确追平线）。
-        #   锁定条件：lead - 2×invested ≤ -追平线
-        #       即   lead + 追平线 ≤ 2×invested（invested 越大越早 doomed）。
+        #   之后对手（领先方）全程弃牌，我方最多可追回追平线。
+        # 【2026-08-28 关键修复（用户反馈）】lead 变化是筹码的 2 倍：
+        #   对手弃牌我方收盲 → lead +2×筹码，故追回线必须 ×2：
+        #   锁定条件：lead - 2×invested ≤ -2×追平线
+        #       即   lead + 2×追平线 ≤ 2×invested（invested 越大越早 doomed）。
         invested = INIT_CHIPS - state.my_chips
-        if lead - 2 * invested <= -_blind_line(state, hands_left, own=False):
+        if lead - 2 * invested <= -2 * _blind_line(state, hands_left, own=False):
             return "doomed"
 
         if hands_left <= 15:
