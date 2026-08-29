@@ -82,15 +82,20 @@ class GameState:
                     opp_last = r
 
             # 盲注动态推导（仅影响下注尺寸）
+            # 【2026-08-29 修复】平台 HU 固定 50/100：推导结果不得低于默认值
+            # （max 钳制）——若请求中 my_chips 与实际位置不一致（如 BB 位
+            # 只扣了 50），原推导会把盲注减半（SB=25/BB=50），导致
+            # _blind_line 减半、fold_out/doom 阈值漂移，误触发锁胜弃牌
+            # （真实案例：第43手 BB 位 AK 被误弃）。
             if not i_acted and my_total_in > 0:
                 if self.my_id == self.dealer_id:
                     # 我第一个行动 = 庄家/小盲：SB = 已投盲注，BB = 2*SB
-                    self.small_blind = my_total_in
-                    self.big_blind = 2 * my_total_in
+                    self.small_blind = max(my_total_in, DEFAULT_BIG_BLIND // 2)
+                    self.big_blind = max(2 * my_total_in, DEFAULT_BIG_BLIND)
                 else:
                     # 我是大盲等待选项/面对加注：我的翻前投入即大盲
-                    self.big_blind = my_total_in
-                    self.small_blind = my_total_in // 2
+                    self.big_blind = max(my_total_in, DEFAULT_BIG_BLIND)
+                    self.small_blind = max(my_total_in // 2, DEFAULT_BIG_BLIND // 2)
 
             if opp_last is None:
                 # 我先行动（庄家/小盲）：需补足到大盲
