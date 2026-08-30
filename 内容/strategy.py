@@ -1228,6 +1228,65 @@ def _bluff_buffer(state):
     return 0.12
 
 
+def _board_wet(state):
+    """公面是否"湿润"（用户规则 2026-08-30）：≥3 同花 或 ≥3 连续数字。
+
+    湿润公面下对手听牌/暗三/坚果的可能性显著上升，自己无坚果时
+    不宜跟大注（被反超或被迫弃牌的 EV 差）。"""
+    if len(state.board) < 3:
+        return False
+    # 同花：任一花色 ≥3 张
+    suits = {}
+    for c in state.board:
+        s = c & 3
+        suits[s] = suits.get(s, 0) + 1
+    if max(suits.values()) >= 3:
+        return True
+    # 连续数字：公面点数 ≥3 连（如 4-5-6、8-9-T）
+    ranks = sorted({c >> 2 for c in state.board})
+    consec = max_run = 1
+    for i in range(1, len(ranks)):
+        if ranks[i] == ranks[i - 1] + 1:
+            consec += 1
+            max_run = max(max_run, consec)
+        else:
+            consec = 1
+    return max_run >= 3
+
+
+def _has_nuts_or_strong_draw(state):
+    """自己有坚果级牌力（≥两对/同花/顺子）或强听牌（听花/听顺）。
+
+    用户规则 2026-08-30 判定依据：若"自己没成坚果也没强听牌"，
+    面对大注/突袭/4 倍增量应直接弃（跟注 EV 负，被反超风险高）。
+    评估在 _effective_category 净化后进行。
+    """
+    try:
+        if _effective_category(state) >= TWO_PAIR:
+            return True        # ≥两对（含同花/顺子/三条等坚果级）
+        # 听花：公面 ≥3 同花 且手里有 ≥1 张同花色
+        suits = {}
+        for c in state.board:
+            s = c & 3
+            suits[s] = suits.get(s, 0) + 1
+        flush_suit = next((s for s, n in suits.items() if n >= 3), None)
+        if flush_suit is not None and any((c & 3) == flush_suit for c in state.hole):
+            return True
+        # 听顺：公面有 3 连牌（缺一档成顺：缺 1 张 = 4 outs 顺子听牌）
+        ranks = sorted({c >> 2 for c in state.board})
+        for i in range(len(ranks) - 2):
+            if ranks[i + 2] == ranks[i] + 2 and ranks[i + 1] == ranks[i] + 1:
+                # 3 连（缺第 4 张）→ 8 outs 两头顺或 4 outs 卡顺
+                need1, need2 = ranks[i] - 1, ranks[i + 2] + 1
+                hole_ranks = {c >> 2 for c in state.hole}
+                if need1 in hole_ranks or need2 in hole_ranks:
+                    return True        # 手里有端张 → 真听顺
+                return True            # 即使没端张，公面 3 连也算"近听牌"危险（保守判定）
+        return False
+    except Exception:
+        return False
+
+
 def _opp_range_pct(model, opp_raised_preflop):
     """对手当前范围宽度估计（0~1），驱动蒙特卡洛对手抽样。"""
     vpip = model.eff_vpip()
@@ -1460,6 +1519,19 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     to_call = state.to_call
     required = to_call / (pot + to_call) if (pot + to_call) > 0 else 1.0
 
+    # 【用户规则 2026-08-30】大注 + 无坚果 → 直接弃牌（弱听牌/弱成牌跟注 EV 负）
+    # 截图1：J7 听花跟 2400（>0.7×pot）→ 弃而非 call
+    if to_call > 0 and to_call > 0.6 * pot and not _has_nuts_or_strong_draw(state):
+        return {"act": "fold"}
+    # 【用户规则 2026-08-30】4 倍突袭 + wet 公面 + 无坚果 → 直接弃
+    # 截图4：turn 4 倍加注 + 公面 4♣ 听花密集 + 自己无坚果 → 弃
+    if to_call > 0:
+        try:
+            if _OPP_JUMPED and _board_wet(state) and not _has_nuts_or_strong_draw(state):
+                return {"act": "fold"}
+        except Exception:
+            pass
+
     # 隐含赔率：强听牌 + 深筹码时，有效跟注需求降低
     implied = 1.0
     if big_draw and state.effective_stack > 4 * pot and not is_river:
@@ -1587,7 +1659,15 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     if (model.eff_fold_to_bet() >= 0.60 and required <= 0.30 and state.is_button) \
             or adj in ("desperate", "doomed"):
         # 偷盲档不在此列：关闭反诈唬（对手弃牌率已高，反诈唬无收益）
-        return _raise_pot(state, None, adj)
+        # 【用户规则 2026-08-30】弱牌不可主动 raise 到 allin（弱牌空气若被跟注无
+        # 胜率；推 allin 被反超则白送）→ 仅在留空间时小注诈唬，否则 fold
+        # （LEAD_LOCK/doom 已在 decide 入口处理主动 allin，此处仅限制诈唬推 allin）
+        bluff = _raise_pot(state, None, adj)
+        if bluff.get("act") == "raise" and bluff.get("num", 0) >= state.my_left \
+                and not _has_nuts_or_strong_draw(state) \
+                and adj not in ("desperate", "doomed"):
+            return {"act": "fold"}
+        return bluff
     return {"act": "fold"}
 
 

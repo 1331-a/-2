@@ -613,5 +613,49 @@ for _ in range(6):
 check("河牌弃牌率识别", m2.river_fold_rate() >= 0.40, "%.2f" % m2.river_fold_rate())
 
 
+# ============ 2026-08-30 用户规则（基于4个截图） ============
+
+# 规则1: 大注(>0.6×pot) + 自己无坚果 → 直接弃牌（弱听牌/弱成牌跟注 EV 负）
+# 截图1: 第42手翻牌 J7 听花 vs bet 674(底池1274) → 应弃而非 call
+# pnl=0 my_chips=19500(投500)避免 doom; board全不同花+不连确保无坚果弱牌
+# 平台码: 0→4, 2→11, 4→18, 6→25 (rainbow, 不连续)
+weak_no_nuts = parse_request(req(my_id=0, my_chips=19500, my_cards=[23, 2],  # 72o 纯弱牌
+                  public_cards=[4, 11, 18, 25],  # 0 2 4 6 rainbow 不连 → 纯无坚果
+                  hand=42, max_hand=70,
+                  total_win_chips=[0, 0],
+                  history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                           {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                           {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                           {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                           {"round": 2, "player_id": 1, "action": 1500, "action_type": "raise"}]))
+a = decide(weak_no_nuts, OpponentModel())
+check("规则1:大注+无坚果→弃牌(72o转牌vs1500)",
+      a == {"act": "fold"}, str(a))
+
+# 规则3: 弱牌空气诈唬 raise 推 allin → fold（弱牌被跟无胜率）
+# pnl=0 my_chips=19500 自洽避免 doom/LEAD_LOCK
+bluff_allin = parse_request(req(my_id=0, my_chips=19500, my_cards=[26, 18],
+                  public_cards=[52, 46, 22, 16],
+                  hand=50, max_hand=70,
+                  total_win_chips=[0, 0],
+                  history=[{"round": 0, "player_id": 1, "action": 500, "action_type": "raise"},
+                           {"round": 0, "player_id": 0, "action": 0, "action_type": "call"},
+                           {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                           {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                           {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                           {"round": 2, "player_id": 0, "action": 0, "action_type": "check"}]))
+a = decide(bluff_allin, OpponentModel())
+check("规则3:弱牌空气诈唬推allin→fold",
+      a != {"act": "allin"}, str(a))
+
+# 规则4: 4倍突袭 + wet公面 + 自己无坚果 → 直接弃
+# 公面 3 4 5(连牌 → wet) + 弱牌 + 对手 4 倍突袭
+# 平台码: 3→ 7-10, 4→ 11-14, 5→ 15-18, 用 8(3♣), 12(4♦), 16(5♣)
+from strategy import _board_wet, _has_nuts_or_strong_draw
+wet_state = parse_request(req(my_id=0, my_chips=18000, my_cards=[26, 18],
+                              public_cards=[8, 12, 16],  # 3 4 5
+                              hand=50, max_hand=70))
+check("规则4helper:公面3连→wet", _board_wet(wet_state), "")
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
