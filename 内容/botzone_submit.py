@@ -2953,6 +2953,11 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
             # 河牌诈唬额外要求：对手在河牌有弃牌倾向（避免诈唬被站点抓死）
             if (not is_river) or (fold_eq >= 0.45 and
                                   model.river_fold_rate() >= 0.35):
+                # 【用户规则 2026-08-31】转牌纯空气（非 wet + 无坚果无强听）
+                # → 跳过诈唬（避免无牌面白送底池；让对手免费看牌后多轮放弃）
+                if (not is_river) and (not tex["wet"]) and \
+                        not _has_nuts_or_strong_draw(state):
+                    return _opp_check_bet(state, opp_checked)
                 return _bet_fraction(state, BLUFF)
     return _opp_check_bet(state, opp_checked)   # 对手check过 → 立刻小注（原过牌）
 

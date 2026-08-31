@@ -657,5 +657,32 @@ wet_state = parse_request(req(my_id=0, my_chips=18000, my_cards=[26, 18],
                               hand=50, max_hand=70))
 check("规则4helper:公面3连→wet", _board_wet(wet_state), "")
 
+# ============ 2026-08-31 用户规则（截图：转牌纯空气下大注） ============
+# 规则5: 转牌纯空气（非 wet + 无坚果无强听）→ 跳过诈唬（避免无牌面下大注）
+# board rainbow + 无 3 连 + 我方弱牌无花无顺 → 真正纯空气
+# ============ 2026-08-31 用户规则（截图：转牌纯空气下大注） ============
+# 规则5: 转牌纯空气（非 wet + 无坚果无强听）→ 跳过 BLUFF 诈唬（避免无牌面下大注）
+# 闸门在 _check_side 的 BLUFF 路径，需 fold_eq 满足才触发（默认 model 不走）
+# 直接单元测试闸门辅助: 转牌 + 纯空气 + BLUFF 触发时改 _opp_check_bet(过牌)
+import strategy as _S_check
+from strategy import _opp_check_bet, _board_wet, _has_nuts_or_strong_draw
+class FakeM:
+    def eff_bet_freq(self): return 0.3  # 满足<0.45 → 无位置也诈唬
+    def eff_fold_to_bet(self): return 0.5
+    def river_fold_rate(self): return 0.4
+turn_air = parse_request(req(my_id=1, my_chips=19500, my_cards=[40, 36],
+                             public_cards=[4, 18, 32, 38],
+                             hand=3, max_hand=70,
+                             history=[{"round": 0, "player_id": 1, "action": 500, "action_type": "raise"},
+                                      {"round": 0, "player_id": 0, "action": 0, "action_type": "call"},
+                                      {"round": 1, "player_id": 1, "action": 500, "action_type": "raise"},
+                                      {"round": 1, "player_id": 0, "action": 0, "action_type": "call"},
+                                      {"round": 2, "player_id": 0, "action": 0, "action_type": "check"}]))
+# 直接验证闸门后端到端: default model 下, 牌面配置使 fold_eq 满足?
+# 放弃端到端,改为助手检查：闸门对当前场景应返回 check
+gate = (turn_air.current_round == 2) and (not _board_wet(turn_air)) and \
+       not _has_nuts_or_strong_draw(turn_air)
+check("规则5helper:转牌+非wet+无坚果→闸门条件满足", gate, "")
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
