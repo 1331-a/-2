@@ -212,13 +212,15 @@ a = decide(parse_request(r), OpponentModel())
 check("allin上限:翻前均势TT大额全下→弃(2026-08-24)",
       a == {"act": "fold"}, str(a))
 
-# ============ G. 翻前投入 ≤1000（2026-08-24 新规，doomed 例外） ============
-# G1) 翻前对手 raise 1500，我 AA（BB 已投 100）→ to_call=1400 > 1000 → 弃
-#     （超强牌也不豁免翻前大额跟注；raise 降级 call 同样受约束）
+# ============ G. 翻前投入 ≤1000（2026-08-24 新规，doomed/super_hand 例外） ============
+# G1) 翻前对手 raise 1500，我 AA（BB 已投 100）→ to_call=1400 > 1000
+#     【2026-09-01】_is_super_hand(AA/KK/QQ/JJ/AKs)豁免翻前1000上限——用户规则
+#     AA 翻前可跟 1500 不弃牌（修复前 _over_limit 强制 fold；KK 同理）
 r = req(my_id=1, my_chips=19900, my_cards=[48, 50],
         history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"}])
 a = decide(parse_request(r), OpponentModel())
-check("翻前上限:AA面对1500跟注超限→弃", a == {"act": "fold"}, str(a))
+check("翻前上限:AA面对1500豁免(super_hand)→跟/不弃",
+      a.get("act") != "fold", str(a))
 
 # G2) 翻前 doomed（本局输即对手锁胜）→ 仍无条件 allin（第一优先级例外）
 r = req(my_id=1, my_cards=[23, 2], hand=60, max_hand=70,

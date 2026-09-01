@@ -406,12 +406,17 @@ def _bet_limit(state):
 def _over_limit(state, amount):
     """amount 是否超过当前手牌允许的总注额上限（_normalize 统一调用）。
 
-    - 翻前：上限 PREFLOP_MAX_BET(1000)，仅 doomed（防锁赢第一优先级）豁免；
+    - 翻前：上限 PREFLOP_MAX_BET(1000)；doomed（防锁赢第一优先级）
+      与 _is_super_hand（AA/KK/QQ/JJ/AKs，用户规则 2026-08-23 设计）
+      均豁免；其余一律 ≤1000；
     - 翻后：上限 = _bet_limit(state)（≥三条/doomed 不限；小两对 2000；
       其余 <三条 3000）。
     """
     if state.stage == "preflop":
-        return amount > PREFLOP_MAX_BET and _match_adjust(state) != "doomed"
+        # 【2026-09-01 修复】_is_super_hand 也豁免翻前 1000 上限——之前注释声明
+        # 但代码未实现，导致 KK/JJ/AA/AKs 翻前跟全下被误弃（用户截图第4手 KK 弃牌）
+        return amount > PREFLOP_MAX_BET and _match_adjust(state) != "doomed" \
+            and not _is_super_hand(state.hole)
     return amount > _bet_limit(state)
 
 
