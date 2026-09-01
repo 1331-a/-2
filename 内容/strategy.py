@@ -431,12 +431,6 @@ def _bet_cap_guard(state, action):
         # 翻前总注额限制由 _normalize 统一执行（超强牌豁免 + min_raise 边界
         # 与降级逻辑集中一处，避免此处 _bet_fraction 在翻前产生歧义）
         return action
-    if _is_super_hand(state.hole):
-        return action
-    # 【用户规则】牌型 ≥ 三条（顺子/同花/葫芦/四条/同花顺）同样豁免：
-    # 只有牌型 ≥ 三条才能下注超过 HIGH_BET_LIMIT(3000)，故此类牌力
-    # 不受本规则 3000 上限约束（由 _normalize 的牌型门槛放行/压限）。
-    # 注：经 _effective_category 净化——公共牌拼的强牌型不豁免。
     if _effective_category(state) >= HIGH_BET_MIN_CAT:
         return action
     num = int(action.get("num", 0))
