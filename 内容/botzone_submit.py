@@ -1476,6 +1476,7 @@ strategy.py — AI 决策引擎（升级版）。
 
 import time
 
+from itertools import combinations
 
 # ============ 可调参数（单位见注释） ============
 # ---- 翻前范围（百分位，0~1，越小越紧） ----
@@ -2029,14 +2030,39 @@ def _effective_category(state):
 
     仅当 5 张公共牌且最强牌型 ≥ 三条时检查（翻牌/转牌阶段 3~4 张公共牌
     组合必然用到手牌，无需净化）。
+    【2026-09-02 修复】原判断 `full == evaluate_7(state.board)` 不准确——
+    两边元组结构/长度不同（kicker 数量不同），公对凑三条时全等检查返回
+    False 导致不降级。改用「手牌两张是否都未进入最强 5 张组合」——逐一
+    21 种 5 张组合穷举找最大，检查最大组合是否完全由 board 构成。
     """
     if len(state.board) != 5:
         return evaluate_7(state.hole + state.board)[0]
     full = evaluate_7(state.hole + state.board)
     if full[0] < THREE_OF_A_KIND:
-        return full[0]                    # 只有「≥ 三条」才需要检查（纯公共牌降级）
-    if full == evaluate_7(state.board):
-        return HIGH_CARD                  # 最强 5 张全为公共牌 → 假强牌
+        return full[0]                    # 弱成牌无需公对检查
+    # 【2026-09-02 修复】公对降级规则：board 5 张自己已构成 ≥ THREE_OF_A_KIND
+    # 的成牌，且手牌加入后**未实质升级**核心成牌结构 → 降级 HIGH_CARD。
+    #   - rank 类（三条/四条/葫芦）：同类别时手牌 rank 必须在 board 的成对
+    #     rank 集合中（手牌加入四条/葫芦升级）。手牌仅替换 kicker → 降级。
+    #   - 顺序类（顺子/同花/同花顺）：用 evaluate_7 元组比较 — 类别升或同类
+    #     内 kicker 升（T-high > 9-high）→ 保留；kicker 降或相等 → 降级。
+    # 原版用 `full == evaluate_7(board)` 元组全等不可靠（kicker 数量不同），
+    # 第52手截图 JQ vs 三条10公面 bot 当成三条强牌 allin 即此 bug。
+    board_full = evaluate_7(list(state.board))
+    if board_full[0] >= THREE_OF_A_KIND:
+        if full[0] in (STRAIGHT, FLUSH, STRAIGHT_FLUSH, 8, 9):
+            # 顺序类/同花顺：元组比较，类别升或 kicker 升 → 保留
+            if full <= board_full:
+                return HIGH_CARD          # kicker 降或相等 → 公对拼 → 降级
+        else:
+            # rank 类：同类别要求手牌 rank 升级主结构
+            if full[0] == board_full[0]:
+                from collections import Counter
+                paired = {r for r, n in Counter(c // 4 for c in state.board).items() if n >= 2}
+                if not any((c // 4) in paired for c in state.hole):
+                    return HIGH_CARD      # 手牌只换了 kicker → 公对拼 → 降级
+            elif full[0] < board_full[0]:
+                return HIGH_CARD          # 类别降（不应发生）→ 降级保底
     return full[0]
 
 
