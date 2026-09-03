@@ -1954,6 +1954,14 @@ def decide(state, model, ctx=None):
     action = _allin_floor_guard(state, action)
     # 【规则3】下注额限制（第三优先级）：注额分级上限由 _normalize 统一执行
     action = _bet_cap_guard(state, action)
+    # 【2026-09-03 用户规则·最后手保护】max_hand 手定胜负的比赛最后一手
+    # 不可 fold——弃牌=免费送对手盲注（HU 50），让领先进一步扩大或让落后
+    # 进一步缩无翻盘局，违反"无悔"原则（doom 规则本意就是不让落后方认输）。
+    #   - 翻前：to_call=0 → check 免费看翻牌；to_call>0 → 跟/全下（不弃）
+    #   - 翻后/转牌：to_call=0 → check；to_call>0 → call/allin
+    # 注意：此规则不能破坏 doom 优先级（doom 已在 decide 入口返回 allin）。
+    if state.hand_num == state.max_hand:
+        action = _last_hand_no_fold(state, action)
     return _normalize(state, action)
 
 
@@ -3184,6 +3192,27 @@ def _raise_pot(state, category=None, adj=None, fish=False, frac=None):
         f = frac if frac is not None else (FISH_RAISE if fish else 0.75)
         base = state.curbet[state.my_id] + to_call + int(f * (state.pot + to_call))
     return _raise_to(state, base)
+
+
+# ---------------- 最后手保护（2026-09-03 用户规则） ----------------
+def _last_hand_no_fold(state, action):
+    """最后一手（hand_num == max_hand）不可 fold：弃牌=免费送对手盲注。
+
+    HU 50/100 盲注：弃牌 = 净送对手 50（无效动作）。max_hand 定胜负的比赛
+    弃牌只放大劣势——领先方弃牌削弱领先，落后方弃牌"认输"加速失败。
+    实施：fold 强制改为 check/call/allin（按 to_call）。
+      - to_call = 0（无人下注）→ check 免费看牌（不能弃牌=损失盲注）
+      - to_call > 0 → call（全跟，不够则 allin）
+    不可弃 → 用 call/allin 至少见翻牌或搏一记（doom 规则已优先处理必败方）。
+    """
+    if action.get("act") != "fold":
+        return action
+    if state.to_call <= 0:
+        return {"act": "check"}
+    # 有 to_call 时跟注 / 全下（不弃）
+    if state.my_left > 0 and state.my_left <= state.to_call:
+        return {"act": "allin"}
+    return {"act": "call"}
 
 
 # ---------------- 合法性安全程序（不变，最后防线） ----------------
