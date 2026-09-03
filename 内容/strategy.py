@@ -1749,25 +1749,41 @@ def _raise_pot(state, category=None, adj=None, fish=False, frac=None):
     return _raise_to(state, base)
 
 
-# ---------------- 最后手保护（2026-09-03 用户规则） ----------------
+# ---------------- 禁弃保护（2026-09-03 用户规则） ----------------
 def _last_hand_no_fold(state, action):
-    """最后一手（hand_num == max_hand）不可 fold：弃牌=免费送对手盲注。
+    """「弃牌会锁给对手就不弃」通用禁弃（用户规则）。
 
-    HU 50/100 盲注：弃牌 = 净送对手 50（无效动作）。max_hand 定胜负的比赛
-    弃牌只放大劣势——领先方弃牌削弱领先，落后方弃牌"认输"加速失败。
-    实施：fold 强制改为 check/call/allin（按 to_call）。
-      - to_call = 0（无人下注）→ check 免费看牌（不能弃牌=损失盲注）
-      - to_call > 0 → call（全跟，不够则 allin）
-    不可弃 → 用 call/allin 至少见翻牌或搏一记（doom 规则已优先处理必败方）。
+    【触发条件（任一）】
+    ① 弃牌导致对手锁胜：弃牌后我方 lead' = lead - 2×invested（我方净损、
+       对手净得），剩余 hands_left 手我方最多追回 2×盲注线(own=False)
+       （=对手全程弃牌我方收盲的上限）。lead' ≤ -追回上限 → 弃牌=认输，
+       任何局数都不该弃（doom 规则本意即此，此处作 fold 出口统一兜底，
+       覆盖 doom 入口未能早返回的 fold 路径）；
+    ② 最后一手（hand_num == max_hand）：弃牌=送盲注且无后续局挽回，
+       领先 30 弃牌 → -20 输掉（截图第70手场景），任何局面都不弃。
+    【动作】不弃 → 有跟注额跟注/全下；无跟注额 check 免费看牌。
+    doom 入口已处理的会自动 allin，本函数不改变其优先级。
     """
     if action.get("act") != "fold":
         return action
+    is_last = state.hand_num == state.max_hand
+    lock = False
+    try:
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        invested = INIT_CHIPS - state.my_chips
+        hands_left = state.max_hand - state.hand_num
+        # 弃牌后 lead' 无法靠未来追回 → 锁给对手
+        lock = lead - 2 * invested <= -2 * _blind_line(state, hands_left, own=False)
+    except Exception:
+        pass
+    if not (is_last or lock):
+        return action
     if state.to_call <= 0:
-        return {"act": "check"}
-    # 有 to_call 时跟注 / 全下（不弃）
+        return {"act": "check"}       # 免费看牌（不能弃=送盲注）
     if state.my_left > 0 and state.my_left <= state.to_call:
-        return {"act": "allin"}
-    return {"act": "call"}
+        return {"act": "allin"}       # 跟不起 → 全下搏
+    return {"act": "call"}            # 跟平至少见翻牌
 
 
 # ---------------- 合法性安全程序（不变，最后防线） ----------------
