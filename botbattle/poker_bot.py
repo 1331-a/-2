@@ -3016,6 +3016,17 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         except Exception:
             pass
 
+    # 【用户规则 2026-09-04 补充】4 倍突袭 + 对手没有弃牌（我方被要求跟注/
+    # 加注） + 我方有效牌型 < 三条（含纯公对三条 _effective_category 已降级）
+    # → 直接弃牌：对手突袭大注说明成牌/听牌成型，反诈唬/半诈唬被识破后
+    # 止损；弱于三条的牌（一对/两对/公对三条）面对 4 倍增量无继续价值
+    if to_call > 0:
+        try:
+            if _OPP_JUMPED and _effective_category(state) < THREE_OF_A_KIND:
+                return {"act": "fold"}
+        except Exception:
+            pass
+
     # 隐含赔率：强听牌 + 深筹码时，有效跟注需求降低
     implied = 1.0
     if big_draw and state.effective_stack > 4 * pot and not is_river:
