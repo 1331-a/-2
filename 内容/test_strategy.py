@@ -684,5 +684,25 @@ gate = (turn_air.current_round == 2) and (not _board_wet(turn_air)) and \
        not _has_nuts_or_strong_draw(turn_air)
 check("规则5helper:转牌+非wet+无坚果→闸门条件满足", gate, "")
 
+# ============ 2026-09-04 用户规则（截图：河牌对手过牌后我方过牌） ============
+# 规则6: 对手过牌后轮到自己 → 立刻加小注（用户原始诉求2026-09-04）
+# 验证 _check_side 河牌分支（medium/draw/air 末尾走 _opp_check_bet）
+river_chk = parse_request(req(my_id=0, my_chips=19310, my_cards=[36, 16],
+                             public_cards=[33, 36, 41, 21, 25],
+                             hand=17, max_hand=70,
+                             total_win_chips=[2651, -2651],
+                             history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                      {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                      {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                                      {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                                      {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
+                                      {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                                      {"round": 3, "player_id": 1, "action": 0, "action_type": "check"},
+                                      {"round": 3, "player_id": 0, "action": 0, "action_type": "check"},
+                                      {"round": 4, "player_id": 1, "action": 0, "action_type": "check"}]))
+a = decide(river_chk, OpponentModel())
+check("规则6:河牌对手check过我方加注(非过牌)", a.get("act") == "raise",
+      "act=%s num=%s" % (a.get("act"), a.get("num")))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
