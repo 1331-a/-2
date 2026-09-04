@@ -1749,36 +1749,35 @@ def _raise_pot(state, category=None, adj=None, fish=False, frac=None):
     return _raise_to(state, base)
 
 
-# ---------------- 禁弃保护（2026-09-03 用户规则） ----------------
+# ---------------- 禁弃保护（2026-09-04 用户三场景表格） ----------------
 def _last_hand_no_fold(state, action):
-    """「弃牌会锁给对手就不弃」通用禁弃（用户规则）。
+    """弃牌决策前置检查：弃牌后我方若不领先 → 不弃（用户三场景表格）。
 
-    【触发条件（任一）】
-    ① 弃牌导致对手锁胜：弃牌后我方 lead' = lead - 2×invested（我方净损、
-       对手净得），剩余 hands_left 手我方最多追回 2×盲注线(own=False)
-       （=对手全程弃牌我方收盲的上限）。lead' ≤ -追回上限 → 弃牌=认输，
-       任何局数都不该弃（doom 规则本意即此，此处作 fold 出口统一兜底，
-       覆盖 doom 入口未能早返回的 fold 路径）；
-    ② 最后一手（hand_num == max_hand）：弃牌=送盲注且无后续局挽回，
-       领先 30 弃牌 → -20 输掉（截图第70手场景），任何局面都不弃。
-    【动作】不弃 → 有跟注额跟注/全下；无跟注额 check 免费看牌。
-    doom 入口已处理的会自动 allin，本函数不改变其优先级。
+    弃牌对 lead（我方-对手累计净赢差）的影响 = -2×invested：我方净损
+    invested、对手净得 invested → 差降 2×invested。
+      lead_after_fold = lead - 2×invested
+    【场景判定】
+      ① lead_after_fold > 0（弃牌后我仍领先，对手无法锁赢）→ 允许弃牌；
+         fold_out（领先方全程弃牌锁胜）在此列，保持原逻辑；
+      ② lead_after_fold ≤ 0 且最后一局 → 弃牌=送盲注直接输 → 不弃搏翻盘；
+      ③ lead_after_fold ≤ 0 且对手将锁赢（非最后局）→ 弃牌=认输 → 不弃，
+         继续打争取翻盘或缩小差距。
+    最后手(hand_num==max_hand) 也被 ② 自然覆盖：弃牌后 lead_after ≤ 0
+    即输（领先不足 2×invested 时弃牌反而落后）→ 强制不弃。
+    doom 仍在 decide 入口第一优先级处理（必败→allin），本函数作 fold
+    出口统一兜底，不改变 doom 优先级。
     """
     if action.get("act") != "fold":
         return action
-    is_last = state.hand_num == state.max_hand
-    lock = False
     try:
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         invested = INIT_CHIPS - state.my_chips
-        hands_left = state.max_hand - state.hand_num
-        # 弃牌后 lead' 无法靠未来追回 → 锁给对手
-        lock = lead - 2 * invested <= -2 * _blind_line(state, hands_left, own=False)
+        if lead - 2 * invested > 0:
+            return action          # ① 弃牌后仍领先 → 弃（不变）
     except Exception:
-        pass
-    if not (is_last or lock):
-        return action
+        return action              # 状态异常保守放行（_normalize 兜底）
+    # ②③ 弃牌后落后/打平 → 不弃，继续打（搏翻盘 / 争取不输）
     if state.to_call <= 0:
         return {"act": "check"}       # 免费看牌（不能弃=送盲注）
     if state.my_left > 0 and state.my_left <= state.to_call:
