@@ -509,14 +509,11 @@ def decide(state, model, ctx=None):
     action = _allin_floor_guard(state, action)
     # 【规则3】下注额限制（第三优先级）：注额分级上限由 _normalize 统一执行
     action = _bet_cap_guard(state, action)
-    # 【2026-09-03 用户规则·最后手保护】max_hand 手定胜负的比赛最后一手
-    # 不可 fold——弃牌=免费送对手盲注（HU 50），让领先进一步扩大或让落后
-    # 进一步缩无翻盘局，违反"无悔"原则（doom 规则本意就是不让落后方认输）。
-    #   - 翻前：to_call=0 → check 免费看翻牌；to_call>0 → 跟/全下（不弃）
-    #   - 翻后/转牌：to_call=0 → check；to_call>0 → call/allin
-    # 注意：此规则不能破坏 doom 优先级（doom 已在 decide 入口返回 allin）。
-    if state.hand_num == state.max_hand:
-        action = _last_hand_no_fold(state, action)
+    # 【2026-09-04 用户规则·通用禁弃】弃牌后若 lead_after_fold ≤ 0（弃牌让
+    # 我方不再领先 → 对手反而锁赢或被甩开差距）→ 强制不弃：check/call/allin。
+    # 任何局数生效（最后手被 lead_after ≤ 0 自然覆盖）。doom 入口先返回
+    # allin 不冲突本规则。
+    action = _last_hand_no_fold(state, action)
     return _normalize(state, action)
 
 
@@ -1762,21 +1759,18 @@ def _raise_pot(state, category=None, adj=None, fish=False, frac=None):
 
 # ---------------- 禁弃保护（2026-09-04 用户三场景表格） ----------------
 def _last_hand_no_fold(state, action):
-    """弃牌决策前置检查：弃牌后我方若不领先 → 不弃（用户三场景表格）。
+    """弃牌前置检查：弃牌若让对手锁胜（或最后一手弃牌即输）→ 不弃。
 
-    弃牌对 lead（我方-对手累计净赢差）的影响 = -2×invested：我方净损
-    invested、对手净得 invested → 差降 2×invested。
-      lead_after_fold = lead - 2×invested
-    【场景判定】
-      ① lead_after_fold > 0（弃牌后我仍领先，对手无法锁赢）→ 允许弃牌；
-         fold_out（领先方全程弃牌锁胜）在此列，保持原逻辑；
-      ② lead_after_fold ≤ 0 且最后一局 → 弃牌=送盲注直接输 → 不弃搏翻盘；
-      ③ lead_after_fold ≤ 0 且对手将锁赢（非最后局）→ 弃牌=认输 → 不弃，
-         继续打争取翻盘或缩小差距。
-    最后手(hand_num==max_hand) 也被 ② 自然覆盖：弃牌后 lead_after ≤ 0
-    即输（领先不足 2×invested 时弃牌反而落后）→ 强制不弃。
-    doom 仍在 decide 入口第一优先级处理（必败→allin），本函数作 fold
-    出口统一兜底，不改变 doom 优先级。
+    弃牌对 lead 的影响 = -2×invested（我方净损 invested、对手净得）。
+    禁弃条件（用户三场景表格）：
+      ① 弃牌后仍领先且对手无法锁赢 → 允许弃（fold_out 锁胜弃牌保持）；
+      ② 弃牌后落后且对手已锁赢/将锁赢 → 不弃（doom 数学：弃牌后我方
+         lead_after_fold 连未来收盲上限（2×追回线）都追不回 = 对手锁胜）；
+      ③ 最后一手（hands_left==0）：弃牌=送盲注直接定胜负 → 只要弃牌后
+         不再领先（lead_after_fold ≤ 0）就强制不弃（搏翻盘）。
+    注：仅"弃牌后落后但非锁赢非最后局"时仍允许弃牌（止损合理）——
+    doom 公式正是用"剩余手数追回线"区分"落后"与"落后且追不平(锁胜)"。
+    doom 仍在 decide 入口第一优先级（必败→allin），本函数作 fold 出口兜底。
     """
     if action.get("act") != "fold":
         return action
@@ -1784,11 +1778,19 @@ def _last_hand_no_fold(state, action):
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         invested = INIT_CHIPS - state.my_chips
-        if lead - 2 * invested > 0:
-            return action          # ① 弃牌后仍领先 → 弃（不变）
+        lead_after_fold = lead - 2 * invested
+        hands_left = state.max_hand - state.hand_num
+        if hands_left <= 0:
+            # ③ 最后一手：弃牌后不领先即输 → 禁弃
+            lock = not (lead_after_fold > 0)
+        else:
+            # ② 弃牌后对手锁胜：lead_after_fold 追不回剩余盲注上限 → 禁弃
+            lock = lead_after_fold <= -2 * _blind_line(state, hands_left, own=False)
     except Exception:
         return action              # 状态异常保守放行（_normalize 兜底）
-    # ②③ 弃牌后落后/打平 → 不弃，继续打（搏翻盘 / 争取不输）
+    if not lock:
+        return action              # 弃牌后仍领先 / 落后但可追回 → 允许弃
+    # 禁弃 → 继续打（搏翻盘 / 争取不输）
     if state.to_call <= 0:
         return {"act": "check"}       # 免费看牌（不能弃=送盲注）
     if state.my_left > 0 and state.my_left <= state.to_call:
