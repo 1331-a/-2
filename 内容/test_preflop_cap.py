@@ -163,10 +163,14 @@ a = decide(parse_request(r), OpponentModel())
 # 弃牌不再升级 allin
 check("despair删除:弃牌-3500不再强制allin", a.get("act") != "allin", str(a))
 
-# E2) pnl=-5000 + 已投500 → 弃牌后-5500 → allin
+# E2) pnl=-5000 + 已投500 → doom 公式触发（lead=-10000 追不回 70 局 5250
+# 追回线）→ allin。【2026-09-05】_blind_line 用平台固定 SB/BB(不用 state 推导
+# 的污染值)后此场景 doom 数学精确成立，原 despair 删除后曾期望 fold（不再
+# 强制 allin），但 doom 才是正确的锁胜锁-追回数学，不应回退。
 r = req(my_cards=[23, 2], my_chips=19500, total_win_chips=[-5000, 5000])
 a = decide(parse_request(r), OpponentModel())
-check("despair删除:弃牌-5500不再强制allin", a.get("act") != "allin", str(a))
+check("E2:doom数学成立→allin(不弃,数学正确)",
+      a.get("act") == "allin", str(a))
 
 # E3) 对照组：pnl=-1000 + 已投1500 → 弃牌后-2500 未超线 → 不触发（正常决策）
 r = req(my_cards=[23, 2], my_chips=18500, total_win_chips=[-1000, 1000])

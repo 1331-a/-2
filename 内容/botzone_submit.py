@@ -2156,9 +2156,15 @@ def _blind_line(state, hands, own=True):
               = 我方小盲次数×BB + 我方大盲次数×SB
               —— 落后方追平线：领先方全程弃牌时我方最多可追回该值，
               lead（负）小于 -它 即数学上追不上（doomed）。
+
+    【2026-09-05 修复】用平台固定 SB=50/BB=100（HU 默认），不依赖
+    state.small_blind/big_blind——后者在翻前被 game_state 用 my_total_in
+    推导（deep invested 时 BB=250 等异常值），污染追回线计算（截图第68手
+    bot 投 250 翻前时推导 BB=250，追回线=375 偏离真实 150，导致 doom 边界
+    case 误判）。兜底也改用 BB=100。
     """
     try:
-        sb, bb = state.small_blind, state.big_blind
+        sb, bb = 50, 100   # HU 平台固定（不用 state 推导值）
         # 下一局我方是否小盲（当前小盲 → 下局大盲）
         next_my_sb = state.my_id != state.dealer_id
         n_sb = (hands + 1) // 2 if next_my_sb else hands // 2
@@ -2167,7 +2173,7 @@ def _blind_line(state, hands, own=True):
             return n_sb * sb + n_bb * bb
         return n_sb * bb + n_bb * sb
     except Exception:
-        return int(0.75 * state.big_blind * hands)  # 兜底：平均每局 1.5BB/2
+        return int(0.75 * 100 * hands)  # 兜底：平均每局 1.5BB/2
 
 
 def _fold_out_active(state):

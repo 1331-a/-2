@@ -720,5 +720,15 @@ a = decide(turn_chk, OpponentModel())
 check("规则6:转牌对手check过我方加注(非过牌)", a.get("act") == "raise",
       "act=%s num=%s" % (a.get("act"), a.get("num")))
 
+# ============ 2026-09-05 用户规则（截图：第68手弃牌对手锁赢） ============
+# 规则7: 接近终局(剩2手) + 落后 + 投了 → doom触发allin(弃牌让对手锁赢)
+doom68 = parse_request(req(dealer_id=1, my_id=0, my_chips=19750,
+                          my_cards=[23, 2],
+                          hand=68, max_hand=70,
+                          total_win_chips=[-192, 192]))
+a = decide(doom68, OpponentModel())
+check("规则7:第68手落后-384剩2手→doom allin(非弃牌)",
+      a.get("act") == "allin", str(a))
+
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
