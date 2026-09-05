@@ -1180,14 +1180,26 @@ def _opp_checked_this_round(state):
 
     【业务逻辑】对手 check = 示弱/无强牌 → 我方应立刻下小注施压
     （用户规则：对手过牌后立刻加小注），而不是被动跟 check 拖到下一街。
+
+    【兼容 2026-09-05】botzone 协议两种 check 编码都识别：
+      - action_type == "check"（部分比赛/赛季）
+      - action_type == "call" 且 action == 0（call 0 等价 check，部分赛季）
+      - action == 0 且无 action_type（最简编码）
+    任意满足即判定为 check——避免真实场景 opp_checked 漏检（截图第34手
+    bot 在对手已 check 后仍走 _opp_check_bet(False) → check 的根因）。
     """
     request = getattr(state, "request", None) or {}
     hist = request.get("history") or []
     cur_round = state.current_round
     for r in hist:
-        if int(r.get("round", 0)) == cur_round and \
-                r.get("player_id") == state.opp_id and \
-                r.get("action_type") == "check":
+        if int(r.get("round", 0)) != cur_round:
+            continue
+        if r.get("player_id") != state.opp_id:
+            continue
+        at = r.get("action_type", "")
+        a = r.get("action", 0)
+        # botzone 三种 check 编码都识别
+        if at == "check" or (at in ("call", "") and a == 0):
             return True
     return False
 

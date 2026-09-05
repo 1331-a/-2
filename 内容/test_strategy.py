@@ -720,6 +720,22 @@ a = decide(turn_chk, OpponentModel())
 check("规则6:转牌对手check过我方加注(非过牌)", a.get("act") == "raise",
       "act=%s num=%s" % (a.get("act"), a.get("num")))
 
+# 规则6兼容测试: 对方check用action=0编码(部分赛季)也能识别
+turn_chk_a0 = parse_request(req(dealer_id=1, my_id=0, my_chips=19900,
+                               my_cards=[37, 6],
+                               public_cards=[51, 40, 51, 35],
+                               hand=34, max_hand=70,
+                               total_win_chips=[1698, -1698],
+                               history=[{"round": 0, "player_id": 1, "action": 100, "action_type": "raise"},
+                                        {"round": 0, "player_id": 0, "action": 0, "action_type": "call"},
+                                        {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                                        {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                                        {"round": 2, "player_id": 1, "action": 0, "action_type": "check"}]))
+a = decide(turn_chk_a0, OpponentModel())
+check("规则6兼容:对手action=0(无type)check也能加注",
+      a.get("act") == "raise",
+      "act=%s num=%s" % (a.get("act"), a.get("num")))
+
 # ============ 2026-09-05 用户规则（截图：第68手弃牌对手锁赢） ============
 # 规则7: 接近终局(剩2手) + 落后 + 投了 → doom触发allin(弃牌让对手锁赢)
 doom68 = parse_request(req(dealer_id=1, my_id=0, my_chips=19750,
