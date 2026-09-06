@@ -575,6 +575,46 @@ def should_avoid_risk(state):
     return False
 
 
+# ---------------- 阻隔下注（2026-09-06 用户规则） ----------------
+def _blocking_bet_proxy(state, model, category):
+    """阻隔下注代替过牌（Blocking Bet Proxy）：对手"我过牌后下注"频率高时
+    主动下 1/3 池小注，阻断对手利用"我先过牌"的窗口诈唬施压。
+    触发（用户规则 2026-09-06）：
+      1. 翻后 + 我方非庄位（无位置，过牌容易被对手 position leverage 攻击）
+      2. 对手近 20 局"我过牌后下注"频率 > 60%（"无脑攻击型"对手）：
+         当前用 model.eff_bet_freq（对手主动下注频率，含翻牌/转牌/河牌）近似，
+         如 ≥ 0.60 视为高频攻击型
+      3. 手牌中等成牌/弱成牌/高张（非 super_hand 强牌、非纯空气 HIGH_CARD）
+      4. 当前底池 ≤ 2000（阻隔注成本可控）
+    执行：下 BLOCKER_BET(0.33 池) ≈ 1/3 池小注。
+    例外：super_hand（AA/KK/QQ/JJ/AKs）→ 仍走 check（保留 check-raise 陷阱）。
+    返回 None 表示不触发（继续原 _opp_check_bet 路径）。
+    """
+    # 1. 位置 + 街级：翻后 + 非庄位
+    if state.is_button:
+        return None
+    if state.stage not in ("flop", "turn"):
+        return None
+    # 4. 底池上限
+    if state.pot > 2000:
+        return None
+    # 3. 手牌中等：非 super_hand 强牌（保留 check-raise），非纯空气（无成牌价值）
+    if _is_super_hand(state.hole):
+        return None                                     # 强牌：check 设陷阱
+    if category == HIGH_CARD and not _has_nuts_or_strong_draw(state):
+        return None                                     # 纯空气：交给 BLUFF 路径
+    # 2. 对手"我过牌后下注"频率 > 60%（近似 eff_bet_freq）
+    try:
+        # 用 bet_freq（原始频率，未缩放向先验）—— 用户规则 60% 是绝对阈值，
+        # eff_bet_freq 会向 _PRIOR["af"]=0.40 缩放，小样本下不到 0.60 不合理。
+        bf = model.bet_freq if model.bet_freq is not None else model.eff_bet_freq()
+        if bf < 0.60:
+            return None
+    except Exception:
+        return None
+    return _bet_fraction(state, BLOCKER_BET)             # 1/3 池阻隔注
+
+
 def _effective_category(state):
     """有效牌型等级（用户规则 2026-08-23）：纯公共牌组成的牌型降级。
 
@@ -1562,6 +1602,15 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
                         not _has_nuts_or_strong_draw(state):
                     return _opp_check_bet(state, opp_checked)
                 return _bet_fraction(state, BLUFF)
+
+    # 【用户规则 2026-09-06】阻隔下注代替过牌（Blocking Bet Proxy）：
+    # 对手若习惯在我过牌后下注（"无脑攻击型"），用 1/3 池小注主动阻断他的
+    # 攻击——保留牌力、避免被他诈唬施压。手牌弱→过牌仍亏，强牌继续过牌设陷阱。
+    # 触发：翻后 + 非庄位 + 对手高频过牌攻击 + 中等牌 + 底池≤2000
+    _bb = _blocking_bet_proxy(state, model, category)
+    if _bb is not None:
+        return _bb
+
     return _opp_check_bet(state, opp_checked)   # 对手check过 → 立刻小注（原过牌）
 
 

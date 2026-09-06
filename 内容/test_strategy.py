@@ -15,7 +15,7 @@ sys.path.insert(0, ".")
 
 from game_state import parse_request   # noqa: E402
 from opponent import OpponentModel     # noqa: E402
-from strategy import decide            # noqa: E402
+from strategy import decide, _blocking_bet_proxy, _effective_category  # noqa: E402
 
 # 牌号 -> BotZone 编码（内部 = n+8）
 HA, DA, SA, CA = 48, 49, 50, 51  # 四张 A
@@ -735,6 +735,47 @@ a = decide(turn_chk_a0, OpponentModel())
 check("规则6兼容:对手action=0(无type)check也能加注",
       a.get("act") == "raise",
       "act=%s num=%s" % (a.get("act"), a.get("num")))
+
+# ============ 2026-09-06 用户规则（Blocking Bet Proxy 阻隔下注） ============
+# 规则8: 不利位置 + 对手高频攻击(>60%) + 中等牌 + 底池<=2000 → 1/3池阻隔注
+# 阻断"无脑攻击型"对手在我过牌后下注的窗口。弱牌/听牌/中等牌过牌时主动下。
+# 超强牌(AA/KK/QQ/JJ/AKs)不触发,继续用check设陷阱。
+bbp_high = OpponentModel(); bbp_high.postflop_bet=7; bbp_high.postflop_call=1
+bbp_high.postflop_fold=1; bbp_high.postflop_check=1  # bet_freq=0.7
+bbp_low = OpponentModel(); bbp_low.postflop_bet=2; bbp_low.postflop_call=2
+bbp_low.postflop_fold=2; bbp_low.postflop_check=4   # bet_freq=0.2
+bbp = parse_request(req(dealer_id=1, my_id=0, my_chips=19500,
+                       my_cards=[8, 12],            # 3♣ 3♦ 一对3
+                       public_cards=[36, 22, 10],    # 9♣ 6♥ 3♥ (避开公对3)
+                       hand=10, max_hand=70,
+                       history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+# 高频对手 + 弱牌对3 → 直接调BBP函数返raise 330
+bbp_cat = _effective_category(bbp)
+check("规则8直接:BBP函数高频对手+弱对3→raise 330",
+      _blocking_bet_proxy(bbp, bbp_high, bbp_cat) == {"act": "raise", "num": 330},
+      str(_blocking_bet_proxy(bbp, bbp_high, bbp_cat)))
+# 低频对手 → BBP返None
+check("规则8直接:BBP函数低频对手返None(不触发)",
+      _blocking_bet_proxy(bbp, bbp_low, bbp_cat) is None,
+      str(_blocking_bet_proxy(bbp, bbp_low, bbp_cat)))
+# 庄位 → BBP返None
+bbp_btn = parse_request(req(dealer_id=0, my_id=0, my_chips=19500, my_cards=[8, 12], public_cards=[36, 22, 10], hand=10, max_hand=70, history=[{'round': 0, 'player_id': 0, 'action': 500, 'action_type': 'raise'}, {'round': 0, 'player_id': 1, 'action': 0, 'action_type': 'call'}, {'round': 1, 'player_id': 1, 'action': 0, 'action_type': 'check'}]))
+check("规则8直接:BBP函数庄位返None",
+      _blocking_bet_proxy(bbp_btn, bbp_high, bbp_cat) is None,
+      str(_blocking_bet_proxy(bbp_btn, bbp_high, bbp_cat)))
+# 超强牌AA → BBP返None(用check设陷阱)
+bbp_aa = parse_request(req(dealer_id=1, my_id=0, my_chips=19500,
+                          my_cards=[48, 50],        # A♠ A♥
+                          public_cards=[8, 16, 24],
+                          hand=10, max_hand=70,
+                          history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+check("规则8直接:BBP函数AA(超强)返None(陷阱)",
+      _blocking_bet_proxy(bbp_aa, bbp_high, _effective_category(bbp_aa)) is None,
+      "AA应不触发")
 
 # ============ 2026-09-05 用户规则（截图：第68手弃牌对手锁赢） ============
 # 规则7: 接近终局(剩2手) + 落后 + 投了 → doom触发allin(弃牌让对手锁赢)
