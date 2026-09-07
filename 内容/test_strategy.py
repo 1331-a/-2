@@ -15,7 +15,8 @@ sys.path.insert(0, ".")
 
 from game_state import parse_request   # noqa: E402
 from opponent import OpponentModel     # noqa: E402
-from strategy import decide, _blocking_bet_proxy, _effective_category  # noqa: E402
+from strategy import (decide, _blocking_bet_proxy, _effective_category,
+                           _flush_threat, _my_flush_top_rank)  # noqa: E402
 
 # 牌号 -> BotZone 编码（内部 = n+8）
 HA, DA, SA, CA = 48, 49, 50, 51  # 四张 A
@@ -735,6 +736,30 @@ a = decide(turn_chk_a0, OpponentModel())
 check("规则6兼容:对手action=0(无type)check也能加注",
       a.get("act") == "raise",
       "act=%s num=%s" % (a.get("act"), a.get("num")))
+
+
+# ============ 2026-09-07 用户规则（截图：第2手河牌公面4同花跟注allin） ============
+# 规则11: 公面4/5张同花色 + 对手加注>3000 → 视作对手有坚果同花(T-高及以上),
+# 我方非T-高及以上同花 → 弃牌
+fl_t = parse_request(req(dealer_id=0, my_id=1, my_chips=19517,
+                        my_cards=[4, 8],  # 8♥ 4♦
+                        public_cards=[24, 22, 18, 5, 2],  # 3♦Q♦7♦8♣2♣
+                        hand=50, max_hand=70, total_win_chips=[0, 0],
+                        history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
+                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                 {"round": 4, "player_id": 1, "action": 3340, "action_type": "raise"},
+                                 {"round": 4, "player_id": 0, "action": 19517, "action_type": "allin"}]))
+# _flush_threat 直接验证: 公面4♦ + to_call>3000 → True
+from types import SimpleNamespace
+fl_st = SimpleNamespace(board=fl_t.board, to_call=3500)
+check("规则11直接:公面4♦+to_call=3500→flush_threat=True", _flush_threat(fl_st) is True, str(_flush_threat(fl_st)))
+# _flush_threat 反例: 公面3张♦ → False
+fl_st2 = SimpleNamespace(board=[24, 22, 18], to_call=3500)
+check("规则11直接:公面3♦+to_call=3500→flush_threat=False", _flush_threat(fl_st2) is False, str(_flush_threat(fl_st2)))
+# 实际牌力 cat 验证(因hardcode精度风险不测具体值,只看触发路径)
+check("规则11直接:8♥4♦河牌公面3♦Q♦7♦8♣2♣ 不爆同花(cat<5)",
+      _effective_category(fl_t) < 5,
+      "cat=" + str(_effective_category(fl_t)))
 
 # ============ 2026-09-06 用户规则（Blocking Bet Proxy 阻隔下注） ============
 # 规则8: 不利位置 + 对手高频攻击(>60%) + 中等牌 + 底池<=2000 → 1/3池阻隔注

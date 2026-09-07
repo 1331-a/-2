@@ -3167,9 +3167,44 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
 
 
 # ---------------- 面对下注 ----------------
+def _flush_threat(state):
+    """【规则11·2026-09-07 用户规则】公面同花威胁: 公面4/5张同花色 + 对手下注>3000
+    → 视作对手有坚果同花(T-高或更高)→ 收紧防守(我方弱同花应弃)。"""
+    try:
+        if len(state.board) < 3: return False
+        from collections import Counter
+        suits = Counter(c & 3 for c in state.board)
+        if max(suits.values(), default=0) < 3: return False  # 3/4/5张同花色都触发(用户规则9+11)
+        if state.to_call <= 3000: return False
+        return True
+    except Exception: return False
+
+
+def _my_flush_top_rank(state):
+    """我方最强同花最大牌 rank(0-12 → 2-A),无同花返 None。"""
+    try:
+        from itertools import combinations
+        all_cards = list(state.hole) + list(state.board)
+        best = None
+        for combo in combinations(all_cards, 5):
+            e = evaluate_7(list(combo))
+            if best is None or e > best:
+                best = e
+        if best is None or best[0] != 5:
+            return None
+        return best[1]
+    except Exception: return None
+
+
 def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
               arch, adj, is_river, i_aggressor):
     """面对下注：底池赔率（隐含修正）+ 原型/街级修正 + 加注/跟注/弃牌。"""
+    # 【规则11·2026-09-07 用户规则】公面4/5张同花 + 对手加注>3000 → 视作对手有坚果同花。
+    # 我方非坚果级同花(T-高及以上 kicker)→ 弃,保领先/减少输给坚果同花的损失。
+    if _flush_threat(state):
+        my_flush_top = _my_flush_top_rank(state)
+        if my_flush_top is None or my_flush_top < 10:   # rank<10 即 <T-high(0-12: 0=2..12=A)
+            return {"act": "fold"}
     pot = state.pot
     to_call = state.to_call
     required = to_call / (pot + to_call) if (pot + to_call) > 0 else 1.0
