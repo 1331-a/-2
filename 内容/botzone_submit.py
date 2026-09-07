@@ -3199,11 +3199,19 @@ def _my_flush_top_rank(state):
 def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
               arch, adj, is_river, i_aggressor):
     """面对下注：底池赔率（隐含修正）+ 原型/街级修正 + 加注/跟注/弃牌。"""
-    # 【规则11·2026-09-07 用户规则】公面4/5张同花 + 对手加注>3000 → 视作对手有坚果同花。
-    # 我方非坚果级同花(T-高及以上 kicker)→ 弃,保领先/减少输给坚果同花的损失。
+    # 【规则11·2026-09-07 用户规则】公面3/4/5张同花 + 对手加注>3000 → 视作对手有同花。
+    # 核心:我方同花/听花的手牌大小必须够硬才继续——只有 A-高坚果同花(手牌顶A同花)
+    # 才值得对抗(公面 max 同花非 A 时 A-高=绝对坚果)。Q-高同花(截图8♥4♦配4♦公面
+    # =Q-高同花8kicker)面对假设的对手同花太小 → 弃。
     if _flush_threat(state):
-        my_flush_top = _my_flush_top_rank(state)
-        if my_flush_top is None or my_flush_top < 10:   # rank<10 即 <T-high(0-12: 0=2..12=A)
+        # 公面≥4张同花时5张同花前4张全在公面(相同),唯一区分是双方手牌那张
+        # 同花色牌(从大到小比)。bot手牌太小(4♦ vs 假设对手更高♦)必输 → 弃。
+        # 仅手牌同花色≥K(rank 11:K=11,A=12)才跟(K♦只输A♦;A♦=坚果)。
+        flush_suit = max(set(c & 3 for c in state.board),
+                         key=lambda s: sum(1 for c in state.board if (c & 3) == s))
+        my_same = [c >> 2 for c in state.hole if (c & 3) == flush_suit]
+        my_best = max(my_same) if my_same else -1
+        if my_best < 11:      # 无同花色手牌 或 手牌同花牌 < K
             return {"act": "fold"}
     pot = state.pot
     to_call = state.to_call
