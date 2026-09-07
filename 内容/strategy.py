@@ -1465,9 +1465,24 @@ def _postflop_decide(state, model):
     draw = (not is_river) and outs >= 4           # 卡顺级
 
     if state.to_call <= 0:
+        # 【规则10·2026-09-07】求稳模式：对手频繁 allin（全下攻击型）
+        # 或 我方接近锁赢线 80%（快赢了）→ 不主动下注，积极过牌跟注求稳——
+        # 避免主动下注大底池被对手 allin 梭哈（对手爱 allin 时主动下注=送人头），
+        # 快锁赢时不赌也能赢（降低波动、少亏）。强牌(strong)例外——真坚果仍
+        # 应下注拿价值。
+        if not strong:
+            try:
+                _st = _stability_mode(state, model)
+            except Exception:
+                _st = False
+            if _st:
+                return _check_side_stable(state, model, eq, category, strong,
+                                          good, medium, big_draw, draw, tex,
+                                          arch, adj, is_river, i_aggressor)
         return _check_side(state, model, eq, category, strong, good, medium,
                            big_draw, draw, tex, arch, adj, is_river,
                            i_aggressor)
+    # 面对下注时求稳模式 → 只跟不 raise（除非强牌）由 _face_bet 内部处理
     return _face_bet(state, model, eq, category, strong, good, medium,
                      big_draw, draw, arch, adj, is_river, i_aggressor)
 
@@ -1508,6 +1523,44 @@ def _learned_size(model, state, default_frac, is_preflop=False):
         return default_frac, False
     bucket, _ = res
     return OpponentModel.bucket_to_frac(bucket), True
+
+
+def _stability_mode(state, model):
+    """【规则10·2026-09-07 用户规则】求稳模式判定。
+
+    触发（任一）：
+      1. 对手频繁 allin（全下攻击型）——全押手数占比 ≥ 20%
+         （每 5 手至少 1 次全下，主动下注大底池会被他梭哈/被反诈唬）；
+      2. 我方接近锁赢线 80%——lead ≥ 0.8×绝对安全线（全程弃牌也能赢），
+         求稳不赌，降低波动保收益。
+    返回 True = 进入求稳（过牌跟注，不主动下注）。
+    """
+    try:
+        # 条件 1：对手 allin 频率（allin_count / hands_seen）
+        freq = model.allin_count / max(model.hands_seen, 1)
+        if freq >= 0.20:
+            return True
+        # 条件 2：我方 lead ≥ 锁赢线 80%（_blind_line own=True = 绝对安全线）
+        hands_left = state.max_hand - state.hand_num
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        safe_line = _blind_line(state, hands_left, own=True)
+        if safe_line > 0 and lead >= 0.8 * safe_line:
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _check_side_stable(state, model, eq, category, strong, good, medium,
+                       big_draw, draw, tex, arch, adj, is_river,
+                       i_aggressor):
+    """【规则10】求稳模式的主动侧：一律过牌（不主动下注）。
+
+    对手爱 allin / 快锁赢时不赌——过牌免费看牌，把决策留给对手。
+    强牌(≥三条/坚果级)例外在调用处已排除（strong=True 直接走常规 _check_side）。
+    """
+    return {"act": "check"}
 
 
 def _check_side(state, model, eq, category, strong, good, medium, big_draw,
