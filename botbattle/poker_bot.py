@@ -1877,7 +1877,7 @@ def _bet_cap_guard(state, action):
     （<三条 ≤3000）一致——主动下注克制让位于总注额分级上限
     （_normalize 的 _bet_limit 统一压限）。
     """
-    if action.get("act") != "raise":
+    if action.get("act") not in ("raise", "allin"):
         return action
     if state.stage == "preflop":
         # 翻前总注额限制由 _normalize 统一执行（超强牌豁免 + min_raise 边界
@@ -1885,14 +1885,21 @@ def _bet_cap_guard(state, action):
         return action
     if _effective_category(state) >= HIGH_BET_MIN_CAT:
         return action
-    num = int(action.get("num", 0))
+    if _match_adjust(state) == "doomed":
+        return action                                     # 防锁赢豁免
+    if action.get("act") == "raise":
+        num = int(action.get("num", 0))
+    else:
+        num = state.my_left                              # allin = my_left
     if num <= BET_CAP:
         return action
     # 降级：底池 ≤ 2000 → 下注底池 50%；否则过牌/跟注
     if state.pot <= BET_CAP_POT:
         return _bet_fraction(state, BET_CAP_FRAC)
     if state.to_call > 0:
-        return {"act": "call"}
+        if state.my_left > state.to_call:
+            return {"act": "call"}      # 跟而非 allin（不超 3000）
+        return {"act": "fold"}          # 跟不起（必须 allin 才能跟）→ 弃
     return {"act": "check"}
 
 
@@ -2058,6 +2065,47 @@ def _blocking_bet_proxy(state, model, category):
     except Exception:
         return None
     return _bet_fraction(state, BLOCKER_BET)             # 1/3 池阻隔注
+
+
+def _probe_bet_proxy(state):
+    """【规则9·2026-09-07 用户规则】轻探测下注（Probe Bet Proxy）。
+
+    触发：公面已有 3/4 张同花色 或 3/4 张连续数字 + 对手本街尚未下注。
+    执行：下 1000~2000 小注（PROBE_BET_MIN ~ PROBE_BET_MAX 区间取中间值）
+    ——对手听花/听顺未成型时倾向弃牌（偷到底池），成型/有真牌时call/raise暴露。
+    例外：超强牌（≥三条）跳过——用 strong/good 分支主动加注/陷阱；
+    翻后对手已下注不触发（探测不适用被动对手）。
+    返回 None 表示不触发。
+    """
+    # 翻后街
+    if state.stage not in ("flop", "turn"):
+        return None
+    # 对手本街尚未下注（to_call=0, opp_round_bet=0）
+    if state.to_call > 0 or state.opp_round_bet > 0:
+        return None
+    board = state.board
+    if len(board) < 3:
+        return None
+    # 强牌(≥三条)不触发,直接走加注分支
+    if _effective_category(state) >= THREE_OF_A_KIND:
+        return None
+    # 检测公面:3/4 同花色
+    from collections import Counter
+    suits = Counter(c & 3 for c in board)
+    flush_signal = any(n >= 3 for n in suits.values())
+    # 检测公面:3/4 连牌（3 张连续 rank）
+    ranks = sorted({c >> 2 for c in board})
+    straight_signal = False
+    for i in range(len(ranks) - 2):
+        if ranks[i + 2] - ranks[i] <= 2 and ranks[i + 1] - ranks[i] == 1:
+            straight_signal = True
+            break
+    if not (flush_signal or straight_signal):
+        return None
+    # 探测下注 1000-2000（取 min(1500, pot*0.5) 保不超 pot 太多）
+    probe = min(1500, max(1000, int(state.pot * 0.5)))
+    return _raise_to(state, state.curbet[state.my_id] + probe)
+
 
 
 def _effective_category(state):
@@ -3055,6 +3103,12 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
     _bb = _blocking_bet_proxy(state, model, category)
     if _bb is not None:
         return _bb
+
+    # 【规则9·2026-09-07】轻探测下注:公面 3/4 张同花色 或 3/4 张连续数字 + 对手本轮尚未下注
+    # → 我方下 1000-2000 小注(PROBE 探测)看对手反应
+    _pb = _probe_bet_proxy(state)
+    if _pb is not None:
+        return _pb
 
     return _opp_check_bet(state, opp_checked)   # 对手check过 → 立刻小注（原过牌）
 
