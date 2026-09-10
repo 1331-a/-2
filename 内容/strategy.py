@@ -330,6 +330,37 @@ def _is_sub_strong(hole):
     return hi == 13 and lo == 12          # KQ（含 KQs/KQo）
 
 
+def _lock_win_unified(state):
+    """【规则2·2026-09-10 合并】锁胜 / 防锁赢统一决策（优先级 2）。
+
+    用户澄清：这三件事本质是同一件事——「本局胜败如何影响最终锁赢」，
+    因此合并为一条（原来分散在 doom / fold_out / profit_lock 三处）：
+      A. 防锁赢（doomed）：弃牌后我方追不回（doom 数学：lead - 2×invested
+         ≤ -2×追回线）→ 对手即锁赢。弃牌=认输，**无条件 allin 搏翻盘**
+         （不区分主动/被动）。用户明确「这本质也是防对手锁赢，因此不只是
+         盈利时才触发」。
+      B. 锁胜弃牌（fold_out）：我方领先到绝对安全（lead > 我方全程弃牌的
+         盲注线 + 本局已投）→ 即使全程弃牌也稳赢 → 直接 fold 锁胜。
+      C. 盈利锁胜全下（profit_lock）：已锁定的收益下，本局已投 > 盈利+1000
+         且牌力≥30% → allin 把利润锁死（防止对手靠一手大底池翻盘）；
+         LEAD_LOCK 优势锁定模式时不做（用户规则：领先>LEAD_NO_ALLIN 不 allin）。
+    返回 action dict 或 None（不触发）。
+    """
+    try:
+        # A. 防锁赢（最高确定性：弃牌就锁给对手 → allin）
+        if _match_adjust(state) == "doomed":
+            return {"act": "allin"}
+        # B. 锁胜弃牌（领先到绝对安全 → fold 保胜）
+        if _fold_out_active(state):
+            return {"act": "fold"}
+        # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
+        if not _LEAD_LOCK and _profit_lock_allin(state):
+            return {"act": "allin"}
+    except Exception:
+        pass
+    return None
+
+
 def _profit_lock_allin(state):
     """规则2：盈利锁胜全下检查。
 
@@ -516,24 +547,16 @@ def decide(state, model, ctx=None):
                       - state.total_win_chips[state.opp_id]) > LEAD_NO_ALLIN
     except Exception:
         _LEAD_LOCK = False
-    # 【用户规则·最高优先级】防锁赢——确定性判断「这把输了对面能锁胜」
-    # （doom 公式）→ 无条件 allin 搏翻盘：弃牌=直接认输，任何其他动作
-    # （含主动侧小额施压）都拖慢翻盘；allin 兼具弃牌权益与最大价值。
-    # 注：2026-08-25 起不再区分主动/被动（删除 steal 施压档）——
-    #     主动侧 doom 同样无条件 allin；2026-08-24 删除「疑似锁胜」
-    #     （opponent_locking）判断，只用确定性公式。
-    if _match_adjust(state) == "doomed":
-        return {"act": "allin"}
-    # 【2026-08-25】锁胜弃牌（fold_out）不再被 steal 跳过（steal 已删除）；
-    # 领先到绝对安全（lead > 精确盲注线）→ 直接弃牌锁胜。
-    if _fold_out_active(state):
-        return {"act": "fold"}
-    # 【规则2】盈利锁胜全下（第二优先级）：LEAD_LOCK 优先——未锁定时，
-    # 盈利且本局已投 > 盈利+2000 且牌力≥30% → 直接全下锁胜（用户规则）
-    if not _LEAD_LOCK and _profit_lock_allin(state):
-        if _decision_timed_out():
+    # 【优先级 2·规则2（2026-09-10 合并）】锁胜 / 防锁赢统一决策——
+    # 原来分散的三条（doom 防锁赢 / fold_out 锁胜弃牌 / 盈利锁胜全下）
+    # 本质是同一件事：本局胜败对「最终锁赢」的影响，合并为 _lock_win_unified。
+    #   优先级 1 = _LEAD_LOCK 优势锁定标志（领先 >LEAD_NO_ALLIN 时不 allin）
+    #   优先级 2 = 本规则（含 doom，故 doom 不再是独立第 1 条）
+    _lw = _lock_win_unified(state)
+    if _lw is not None:
+        if _lw.get("act") == "allin" and _decision_timed_out():
             return {"act": "fold"}
-        return {"act": "allin"}
+        return _lw
 
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
     if should_avoid_risk(state):
