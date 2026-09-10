@@ -372,8 +372,25 @@ class GameState:
     def __init__(self, request):
         self.request = request
         self.num_players = request.get("num_players", 2)
-        self.dealer_id = request.get("dealer_id", 0)
-        self.my_id = request.get("my_id", 0)
+        # 【2026-09-10 防御】玩家 id 归一化到 0/1：
+        #   botzone 多数传 0-based(0/1)，但部分赛季/界面用 1-based(1/2)
+        #   （回放显示「座位1/座位2」）。若出现 2 即判定为 1-based，全体 -1。
+        #   若不归一化：my_id=2 → opp_id = 1-2 = -1 → total_win_chips[-1]
+        #   会静默取到最后一个元素（Python 负索引），锁赢判定全反。
+        try:
+            _raw_mid = int(request.get("my_id", 0))
+        except Exception:
+            _raw_mid = 0
+        try:
+            _raw_did = int(request.get("dealer_id", 0))
+        except Exception:
+            _raw_did = 0
+        self.id_base = 1 if (_raw_mid >= 2 or _raw_did >= 2) else 0
+        if self.id_base == 1:
+            _raw_mid -= 1
+            _raw_did -= 1
+        self.my_id = 0 if _raw_mid <= 0 else (1 if _raw_mid >= 1 else 0)
+        self.dealer_id = 0 if _raw_did <= 0 else (1 if _raw_did >= 1 else 0)
         self.opp_id = 1 - self.my_id  # heads-up
         self.my_chips = int(request.get("my_chips", 0))
         self.my_cards = [int(c) + 8 for c in request.get("my_cards", [])]
@@ -381,8 +398,23 @@ class GameState:
         self.history = request.get("history", []) or []
         self.hand_num = request.get("hand", 0)
         self.max_hand = request.get("max_hand", 50)
-        self.total_win_chips = request.get("total_win_chips", [0, 0])
-        self.total_win_games = request.get("total_win_games", [0, 0])
+        # 【防御】长度兜底：不足 2 个补 0（避免 IndexError → 被 except 吞 → 判定失效）
+        _twc = request.get("total_win_chips", [0, 0]) or [0, 0]
+        try:
+            _twc = list(_twc)
+        except Exception:
+            _twc = [0, 0]
+        while len(_twc) < 2:
+            _twc.append(0)
+        self.total_win_chips = _twc
+        _twg = request.get("total_win_games", [0, 0]) or [0, 0]
+        try:
+            _twg = list(_twg)
+        except Exception:
+            _twg = [0, 0]
+        while len(_twg) < 2:
+            _twg.append(0)
+        self.total_win_games = _twg
 
         self.small_blind = DEFAULT_BIG_BLIND // 2
         self.big_blind = DEFAULT_BIG_BLIND

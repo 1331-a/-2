@@ -12,6 +12,8 @@
        c) {...}                                    # 裸 request（含 my_cards/history）
   3) 只看某几手（配合 --hand 过滤）：
        python view_log.py payload.json --hand 12 15 30
+  4) payload 自检（确认 id 基准/字段完整性，换新对局后先跑这个）：
+       python view_log.py payload.json --check
 
 输出：每行 [DECISION] JSON —— hand(手数) / street(街) / pot(底池) /
       rule(命中的规则) / action(动作) / detail(牌型+赛制档+注额)
@@ -80,6 +82,8 @@ def main():
     ap.add_argument("--demo", action="store_true", help="跑内置演示")
     ap.add_argument("--hand", nargs="*", type=int, help="只看这些手数")
     ap.add_argument("--json", dest="json_out", help="日志落盘路径")
+    ap.add_argument("--check", action="store_true",
+                    help="只做 payload 自检（id 基准/字段完整性），不跑决策")
     args = ap.parse_args()
 
     if args.demo or not args.payload:
@@ -90,6 +94,30 @@ def main():
     if not requests:
         print("没有可用的 request", file=sys.stderr)
         return 1
+
+    if args.check:
+        print("=" * 72)
+        print("payload 自检（确认识别到的字段与 id 基准）")
+        print("=" * 72)
+        for i, req in enumerate(requests):
+            try:
+                st = parse_request(req)
+                lead = (st.total_win_chips[st.my_id]
+                        - st.total_win_chips[st.opp_id])
+                print("第%d个: hand=%s my_id=%s dealer_id=%s id_base=%s(%s) "
+                      "my_chips=%s lead=%s max_hand=%s" % (
+                          i + 1, st.hand_num, st.my_id, st.dealer_id,
+                          st.id_base, "1-based已归一化" if st.id_base else "0-based",
+                          st.my_chips, lead, st.max_hand))
+                if st.id_base:
+                    print("   ⚠ 检测到 1-based id，已自动 -1 归一化（回放显示座位1/2 时正常）")
+                if not st.total_win_chips:
+                    print("   ⚠ total_win_chips 缺失")
+                if not st.my_cards:
+                    print("   ⚠ my_cards 缺失（翻前也没有牌？）")
+            except Exception as e:
+                print("第%d个: 解析失败 %s" % (i + 1, e))
+        return 0
 
     DecisionLogger.enable(True)     # 打开日志
     print("=" * 72)
