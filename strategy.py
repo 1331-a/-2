@@ -2198,6 +2198,10 @@ class DecisionLogger:
                 mark = "\u00b7"
             out.append("%-18s \u89e6\u53d1%3d \u91c7\u7eb3%3d \u91c7\u7eb3\u7387%3.0f%% EV%+7d  %s"
                        % (n, tg, ad, rate * 100, ev, mark))
+        out.append("\u6ce8: EV = \u8be5\u89c4\u5219\u88ab\u91c7\u7eb3\u90a3\u51e0\u624b\u7684"
+                   "\u9886\u5148\u5dee\u53d8\u5316\u4e4b\u548c\uff1b\u9501\u8d62\u7c7b\u89c4\u5219"
+                   "\u4e3b\u52a8\u5f03\u724c\u4e3a\u8d1f\u5c5e\u6b63\u5e38\uff08\u6362\u53d6"
+                   "\u4e0d\u88ab\u9501\u6b7b\uff09\u3002")
         return out
 
     @classmethod

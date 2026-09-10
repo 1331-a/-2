@@ -190,6 +190,7 @@ def main():
     emit("=" * 68)
     _cur_hand = None
     _opp_shown_hand = None
+    _last_health = 0
 
     # 【关键】整局共用一个对手模型——每步用当前 request 的 history 增量喂它，
     # 否则对手画像面板永远是空的（样本 0 手 / unknown）。
@@ -297,6 +298,17 @@ def main():
                 for r in recs_holder[-1:]:
                     emit("       采纳: %s" % r.get("rule"))
             emit("")
+            # ---- 每 10 手输出一次规则健康度 ----
+            if (state.hand_num % 10 == 0
+                    and state.hand_num != _last_health):
+                _last_health = state.hand_num
+                try:
+                    for _ln in DecisionLogger.health_lines(
+                            "H%d-%d" % (max(state.hand_num - 9, 1), state.hand_num)):
+                        emit(_ln)
+                    emit("")
+                except Exception:
+                    pass
         except Exception as e:
             emit("!! 第%s手处理失败: %s" % (req.get("hand"), e))
 
