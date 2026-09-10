@@ -108,11 +108,15 @@ air = req(hand=9, my_cards=[24, 17], public_cards=[46, 22, 5],  # 空气牌 K♠
           history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                    {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                    {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}])
-a = decide(parse_request(air), m3)
-check("策略:实测弃牌率100%→空气诈唬", a.get("act") == "raise", str(a))
-# 对照组：无学习数据 → 对手 check 后立刻小注施压（新规则 2026-08-22）
-a0 = decide(parse_request(air), OpponentModel())
-check("策略:无数据对手check空气小注", a0.get("act") == "raise" and a0["num"] <= 500, str(a0))
+# 【2026-09-10 防read】诈唬路径也走 _opp_check_bet，频率已随机化 → 采样断言
+_v = [decide(parse_request(air), m3).get("act") for _ in range(20)]
+check("策略:实测弃牌率100%→空气多数诈唬(>=10/20)", _v.count("raise") >= 10,
+      "raise=%d/20" % _v.count("raise"))
+# 对照组：无学习数据 → 对手 check 后下小注施压（随机化后采样）
+_v0 = [decide(parse_request(air), OpponentModel()) for _ in range(20)]
+_r0 = [x for x in _v0 if x.get("act") == "raise" and x.get("num", 9999) <= 600]
+check("策略:无数据对手check空气多数小注(>=10/20)", len(_r0) >= 10,
+      "raise<=600 %d/20" % len(_r0))
 
 # ---------- 7. JSON 序列化往返 ----------
 m4 = OpponentModel()

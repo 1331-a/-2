@@ -2892,24 +2892,76 @@ def _opp_checked_this_round(state):
     return False
 
 
-def _opp_check_bet(state, opp_checked):
-    """对手 check 后立刻下小注（用户规则 100% 频率，不随机化）。
+# ── 规则12 独立模块：对手过牌 → 加注（分阶段权重） ──
+CHECK_BET_EARLY_HANDS = 20    # 前期手数：此阶段无条件 100% 执行（无对手数据）
+CHECK_BET_EARLY_FREQ = 1.0    # 前期频率
+CHECK_BET_MIN_FREQ = 0.55     # 后期频率下限（被针对时保留一定偷池能力）
 
-    【2026-09-10 防 read】频率保持确定性（用户明确要求「立刻」），但尺寸
-    改为动态 + 抖动：底池 30%~45% 区间随机，替代固定的 min(0.40池, 1000)
-    —— 固定 1000 封顶会被对手读出（「他下 1000 就是小注试探」）。
+
+def _check_bet_weight(state, model):
+    """【规则12·2026-09-10 用户规则】对手过牌→加注 的执行权重。
+
+    分两阶段（用户明确：前期无条件执行，根据对手反应再调整权重）：
+      ① 前期（hand ≤ CHECK_BET_EARLY_HANDS）：返回 1.0——样本不足时
+         不猜、不随机，无条件执行（保证基础偷池收益 + 快速收集对手反应）。
+      ② 后期：按对手对「我过牌后加注」的真实反应调整权重：
+           对手弃牌率高（≥0.55）→ 1.00（偷池有效，保持全力）
+                        （0.45~0.55）→ 0.85（仍有效）
+                        （0.35~0.45）→ 0.70（一般，适度收敛）
+                        （<0.35）    → 0.55（被跟/被加注反制，降频）
+         数据来源：响应学习的实测弃牌率（learned_fold_rate，即对手对我
+         该尺寸下注的真实反应）优先；样本不足回退 eff_fold_to_bet。
+    返回 [CHECK_BET_MIN_FREQ, 1.0] 区间的执行概率。
     """
-    if opp_checked:
+    try:
+        if state.hand_num <= CHECK_BET_EARLY_HANDS:
+            return CHECK_BET_EARLY_FREQ
+    except Exception:
+        return CHECK_BET_EARLY_FREQ
+    if model is None:
+        return 0.85
+    try:
+        probe = int(max(state.pot, 1) * 0.35)          # 代表性尺寸（≈实际注）
+        fr = None
         try:
-            import random
-            frac = random.uniform(0.30, 0.45)      # 动态区间，非固定 0.40
+            fr = model.learned_fold_rate(False, probe, 100, state.pot,
+                                         cur_hand=state.hand_num)
         except Exception:
-            frac = OPP_CHECK_BET
-        size = _jitter(int(state.pot * frac), 0.90, 1.10)
-        cap = _dynamic_cap(state)
-        size = min(size, cap)
-        return _raise_to(state, state.curbet[state.my_id] + size)
-    return {"act": "check"}
+            fr = None
+        if fr is None:
+            fr = float(model.eff_fold_to_bet())
+        if fr >= 0.55:
+            return 1.00
+        if fr >= 0.45:
+            return 0.85
+        if fr >= 0.35:
+            return 0.70
+        return CHECK_BET_MIN_FREQ
+    except Exception:
+        return 0.85
+
+
+def _opp_check_bet(state, opp_checked):
+    """【规则12·独立模块】对手 check → 加注。
+
+    权重来自 _check_bet_weight（前期无条件 1.0，后期按对手反应调整）；
+    尺寸 30%~45% 池随机 + ±10% 抖动；受动态上限约束。
+    与 _check_side 其他分支解耦：本模块只负责「对手过牌后的攻击」，
+    由 _check_side 在合适优先级调用。
+    """
+    if not opp_checked:
+        return {"act": "check"}
+    try:
+        import random
+        freq = _check_bet_weight(state, _MODEL_REF)
+        if random.random() > freq:
+            return {"act": "check"}                # 权重外随机过牌
+        frac = random.uniform(0.30, 0.45)
+    except Exception:
+        frac = OPP_CHECK_BET
+    size = _jitter(int(state.pot * frac), 0.90, 1.10)
+    size = min(size, _dynamic_cap(state))
+    return _raise_to(state, state.curbet[state.my_id] + size)
 
 
 def _delayed_aggression_bonus(state):

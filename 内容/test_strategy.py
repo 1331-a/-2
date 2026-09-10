@@ -103,8 +103,10 @@ air_flop = req(my_id=0, my_chips=19500, my_cards=[24, 17],
 a = act(air_flop, station())
 check("vs站点对手check空气小注", a.get("act") == "raise" and a["num"] <= 500, str(a))
 # 对高弃牌对手：空气诈唬
-a = act(air_flop, foldy())
-check("vs岩石空气诈唬下注", a.get("act") == "raise" and a["num"] >= 200, str(a))
+# 【2026-09-10 防read】频率随机化 → 采样断言
+_va = [act(air_flop, foldy()).get("act") for _ in range(20)]
+check("vs岩石空气多数诈唬(>=10/20)", _va.count("raise") >= 10,
+      "raise=%d/20" % _va.count("raise"))
 
 # ---------- 3. 听牌半诈唬与强牌价值 ----------
 # 同花听牌（A♥5♥ + 3♥9♥K♦，4 张红桃 = 9 outs）应下注半诈唬
@@ -386,8 +388,9 @@ st2 = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                         history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
-a = decide(st2, foldy())
-check("对照组:正常档空气诈唬恢复", a.get("act") == "raise", str(a))
+_vb = [decide(st2, foldy()).get("act") for _ in range(20)]
+check("对照组:正常档空气多数诈唬(>=10/20)", _vb.count("raise") >= 10,
+      "raise=%d/20" % _vb.count("raise"))
 
 # ---------- 6c. 翻前对手全下：按累计盈亏动态分档（盈利越多越不跟）----------
 def allin_req(my_cards, pnl_me, hand=30, max_hand=70):
@@ -704,9 +707,11 @@ river_chk = parse_request(req(my_id=0, my_chips=19310, my_cards=[36, 16],
                                       {"round": 3, "player_id": 1, "action": 0, "action_type": "check"},
                                       {"round": 3, "player_id": 0, "action": 0, "action_type": "check"},
                                       {"round": 4, "player_id": 1, "action": 0, "action_type": "check"}]))
-a = decide(river_chk, OpponentModel())
-check("规则6:河牌对手check过我方加注(非过牌)", a.get("act") == "raise",
-      "act=%s num=%s" % (a.get("act"), a.get("num")))
+# 【2026-09-10 防read】频率已随机化(默认0.75)，单次断言不稳定 → 20次采样
+_rv = [decide(river_chk, OpponentModel()).get("act") for _ in range(20)]
+check("规则6:河牌对手check过我方多数加注(防read随机化,>=10/20)",
+      _rv.count("raise") >= 10,
+      "raise=%d/20" % _rv.count("raise"))
 
 # ============ 2026-09-05 用户规则（截图：转牌双方过牌） ============
 # 规则6扩展: 转牌对手check过我方加小注(非过牌)——第34手截图场景
@@ -720,9 +725,10 @@ turn_chk = parse_request(req(dealer_id=1, my_id=0, my_chips=19900,
                                       {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
                                       {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
                                       {"round": 2, "player_id": 1, "action": 0, "action_type": "check"}]))
-a = decide(turn_chk, OpponentModel())
-check("规则6:转牌对手check过我方加注(非过牌)", a.get("act") == "raise",
-      "act=%s num=%s" % (a.get("act"), a.get("num")))
+_tv = [decide(turn_chk, OpponentModel()).get("act") for _ in range(20)]
+check("规则6:转牌对手check过我方多数加注(>=10/20)",
+      _tv.count("raise") >= 10,
+      "raise=%d/20" % _tv.count("raise"))
 
 # 规则6兼容测试: 对方check用action=0编码(部分赛季)也能识别
 turn_chk_a0 = parse_request(req(dealer_id=1, my_id=0, my_chips=19900,
@@ -735,10 +741,10 @@ turn_chk_a0 = parse_request(req(dealer_id=1, my_id=0, my_chips=19900,
                                         {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
                                         {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
                                         {"round": 2, "player_id": 1, "action": 0, "action_type": "check"}]))
-a = decide(turn_chk_a0, OpponentModel())
-check("规则6兼容:对手action=0(无type)check也能加注",
-      a.get("act") == "raise",
-      "act=%s num=%s" % (a.get("act"), a.get("num")))
+_av = [decide(turn_chk_a0, OpponentModel()).get("act") for _ in range(20)]
+check("规则6兼容:action=0编码多数加注(>=10/20)",
+      _av.count("raise") >= 10,
+      "raise=%d/20" % _av.count("raise"))
 
 
 # ============ 2026-09-07 用户规则（截图：第2手河牌公面4同花跟注allin） ============
