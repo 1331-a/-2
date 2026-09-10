@@ -46,6 +46,13 @@ class OpponentModel:
         self.postflop_check = 0
         # ---- 升级新增 ----
         self.postflop_big_raise = 0  # 大注（>= 3 倍本轮当前最大注）
+        # 【2026-09-10】下注模式识别（数值型/比例型）——延迟导入避免循环依赖
+        self.bet_pattern = None
+        try:
+            from strategy import BetPatternDetector
+            self.bet_pattern = BetPatternDetector()
+        except Exception:
+            self.bet_pattern = None
         self.allin_count = 0         # 全押次数
         self.hands_seen = 0          # 观测到对手行动的手牌数
         self.faces_bet = 0           # 翻后面对下注的次数（call+fold）
@@ -366,7 +373,15 @@ class OpponentModel:
                 self.turn_decisions += 1  # 转牌及以后的决策，用于街级激进度
 
     def to_json(self):
-        return json.dumps(self.__dict__)
+        """序列化：bet_pattern 是对象，先转 dict 再整体 dumps（否则报错）。"""
+        try:
+            d = dict(self.__dict__)
+            bp = d.get("bet_pattern")
+            if bp is not None and hasattr(bp, "to_json"):
+                d["bet_pattern"] = {"__bp__": bp.to_json()}
+            return json.dumps(d)
+        except Exception:
+            return "{}"
 
     @classmethod
     def from_json(cls, s):
@@ -379,6 +394,14 @@ class OpponentModel:
                     for k in m.__dict__:
                         if k in d:
                             m.__dict__[k] = d[k]
+                    # 恢复 bet_pattern（带 __bp__ 标记的嵌套 dict）
+                    bp = d.get("bet_pattern")
+                    if isinstance(bp, dict) and "__bp__" in bp:
+                        try:
+                            from strategy import BetPatternDetector
+                            m.bet_pattern = BetPatternDetector.from_json(bp["__bp__"])
+                        except Exception:
+                            pass
             except Exception:
                 pass
         return m

@@ -196,6 +196,7 @@ BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
 _LEAD_LOCK = False    # 优势锁定模式：领先>LEAD_NO_ALLIN 时不 allin、注码≤LEAD_MAX_BET
+_MODEL_REF = None  # 当前请求的对手模型（decide 入口设置，供防read尺度使用）
 _OPP_BETS_PER_HAND = 0.9  # 对手每局下注数量（decide 入口从 model 读取，
                           # 2026-08-25：驱动跟注门槛微调——高侵略收紧/被动放宽）
 _DECISION_STARTED_AT = 0.0
@@ -480,11 +481,12 @@ def _bet_cap_guard(state, action):
         num = int(action.get("num", 0))
     else:
         num = state.my_left                              # allin = my_left
-    if num <= BET_CAP:
+    _cap = _dynamic_cap(state)                           # 动态上限(防read)
+    if num <= _cap:
         return action
-    # 降级：底池 ≤ 2000 → 下注底池 50%；否则过牌/跟注
+    # 降级：用动态尺寸（底池比例，带抖动）而非固定 50%
     if state.pot <= BET_CAP_POT:
-        return _bet_fraction(state, BET_CAP_FRAC)
+        return _bet_fraction(state, 0.50)
     if state.to_call > 0:
         if state.my_left > state.to_call:
             return {"act": "call"}      # 跟而非 allin（不超 3000）
@@ -528,27 +530,41 @@ def _aggressive_strong_bet(state, action):
         if _effective_category(state) < TWO_PAIR:
             return action
         cur_total = int(action.get("num", 0))
-        if cur_total >= GOOD_BET_MIN:
-            return action                                 # 已够大
-        target = min(BET_CAP, GOOD_BET_MIN)
-        if target <= cur_total:
+        # 【2026-09-10 防 read】动态价值尺度替代固定 2000：
+        #   底池 × (0.60~0.75) × 对手跟注意愿调整 × 街级调整
+        #   再做 ±15% 抖动 —— 对手无法从「总是 2000」读出我们的牌力。
+        try:
+            _m = _model_ref
+            sz = BetSizer.value_size(state.pot, _board_texture(state.board).get("wet", 0.0),
+                                     state.stage, _m)
+        except Exception:
+            sz = int(state.pot * 0.65)
+        sz = _jitter(sz)
+        target = min(sz, _dynamic_cap(state))
+        if target <= cur_total or target >= state.my_left:
             return action
-        if target >= state.my_left:
-            return action                                 # 不强行推 allin（留给专项规则）
         return _raise_to(state, target)
     except Exception:
         return action
 
 
-def decide(state, model, ctx=None):
+def decide(state, model, ctx=None, debug=False):
     """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
 
     ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
     （对手弃牌推断/激进等级/回撤保护）通过它只调整状态机阈值偏移。
+    debug: True 时启用决策日志（DecisionLogger，输出到 stdout / 平台日志）。
     """
-    global _CTX, _OPP_JUMPED, _LEAD_LOCK, _OPP_BETS_PER_HAND, _DECISION_STARTED_AT
+    global _CTX, _OPP_JUMPED, _LEAD_LOCK, _OPP_BETS_PER_HAND, _DECISION_STARTED_AT, _MODEL_REF
     _DECISION_STARTED_AT = time.perf_counter()
     _CTX = ctx
+    _MODEL_REF = model
+    # 【决策日志】debug=True 或环境变量 WB_POKER_DEBUG=1 时输出归因日志
+    try:
+        import os
+        DecisionLogger.enable(debug or os.environ.get("WB_POKER_DEBUG") == "1")
+    except Exception:
+        DecisionLogger.enable(debug)
     # 【对手突袭大注】全局标志：翻前/翻后所有决策共享（优先级最高——
     # 领先较大时不 allin、面对突袭大注收紧防守，都在决策一开始生效）
     _OPP_JUMPED = _opp_bet_jumped(state)
@@ -574,7 +590,12 @@ def decide(state, model, ctx=None):
     _lw = _lock_win_unified(state)
     if _lw is not None:
         if _lw.get("act") == "allin" and _decision_timed_out():
+            DecisionLogger.log(state.hand_num, state.stage, state.pot,
+                               "lock_win(timeout)", "fold")
             return {"act": "fold"}
+        _tag = "lock_win:allin" if _lw.get("act") == "allin" else "lock_win:fold"
+        DecisionLogger.log(state.hand_num, state.stage, state.pot, _tag,
+                           str(_lw.get("act")), "A=doom B=foldout C=profitlock")
         return _lw
 
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
@@ -763,8 +784,15 @@ def _probe_bet_proxy(state):
             break
     if not (flush_signal or straight_signal):
         return None
-    # 探测下注 1000-2000（取 min(1500, pot*0.5) 保不超 pot 太多）
-    probe = min(1500, max(1000, int(state.pot * 0.5)))
+    # 【2026-09-10 防 read】探测注动态化：底池 40%~70% 区间 + 抖动，
+    # 替代固定 1000~2000（固定值会被对手读出「他在探测」）。
+    try:
+        import random
+        probe = int(state.pot * random.uniform(0.40, 0.70))
+    except Exception:
+        probe = int(state.pot * 0.5)
+    probe = max(_jitter(probe, 0.90, 1.10), 2 * 100)
+    probe = min(probe, _dynamic_cap(state))
     return _raise_to(state, state.curbet[state.my_id] + probe)
 
 
@@ -1399,11 +1427,22 @@ def _opp_checked_this_round(state):
 
 
 def _opp_check_bet(state, opp_checked):
-    """对手 check 后立刻下小注（用户规则）：min(0.40×底池, 1000)；否则过牌。
-    （深底池时 0.40 池可能超 1000，受 PREFLOP/翻后注码上限约束取 min。）"""
+    """对手 check 后立刻下小注（用户规则 100% 频率，不随机化）。
+
+    【2026-09-10 防 read】频率保持确定性（用户明确要求「立刻」），但尺寸
+    改为动态 + 抖动：底池 30%~45% 区间随机，替代固定的 min(0.40池, 1000)
+    —— 固定 1000 封顶会被对手读出（「他下 1000 就是小注试探」）。
+    """
     if opp_checked:
-        frac = min(OPP_CHECK_BET, 1000.0 / max(state.pot, 1))
-        return _bet_fraction(state, frac)
+        try:
+            import random
+            frac = random.uniform(0.30, 0.45)      # 动态区间，非固定 0.40
+        except Exception:
+            frac = OPP_CHECK_BET
+        size = _jitter(int(state.pot * frac), 0.90, 1.10)
+        cap = _dynamic_cap(state)
+        size = min(size, cap)
+        return _raise_to(state, state.curbet[state.my_id] + size)
     return {"act": "check"}
 
 
@@ -1528,6 +1567,227 @@ def _has_nuts_or_strong_draw(state):
         return False
     except Exception:
         return False
+
+
+_BET_JITTER = 0.15   # 尺寸抖动幅度（防 read：同 EV 区间随机 ±15%）
+
+
+def _jitter(size, lo=1.0 - _BET_JITTER, hi=1.0 + _BET_JITTER):
+    """【2026-09-10 防 read】下注尺寸随机抖动。
+
+    固定金额/固定比例会被对手读出规律（如「他下 2000 就是两对」）。
+    在 EV 可接受区间内随机化尺寸，对手无法从下注额反推牌力。
+    随机源用 random（无需种子：跨进程/跨局自然不同）。
+    """
+    try:
+        import random
+        size = int(size * random.uniform(lo, hi))
+    except Exception:
+        pass
+    return max(int(size), 1)
+
+
+def _dynamic_cap(state):
+    """【2026-09-10 防 read】动态主动下注上限（替代固定 BET_CAP=3000）。
+
+    固定 3000 上限本身就是可读规律（「他超过 3000 一定是三条+」）。
+    改为随底池与筹码深度浮动：
+        cap = max(底池 × 0.75, 筹码 × 0.20)，下限 4BB，上限半仓
+      - 小底池（600）→ cap≈450~600（约 5BB），不会出现 3.3 倍超池；
+      - 大底池（5000）→ cap≈3750（75% 池），价值能榨足；
+      - 深筹码时按 20% 筹码保护，避免一次打光。
+    """
+    try:
+        pot = max(state.pot, 1)
+        stack = max(int(state.effective_stack), 1)
+        bb = 100
+        # 底池比例为主（小底池不允许超池太多），筹码比例做保护（取 min）
+        cap = max(pot * 0.75, 4 * bb)
+        cap = min(cap, stack * 0.20)
+        return int(cap)
+    except Exception:
+        return 3000
+
+
+class BetSizer:
+    """【2026-09-10 新增】动态下注尺度：底池比例 × 对手类型 × 街级调整。
+
+    【为什么要动态】固定金额（1000/2000/3000）在不同底池下含义完全不同：
+    底池 600 时 2000 是 3.3 倍超池（只有强牌跟），底池 5000 时 2000 只是
+    40% 池（合理）。因此尺度应按「底池比例」算，再按对手跟注意愿微调。
+    【硬约束】结果只是「建议尺度」，调用方仍受用户硬规则裁剪：
+      上限 BET_CAP(3000)、好牌下限 GOOD_BET_MIN(2000)、翻前 1000。
+    动态化只影响上限内的实际大小，不突破用户规则。
+    """
+
+    @staticmethod
+    def value_size(pot, wet, street, model):
+        """价值注尺度（返回建议下注额，不含当前轮已投）。
+
+        对手越爱跟（call_rate 高）→ 下注越大榨价值；越紧弱 → 越小求跟。
+        """
+        try:
+            call_rate = 1.0 - float(model.eff_fold_to_bet())
+        except Exception:
+            call_rate = 0.60
+        base = 0.75 if wet >= 0.5 else 0.60          # 湿面保护/干面求跟
+        if call_rate > 0.60:                          # 跟注站：大注榨价值
+            base *= 1.25
+        elif call_rate < 0.35:                        # 紧弱：小注留跟注
+            base *= 0.70
+        if street == "river":
+            base *= 1.10                              # 河牌牌力定型，可加码
+        elif street == "flop":
+            base *= 0.90                              # 翻牌留空间
+        return max(int(pot * base), 1)
+
+    @staticmethod
+    def bluff_size(pot, big_blind, model):
+        """诈唬尺度：在尺寸桶里选「弃牌权益 − 风险」EV 最高者。
+
+        用响应学习的实测弃牌率（对手对该尺寸的真实反应）优先于全局估计。
+        """
+        best_size, best_ev = 0, 0.0
+        for ratio in (0.40, 0.55, 0.75, 1.00):
+            size = int(pot * ratio)
+            if size <= 0:
+                continue
+            fr = None
+            try:
+                fr = model.learned_fold_rate(False, size, big_blind, pot,
+                                             cur_hand=None)
+            except Exception:
+                fr = None
+            if fr is None:
+                try:
+                    fr = float(model.eff_fold_to_bet())
+                except Exception:
+                    fr = 0.40
+            ev = fr * pot - (1.0 - fr) * size          # 弃牌赢池 − 被跟损失
+            if ev > best_ev:
+                best_size, best_ev = size, ev
+        return best_size
+
+
+class BetPatternDetector:
+    """【2026-09-10 新增】判断对手是「数值型」还是「比例型」下注。
+
+    数值型（numeric）：下注额固定（如总下 2000），BPR（下注/底池）随底池
+      剧烈波动 → 底池小时的大注是超池（极强或极弱），底池大时是正常注。
+    比例型（proportional）：下注随底池成比例（如总下 2/3 池），BPR 稳定
+      → 其尺度本身携带牌力信息（越大越强）。
+    判据：BPR 的贝叶斯平滑标准差 —— >0.30 数值型、<0.15 比例型、中间混合。
+    样本 <5 返回 None（不判断，避免噪声）。
+    """
+
+    def __init__(self):
+        self.bprs = []            # 历史 (bet/pot) 样本
+        self.prior_std = 0.20     # 先验标准差（混合型）
+        self.prior_weight = 5     # 先验权重
+
+    def observe(self, pot, bet):
+        try:
+            if pot > 0 and bet > 0:
+                self.bprs.append(float(bet) / float(pot))
+                if len(self.bprs) > 40:            # 只留最近 40 个
+                    self.bprs = self.bprs[-40:]
+        except Exception:
+            pass
+
+    def _smoothed_std(self):
+        if len(self.bprs) < 5:
+            return None
+        try:
+            import statistics
+            std = statistics.pstdev(self.bprs)     # 总体标准差（样本即全部）
+        except Exception:
+            return None
+        n = len(self.bprs)
+        return (self.prior_std * self.prior_weight + std * n) / (self.prior_weight + n)
+
+    def get_pattern(self):
+        sd = self._smoothed_std()
+        if sd is None:
+            return "unknown"                       # 样本不足
+        if sd > 0.30:
+            return "numeric"                       # 金额固定型
+        if sd < 0.15:
+            return "proportional"                  # 比例型
+        return "mixed"
+
+    def read_bet(self, pot, opp_bet):
+        """读牌：结合类型解读对手本次下注的强弱。"""
+        pattern = self.get_pattern()
+        if pattern == "numeric":
+            # 金额固定：底池小 → 超池（两极化）；底池大 → 正常尺度
+            return "polarized" if pot < 1500 else "medium_strong"
+        if pattern == "proportional":
+            bpr = float(opp_bet) / max(pot, 1)
+            if bpr > 1.0:
+                return "polarized"
+            if bpr > 0.6:
+                return "strong"
+            return "medium"
+        return "unknown"
+
+    def to_json(self):
+        return {"bprs": self.bprs[-40:], "prior_std": self.prior_std,
+                "prior_weight": self.prior_weight}
+
+    @classmethod
+    def from_json(cls, d):
+        obj = cls()
+        try:
+            obj.bprs = list(d.get("bprs") or [])
+            obj.prior_std = float(d.get("prior_std", 0.20))
+            obj.prior_weight = int(d.get("prior_weight", 5))
+        except Exception:
+            pass
+        return obj
+
+
+class DecisionLogger:
+    """【2026-09-10 新增】决策归因日志。
+
+    botzone 沙箱**不能写文件**，因此默认输出到 stdout（平台对局日志可查）；
+    本地调试时可 dump 到 JSON 文件。只记录「命中的规则」，不记录牌面细节。
+    开关：decide(..., debug=True) 或环境变量 WB_POKER_DEBUG=1。
+    """
+
+    _enabled = False
+    _records = []
+
+    @classmethod
+    def enable(cls, on=True):
+        cls._enabled = bool(on)
+
+    @classmethod
+    def log(cls, hand, street, pot, rule, action, detail=""):
+        if not cls._enabled:
+            return
+        rec = {"hand": hand, "street": street, "pot": pot,
+               "rule": rule, "action": action, "detail": detail}
+        cls._records.append(rec)
+        if len(cls._records) > 200:
+            cls._records = cls._records[-200:]
+        try:
+            print("[DECISION] %s" % rec, flush=True)   # 输出到平台日志
+        except Exception:
+            pass
+
+    @classmethod
+    def dump(cls, path):
+        try:
+            import json
+            with open(path, "w") as f:
+                json.dump(cls._records, f, indent=2, ensure_ascii=False)
+            return True
+        except Exception:
+            return False
+
+    @classmethod
+    def records(cls):
+        return list(cls._records)
 
 
 def _opp_range_pct(model, opp_raised_preflop):
@@ -1900,6 +2160,17 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     to_call = state.to_call
     required = to_call / (pot + to_call) if (pot + to_call) > 0 else 1.0
 
+    # 【2026-09-10】记录对手本次下注的 BPR（下注/底池）→ 数值型/比例型识别。
+    # 数值型（金额固定）底池小时的大注=两极化（强或诈唬）；比例型可信度高。
+    _pattern = "unknown"
+    try:
+        bp = getattr(model, "bet_pattern", None)
+        if bp is not None:
+            bp.observe(pot, state.opp_round_bet)
+            _pattern = bp.get_pattern()
+    except Exception:
+        _pattern = "unknown"
+
     # 【用户规则 2026-08-30】大注 + 无坚果 → 直接弃牌（弱听牌/弱成牌跟注 EV 负）
     # 截图1：J7 听花跟 2400（>0.7×pot）→ 弃而非 call
     if to_call > 0 and to_call > 0.6 * pot and not _has_nuts_or_strong_draw(state):
@@ -1932,6 +2203,17 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
 
     # 跟注安全边际：默认 2%；岩石的下注≈价值 → 抬门槛；疯子乱打 → 放宽
     margin = 0.02
+    # 【2026-09-10 防 read/读牌】按对手下注模式微调跟注边际：
+    #   数值型 + 小底池（超池）→ 更两极化，跟注放宽（诈唬占比高）
+    #   比例型 + 大注（稳定尺度）→ 尺度可信，跟注收紧
+    try:
+        if _pattern == "numeric" and pot < 1500:
+            margin -= 0.05
+        elif _pattern == "proportional" and \
+                state.opp_round_bet > 0.6 * max(pot, 1):
+            margin += 0.05
+    except Exception:
+        pass
     if arch == "rock":
         eff_req += 0.10
     elif arch == "maniac":

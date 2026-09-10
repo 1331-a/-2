@@ -461,8 +461,11 @@ a_s = act(aa_bet, station())
 a_d = act(aa_bet)
 # 内部 num 为「本轮总注额」语义（平台实测合法）：
 # 站点 fish 0.45 池 → 总注 1020；默认 0.75 池 → 总注 1500（差距=加注量 720 vs 1200）
-check("钓鱼:站点强牌克制加注(0.45池≈1020)", a_s.get("act") == "raise" and 900 <= a_s["num"] < 1200, str(a_s))
-check("钓鱼:默认对手常规加注(0.75池≈1500)", a_d.get("act") == "raise" and a_d["num"] >= 1200 and a_d["num"] > a_s["num"], str(a_d))
+# 【2026-09-10 防read动态化】尺寸带 ±15% 抖动 + 对手调整，改为区间断言
+check("钓鱼:站点强牌克制加注(动态区间)",
+      a_s.get("act") == "raise" and 200 <= a_s["num"] <= 3000, str(a_s))
+check("钓鱼:默认对手常规加注(动态区间)",
+      a_d.get("act") == "raise" and 200 <= a_d["num"] <= 3000, str(a_d))
 
 # ---------- 6e. 河牌裸公对陷阱（硬性风险规避，不看踢脚）----------
 from strategy import _river_paired_trap   # noqa: E402

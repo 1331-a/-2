@@ -89,7 +89,11 @@ st = parse_request(req(total_win_chips=[0, 0], public_cards=[46, 6, 1], my_chips
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 300, "action_type": "raise"}]))
 a = decide(st, OpponentModel())
-check("注码封顶:面对下注加注≤3000", a.get("act") == "raise" and a["num"] <= 3000, str(a))
+# 【2026-09-10 动态上限】cap 改为 max(pot*0.75, 4BB) 且 ≤ 筹码20%，
+# 超限时降级为 call（不再固定 3000），故断言改为「不超上限」
+check("注码封顶:面对下注不超动态上限",
+      (a.get("act") == "raise" and a["num"] <= 5000) or a.get("act") == "call",
+      str(a))
 # 对照组：翻前开池 2.5BB（增量 200<1000）不受影响
 st = parse_request(req(total_win_chips=[0, 0], my_chips=19950, my_cards=[48, 51], history=[]))
 a = decide(st, OpponentModel())

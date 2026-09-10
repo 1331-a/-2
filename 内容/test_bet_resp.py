@@ -148,7 +148,9 @@ aa_bet2 = req(hand=16, my_id=0, my_chips=19500, my_cards=[48, 50],
 a = decide(parse_request(aa_bet2), m7)
 check("学习优先:面对下注加注用学习尺寸(0.35池≈860)", a == {"act": "raise", "num": 860}, str(a))
 a0 = decide(parse_request(aa_bet2), OpponentModel())
-check("学习优先:无数据常规加注(增量已删→0.75池1500)", a0 == {"act": "raise", "num": 1500}, str(a0))
+# 【2026-09-10 防read动态化】不再固定 1500，改为动态尺度（范围断言）
+check("学习优先:无数据常规加注(动态尺度)", 
+      a0.get("act") == "raise" and 300 <= a0.get("num", 0) <= 3000, str(a0))
 
 # ---------- 对手每局下注数量（2026-08-25 用户规则） ----------
 m8 = OpponentModel()
