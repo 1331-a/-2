@@ -80,8 +80,11 @@ r = req(my_chips=19000, my_cards=[42, 13], public_cards=[43, 22, 29, 20],
                       {"round": 2, "player_id": 1, "action": 0, "action_type": "check"}])
 st = parse_request(r)
 a = decide(st, OpponentModel())
-check("前几步钓鱼:turn两对小注(≤0.55池)",
-      a.get("act") == "raise" and a["num"] <= 0.55 * st.pot + 1, str(a))
+# 【2026-09-10 规则13】好牌（两对）主动下注 >=2000（不再小注钓鱼）——
+# 理由：我方有「对手下注>3000无坚果→弃」限制，好牌小注会被对手大注反制
+# 错失价值；主动打 2000+ 锁住价值。旧期望 ≤0.55 池已被规则13 取代。
+check("规则13:turn两对主动下注>=2000",
+      a.get("act") == "raise" and a["num"] >= 2000, str(a))
 
 # B3) 河牌顶对 → 恢复正常价值注（≥0.5 池，不再小注钓）
 cc = [{"round": 1, "player_id": 1, "action": 0, "action_type": "check"},

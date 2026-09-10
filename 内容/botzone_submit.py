@@ -1625,6 +1625,7 @@ PROFIT_LOCK_EQ = 0.30         # 对抗随机牌的胜率底线（防纯垃圾牌
 # > 1000 → 自动降级：底池≤2000 下注底池 50%；否则过牌/跟注。
 # 仅在规则1（偷盲档）与规则2 均未触发时生效。
 BET_CAP = 3000                # 非超强牌主动下注总注额上限（2026-08-25: 1000→3000）
+GOOD_BET_MIN = 2000           # 【规则13】好牌(≥两对)主动下注的最小总注额(2026-09-10)
 BET_CAP_POT = 2000            # 底池超过此值时完全放弃主动下注（过牌/跟注）
 BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 
@@ -1903,6 +1904,37 @@ def _bet_cap_guard(state, action):
     return {"act": "check"}
 
 
+def _aggressive_strong_bet(state, action):
+    """【规则13·2026-09-10 用户规则】好牌（≥两对）主动下注 ≥ GOOD_BET_MIN(2000)。
+
+    背景：我方存在「对手下注 >3000 且无坚果/强听 → 直接弃牌」的限制
+    （规则1/4/11）。若好牌只下小注，对手 raise 到 3000+ 时我方反而不跟
+    → 错失价值。修法：好牌主动把总注额打到 2000~3000 区间，底池做大后
+    对手跟注即锁定价值；对手超池 raise 时我方牌力更可能达坚果级继续对抗。
+    范围：翻后 + 有效牌型 ≥ 两对（strong 档）+ raise 动作。
+      两对总注额 ≤3000（规则3），≥三条 不限但也不主动超 3000（克制）。
+    不改：allin（通常来自 doom/fold_out 等确定性规则）、call/check/fold。
+    """
+    try:
+        if action.get("act") != "raise":
+            return action
+        if state.stage == "preflop":
+            return action
+        if _effective_category(state) < TWO_PAIR:
+            return action
+        cur_total = int(action.get("num", 0))
+        if cur_total >= GOOD_BET_MIN:
+            return action                                 # 已够大
+        target = min(BET_CAP, GOOD_BET_MIN)
+        if target <= cur_total:
+            return action
+        if target >= state.my_left:
+            return action                                 # 不强行推 allin（留给专项规则）
+        return _raise_to(state, target)
+    except Exception:
+        return action
+
+
 def decide(state, model, ctx=None):
     """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
 
@@ -1961,6 +1993,11 @@ def decide(state, model, ctx=None):
     action = _allin_floor_guard(state, action)
     # 【规则3】下注额限制（第三优先级）：注额分级上限由 _normalize 统一执行
     action = _bet_cap_guard(state, action)
+    # 【规则13·2026-09-10 用户规则】好牌激进打法：主动下注 ≥2000（不超 3000）。
+    # 动机：我方有「对手下注 >3000 且无坚果 → 弃牌」的限制，若好牌只下小注，
+    # 对手 raise 到 3000+ 我方反而弃牌错失价值；主动打 2000~3000 把底池做大，
+    # 对手跟注即锁定价值、对手强 raise 也能靠坚果（≥三条）继续。
+    action = _aggressive_strong_bet(state, action)
     # 【2026-09-04 用户规则·通用禁弃】弃牌后若 lead_after_fold ≤ 0（弃牌让
     # 我方不再领先 → 对手反而锁赢或被甩开差距）→ 强制不弃：check/call/allin。
     # 任何局数生效（最后手被 lead_after ≤ 0 自然覆盖）。doom 入口先返回
