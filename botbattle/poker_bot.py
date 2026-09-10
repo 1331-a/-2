@@ -1810,26 +1810,28 @@ def _lock_win_unified(state):
 def _profit_lock_allin(state):
     """规则2：盈利锁胜全下检查。
 
-    【业务逻辑】当前累计总盈亏 > 0（盈利状态）且本局已累计下注金额（含
-    盲注与当前轮，= INIT_CHIPS - my_chips）> 总盈亏 + 2000，且手牌对抗
-    随机牌胜率 > 30%（防纯垃圾牌推）→ 立即全下锁胜，防止利润回吐
-    （投入已深、牌力有底线，直接推掉避免后街被对手反超）。
+    【业务逻辑 2026-09-10 用户澄清】盈利锁胜的本质也是防对手锁赢：
+    盈利状态下若本局投入过大——输掉后对手反而能锁赢（doom 同式：
+    lead - 2×invested ≤ -2×追回线）→ 强制 allin（不弃牌，弃牌=把锁赢
+    拱手让人）。用户明确：「不只是盈利时才触发」，故与 doom 合并为
+    同一判定，放在规则2 统一处理。
     与 LEAD_LOCK 关系（用户确认）：LEAD_LOCK 优先——领先>2000 时注码
     受限（≤1000），不可能出现「已投 > 盈利+2000」的深投入场景，
     故本函数只在 LEAD_LOCK 未触发时被调用。
     """
     try:
-        pnl = state.total_win_chips[state.my_id]
-        if pnl <= 0:
-            return False
-        invested = INIT_CHIPS - state.my_chips   # 本局已累计投入（含当前轮）
-        if invested <= pnl + PROFIT_LOCK_CONST:
-            return False
-        # 胜率底线：对抗随机牌（opp_range_pct=1.0）快速蒙特卡洛
-        eq = monte_carlo_equity(state.hole, state.board, iterations=600,
-                                opp_range_pct=1.0,
-                                deadline=time.time() + 0.25)
-        return eq > PROFIT_LOCK_EQ
+        # 【2026-09-10 用户澄清】盈利锁胜的本质 = 防对手锁赢：
+        # 盈利状态下若本局投入过大（输掉后对手反而能锁赢）→ 强制 allin。
+        # 判据与 doom 同式（我 -invested、对手 +invested → lead 降 2×invested；
+        # 剩余手数最多追回 2×追回线）：
+        #     lead - 2×invested ≤ -2×_blind_line(hands_left, own=False)
+        # 即「本局失败 → 对手锁赢」。此式不含盈利前提（落后侧由 doom 覆盖，
+        # 盈利侧由本函数覆盖，两者本质相同）。
+        hands_left = state.max_hand - state.hand_num
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        invested = INIT_CHIPS - state.my_chips
+        return lead - 2 * invested <= -2 * _blind_line(state, hands_left, own=False)
     except Exception:
         return False
 
@@ -1935,6 +1937,23 @@ def _bet_cap_guard(state, action):
     return {"act": "check"}
 
 
+def _lock_win_tail_guard(state, action):
+    """【规则2·尾段守卫 2026-09-10 合并】全下下限 + 禁弃兜底。
+
+    用户要求：这两段本质也是防对手锁赢，合并进规则2（不再散落在 decide
+    出口）。执行顺序与原来一致，语义归入规则2 模块：
+      ① _allin_floor_guard —— 全下下限（累计投入须 > 盈利+1000 才允许
+         allin；否则跟全下→弃、主动全下→过牌）。防「小优势 allin 输光
+         后对手锁赢」。
+      ② _last_hand_no_fold —— 禁弃兜底（弃牌若让对手锁胜 / 最后一手
+         弃牌即输 → 转 check/call/allin）。同样防「弃牌=送锁赢」。
+    返回修正后的 action。
+    """
+    action = _allin_floor_guard(state, action)
+    action = _last_hand_no_fold(state, action)
+    return action
+
+
 def _aggressive_strong_bet(state, action):
     """【规则13·2026-09-10 用户规则】好牌（≥两对）主动下注 ≥ GOOD_BET_MIN(2000)。
 
@@ -2012,8 +2031,9 @@ def decide(state, model, ctx=None):
         action = _postflop_decide(state, model)
     if _decision_timed_out():
         return {"act": "fold"}
-    # 全下下限：投入须超过「当前总盈利 + 1000」才允许 allin（用户规则）
-    action = _allin_floor_guard(state, action)
+    # 【规则2·尾段守卫（2026-09-10 合并）】全下下限 + 禁弃兜底——
+    # 两者本质亦为防对手锁赢，统一归入规则2 模块（原分散两处已合并）。
+    action = _lock_win_tail_guard(state, action)
     # 【规则3】下注额限制（第三优先级）：注额分级上限由 _normalize 统一执行
     action = _bet_cap_guard(state, action)
     # 【规则13·2026-09-10 用户规则】好牌激进打法：主动下注 ≥2000（不超 3000）。
@@ -2021,11 +2041,8 @@ def decide(state, model, ctx=None):
     # 对手 raise 到 3000+ 我方反而弃牌错失价值；主动打 2000~3000 把底池做大，
     # 对手跟注即锁定价值、对手强 raise 也能靠坚果（≥三条）继续。
     action = _aggressive_strong_bet(state, action)
-    # 【2026-09-04 用户规则·通用禁弃】弃牌后若 lead_after_fold ≤ 0（弃牌让
-    # 我方不再领先 → 对手反而锁赢或被甩开差距）→ 强制不弃：check/call/allin。
-    # 任何局数生效（最后手被 lead_after ≤ 0 自然覆盖）。doom 入口先返回
-    # allin 不冲突本规则。
-    action = _last_hand_no_fold(state, action)
+    # 【2026-09-10】禁弃兜底已上移并入「规则2·尾段守卫」_lock_win_tail_guard，
+    # 此处不再重复调用（避免同一规则两处执行）。
     return _normalize(state, action)
 
 
