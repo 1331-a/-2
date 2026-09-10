@@ -151,7 +151,11 @@ def _handle_line(obj):
                 ctx = MatchContext.from_dict(model.ctx_dict)
                 ctx.update(state)
                 ctx.sync_baseline(state)
-                action = decide(state, model, ctx)
+                # 【决策日志】默认开启（写 stderr，不影响 stdout 协议）；
+                # 可用环境变量 WB_POKER_DEBUG=0 关闭
+                import os as _os
+                _dbg = _os.environ.get("WB_POKER_DEBUG", "1") != "0"
+                action = decide(state, model, ctx, debug=_dbg)
                 resp = _to_response(action)
                 resp = _final_guard(state, resp)
                 model.ctx_dict = ctx.to_dict()

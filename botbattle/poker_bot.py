@@ -2014,7 +2014,7 @@ def _aggressive_strong_bet(state, action):
         return action
 
 
-def decide(state, model, ctx=None, debug=False):
+def _decide_impl(state, model, ctx=None, debug=False):
     """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
 
     ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
@@ -3289,7 +3289,11 @@ class DecisionLogger:
         if len(cls._records) > 200:
             cls._records = cls._records[-200:]
         try:
-            print("[DECISION] %s" % rec, flush=True)   # 输出到平台日志
+            # 【关键】输出到 stderr——botzone 用 stdout 做协议（逐行 JSON 请求/
+            # 响应），往 stdout 打日志会破坏协议导致非法动作/判负。
+            import sys
+            sys.stderr.write("[DECISION] %s\n" % rec)
+            sys.stderr.flush()
         except Exception:
             pass
 
@@ -3943,6 +3947,40 @@ def _last_hand_no_fold(state, action):
 
 
 # ---------------- 合法性安全程序（不变，最后防线） ----------------
+def decide(state, model, ctx=None, debug=False):
+    """对外入口：包装 _decide_impl，统一记录决策日志（覆盖全部 return 路径）。
+
+    debug=True 或环境变量 WB_POKER_DEBUG=1 → 日志写 stderr（botzone 用
+    stdout 做协议，不能污染）。用包装而非散点记录，保证任何早 return
+    （锁赢/禁弃/翻前全下等）都有日志。
+    """
+    try:
+        import os
+        DecisionLogger.enable(debug or os.environ.get("WB_POKER_DEBUG") == "1")
+    except Exception:
+        DecisionLogger.enable(debug)
+    action = _decide_impl(state, model, ctx, debug=debug)
+    try:
+        _cat = "?"
+        _adj = "?"
+        try:
+            _cat = _effective_category(state)
+        except Exception:
+            pass
+        try:
+            _adj = _match_adjust(state)
+        except Exception:
+            pass
+        DecisionLogger.log(
+            state.hand_num, state.stage, state.pot, "final",
+            str(action.get("act")),
+            "cat=%s adj=%s num=%s to_call=%s pot=%s" % (
+                _cat, _adj, action.get("num"), state.to_call, state.pot))
+    except Exception:
+        pass
+    return action
+
+
 def _normalize(state, action):
     """
     防止非法操作触发的最终安全程序。
@@ -4234,7 +4272,11 @@ def _handle_line(obj):
                 ctx = MatchContext.from_dict(model.ctx_dict)
                 ctx.update(state)
                 ctx.sync_baseline(state)
-                action = decide(state, model, ctx)
+                # 【决策日志】默认开启（写 stderr，不影响 stdout 协议）；
+                # 可用环境变量 WB_POKER_DEBUG=0 关闭
+                import os as _os
+                _dbg = _os.environ.get("WB_POKER_DEBUG", "1") != "0"
+                action = decide(state, model, ctx, debug=_dbg)
                 resp = _to_response(action)
                 resp = _final_guard(state, resp)
                 model.ctx_dict = ctx.to_dict()
