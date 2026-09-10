@@ -14,7 +14,10 @@
        python view_log.py payload.json --hand 12 15 30
   4) payload 自检（确认 id 基准/字段完整性，换新对局后先跑这个）：
        python view_log.py payload.json --check
-  5) **BotBattle 对局日志**（记录/botbattle-*.json，事件流格式，自动识别）：
+  5) **导出记事本**（.txt 存到 记录/日志文本/，便于存档/分享）：
+       python view_log.py payload.json --txt            # 自动命名
+       python view_log.py payload.json --txt out.txt    # 指定文件名
+  6) **BotBattle 对局日志**（记录/botbattle-*.json，事件流格式，自动识别）：
        python view_log.py botbattle-holdem-20260910200423-052a67b5-log.json
        python view_log.py <日志名> --seat 0        # 指定我方座位（默认 0）
        python view_log.py <日志名> --hand 61       # 只看第 61 手
@@ -127,6 +130,8 @@ def main():
                     help="只做 payload 自检（id 基准/字段完整性），不跑决策")
     ap.add_argument("--seat", type=int, default=0,
                     help="BotBattle 日志：我方座位号（0/1，默认 0）")
+    ap.add_argument("--txt", nargs="?", const="__auto__", default=None,
+                    help="导出记事本 .txt（默认存 记录/日志文本/ 自动命名）")
     args = ap.parse_args()
 
     metas = [None] * len(DEMO_REQUESTS)
@@ -173,9 +178,15 @@ def main():
         return 0
 
     DecisionLogger.enable(True)     # 打开日志
-    print("=" * 72)
-    print("决策日志（rule=命中规则, action=最终动作, detail=牌型/赛制档/注额）")
-    print("=" * 72)
+    _lines = []                     # 收集用于导出记事本
+
+    def emit(t=""):
+        print(t)
+        _lines.append(t)
+
+    emit("=" * 72)
+    emit("决策日志（rule=命中规则, action=最终动作, detail=牌型/赛制档/注额）")
+    emit("=" * 72)
 
     for i, req in enumerate(requests):
         try:
@@ -189,19 +200,81 @@ def main():
                 ctx.sync_baseline(state)
             except Exception:
                 pass
+            _before = len(DecisionLogger.records())
             action = decide(state, model, ctx, debug=True)
+            recs_holder = DecisionLogger.records()[_before:]
             _m = metas[i] if (metas and i < len(metas) and metas[i]) else {}
-            print("→ 第%d手 %s 底池=%d 动作=%s%s" %
-                  (state.hand_num, state.stage, state.pot, action,
-                   ("  [日志: 街=%s 座位=%s chips=%s]" % (
-                       _m.get("street"), _m.get("dealer"), _m.get("chips")))
-                   if _m else ""))
+            # 可读牌面 + 历史动作对比
+            try:
+                from botbattle_log import platform_to_card
+                _hole = " ".join(platform_to_card(c - 8)
+                                 for c in (state.hole or []))
+                _board = " ".join(platform_to_card(c - 8)
+                                  for c in (state.board or [])) or "-"
+            except Exception:
+                _hole, _board = "?", "?"
+            _rp = "%s%s" % (action.get("act"),
+                            (" %s" % action.get("num")) if action.get("num") else "")
+            _hist = (_m or {}).get("actual")
+            _diff = ""
+            if _hist:
+                _parts = str(_hist).split()
+                _hm = _parts[0]
+                _ha = _parts[1] if len(_parts) > 1 else ""
+                _ma = str(action.get("num") or "")
+                if _hm != action.get("act"):
+                    _diff = "   ⚠ 动作不同"
+                elif _hm in ("raise", "allin") and _ha and _ma and _ha != _ma:
+                    _diff = "   ~ 尺寸不同(%s vs %s)" % (_hist, _ma)
+                else:
+                    _diff = "   (=历史)"
+            emit("第 %-3s手 %-7s 底池=%-6d 我:%-8s 公面:%-14s" %
+                 (state.hand_num, state.stage, state.pot, _hole, _board))
+            emit("     重放: %-14s%s" % (_rp, _diff))
+            if _hist:
+                emit("     历史: %s" % _hist)
+            if recs_holder:
+                for r in recs_holder[-1:]:
+                    emit("     依据: rule=%s detail=%s" % (r.get("rule"), r.get("detail")))
+            emit("")
         except Exception as e:
-            print("!! 第%s手处理失败: %s" % (req.get("hand"), e))
+            emit("!! 第%s手处理失败: %s" % (req.get("hand"), e))
 
-    print("=" * 72)
+    emit("=" * 72)
     recs = DecisionLogger.records()
-    print("共 %d 条日志" % len(recs))
+    emit("共 %d 条日志" % len(recs))
+
+    # ---- 导出记事本 .txt ----
+    if args.txt is not None:
+        import datetime
+        out_dir = os.path.join("记录", "日志文本")
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            pass
+        if args.txt == "__auto__":
+            base = os.path.basename(args.payload or "demo")
+            base = os.path.splitext(base)[0]
+            fname = "%s-决策日志.txt" % base
+        else:
+            fname = args.txt
+        out_path = fname if os.path.isabs(fname) else os.path.join(out_dir, fname)
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("决策日志 — %s\n" % (args.payload or "演示"))
+                f.write("生成时间: %s | 我方座位: %s\n"
+                        % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                           args.seat))
+                f.write("\n".join(_lines))
+                f.write("\n")
+                if recs:
+                    f.write("\n--- 结构化明细 (JSON) ---\n")
+                    for r in recs:
+                        f.write(json.dumps(r, ensure_ascii=False) + "\n")
+            print("已导出记事本: %s" % out_path)
+        except Exception as e:
+            print("导出失败: %s" % e)
+
     if args.json_out:
         ok = DecisionLogger.dump(args.json_out)
         print("已写入 %s: %s" % (args.json_out, ok))

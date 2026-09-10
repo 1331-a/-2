@@ -49,6 +49,19 @@ def _action_to_history(ev, street):
             "action": a, "action_type": at}
 
 
+_RANK_STR = "23456789TJQKA"
+_SUIT_STR = "cdhs"
+
+
+def platform_to_card(n):
+    """platform 整数（0-51）→ 可读牌面（'4c'）。"""
+    try:
+        n = int(n)
+        return _RANK_STR[(n // 4) % 13] + _SUIT_STR[n % 4]
+    except Exception:
+        return "??"
+
+
 def load_botbattle(path, my_seat=0, use_hand=None):
     """把 BotBattle 日志转成 request 列表（每个我方决策点一条）。
 
@@ -111,10 +124,17 @@ def load_botbattle(path, my_seat=0, use_hand=None):
                         "total_win_chips": total_win[:],
                         "total_win_games": [0, 0],
                     }
+                    # 真实动作（用于与重放决策对比）
+                    _act = str(ev.get("action", ""))
+                    _amt = int(ev.get("amount", 0) or 0)
+                    _actual = ("%s %d" % (_act, _amt)) if _amt else _act
                     out.append((req, {"hand": (hand_idx or 0) + 1,
                                       "street": street,
                                       "chips": chips[:],
-                                      "dealer": dealer}))
+                                      "dealer": dealer,
+                                      "actual": _actual,
+                                      "hole": list((holes or [[], []])[my_seat]),
+                                      "board": list(board)}))
                 amt = int(ev.get("amount", 0) or 0)
                 # amount = 本轮累计总注额（含盲注）→ 减掉盲注才是「后续投入」
                 _blind = 50 if dealer == my_seat else 100

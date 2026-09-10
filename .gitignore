@@ -1,19 +1,5 @@
-# Python
-__pycache__/
+# 运行时产物（日志/ELF/缓存）不进版本库
+内容/记录/日志文本/
+内容/记录/*.txt
 *.pyc
-
-# WorkBuddy 项目记忆（个人笔记，不必上传）
-.workbuddy/
-
-# 构建产物
-botbattle/dist/
-botbattle/build/
-*.spec
-
-# 下载/生成的二进制提交包（避免误提交到 GitHub）
-poker_bot-linux-x86_64.zip
-BotBattle提交_poker_bot.zip
-
-# 系统文件
-Thumbs.db
-.DS_Store
+__pycache__/

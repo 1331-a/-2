@@ -33,6 +33,8 @@ def main():
     ap = argparse.ArgumentParser(description="锁赢/防锁赢审计")
     ap.add_argument("payload", help="对局日志 JSON（botzone 或 BotBattle）")
     ap.add_argument("--seat", type=int, default=0, help="BotBattle: 我方座位")
+    ap.add_argument("--txt", nargs="?", const="__auto__", default=None,
+                    help="导出记事本 .txt 到 记录/日志文本/")
     args = ap.parse_args()
 
     for cand in (args.payload, os.path.join("记录", args.payload)):
@@ -79,19 +81,51 @@ def main():
             odd.append(("领先allin%s" % ("(防锁赢OK)" if _ok else "(⚠无依据)"),
                         tag, st.to_call, lead, is_lock))
 
-    print("=" * 74)
-    print("决策点总数: %d" % len(reqs))
-    print("-" * 74)
-    print("【锁赢点】共 %d 个（判定锁赢 → 应 fold）" % len(lock_pts))
+    _lines = []
+
+    def emit(t=""):
+        print(t)
+        _lines.append(t)
+
+    emit("=" * 74)
+    emit("决策点总数: %d" % len(reqs))
+    emit("-" * 74)
+    emit("【锁赢点】共 %d 个（判定锁赢 → 应 fold）" % len(lock_pts))
     for t, lead, thr, act in lock_pts:
         flag = "✓" if act == "fold" else "⚠ 未弃牌"
-        print("  %s lead=%d > 门槛=%d → 决策=%s %s" % (t, lead, thr, act, flag))
-    print("  锁赢判定正确率: %d/%d" % (len(lock_pts) - len(lock_bad), len(lock_pts)))
-    print("-" * 74)
-    print("【可疑决策】共 %d 条（多为弱牌正常弃 / 防锁赢正确触发）" % len(odd))
+        emit("  %s lead=%d > 门槛=%d → 决策=%s %s" % (t, lead, thr, act, flag))
+    emit("  锁赢判定正确率: %d/%d" % (len(lock_pts) - len(lock_bad), len(lock_pts)))
+    emit("-" * 74)
+    emit("【可疑决策】共 %d 条（多为弱牌正常弃 / 防锁赢正确触发）" % len(odd))
     for kind, t, tc, lead, lock in odd:
-        print("  %s: %s to_call=%s lead=%d 锁赢=%s" % (kind, t, tc, lead, lock))
-    print("=" * 74)
+        emit("  %s: %s to_call=%s lead=%d 锁赢=%s" % (kind, t, tc, lead, lock))
+    emit("=" * 74)
+
+    if args.txt is not None:
+        import datetime
+        out_dir = os.path.join("记录", "日志文本")
+        try:
+            os.makedirs(out_dir, exist_ok=True)
+        except Exception:
+            pass
+        if args.txt == "__auto__":
+            base = os.path.splitext(os.path.basename(path))[0]
+            fname = "%s-锁赢审计.txt" % base
+        else:
+            fname = args.txt
+        out_path = fname if os.path.isabs(fname) else os.path.join(out_dir, fname)
+        try:
+            with open(out_path, "w", encoding="utf-8") as f:
+                f.write("锁赢/防锁赢审计 — " + path + "\n")
+                f.write("生成时间: %s | 我方座位: %s\n"
+                        % (datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                           args.seat))
+                f.write("\n".join(_lines))
+                f.write("\n")
+            print("已导出记事本: %s" % out_path)
+        except Exception as e:
+            print("导出失败: %s" % e)
+
     if lock_bad:
         print("⚠ 发现 %d 个锁赢未弃牌异常！" % len(lock_bad))
         return 2
