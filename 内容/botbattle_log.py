@@ -19,7 +19,10 @@ import json
 _RANK = {'2': 0, '3': 1, '4': 2, '5': 3, '6': 4, '7': 5, '8': 6, '9': 7,
          'T': 8, 'J': 9, 'Q': 10, 'K': 11, 'A': 12}
 _SUIT = {'c': 0, 'd': 1, 'h': 2, 's': 3}
-_STREET_ROUND = {"preflop": 1, "flop": 2, "turn": 3, "river": 4}
+# 【2026-09-10 修正】round 必须 0-based（0=翻前 1=翻牌 2=转牌 3=河牌）——
+# 原写成 1-based 导致重放时「翻前动作」被 game_state 当成翻牌街，
+# 对手统计(VPIP/PFR)全为 0、牌型判定与街级逻辑全错位。
+_STREET_ROUND = {"preflop": 0, "flop": 1, "turn": 2, "river": 3}
 
 
 def card_to_platform(s):
@@ -50,7 +53,7 @@ def _action_to_history(ev, street):
 
 
 _RANK_STR = "23456789TJQKA"
-_SUIT_STR = "cdhs"
+_SUIT_STR = "\u2663\u2666\u2665\u2660"
 
 
 def platform_to_card(n):

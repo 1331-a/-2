@@ -591,11 +591,14 @@ def _decide_impl(state, model, ctx=None, debug=False):
     if _lw is not None:
         if _lw.get("act") == "allin" and _decision_timed_out():
             DecisionLogger.log(state.hand_num, state.stage, state.pot,
-                               "lock_win(timeout)", "fold")
+                               "lock_win(timeout)", "fold",
+                               block=False, record=False)
             return {"act": "fold"}
         _tag = "lock_win:allin" if _lw.get("act") == "allin" else "lock_win:fold"
         DecisionLogger.log(state.hand_num, state.stage, state.pot, _tag,
-                           str(_lw.get("act")), "A=doom B=foldout C=profitlock")
+                           str(_lw.get("act")),
+                           "A=doom B=foldout C=profitlock",
+                           block=False, record=False)
         return _lw
 
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
@@ -1742,6 +1745,7 @@ class BetPatternDetector:
 
     def __init__(self):
         self.bprs = []            # 历史 (bet/pot) 样本
+        self.sizes = []           # 【2026-09-10】历史下注金额（判断「常用尺度」）
         self.prior_std = 0.20     # 先验标准差（混合型）
         self.prior_weight = 5     # 先验权重
 
@@ -1751,6 +1755,10 @@ class BetPatternDetector:
                 self.bprs.append(float(bet) / float(pot))
                 if len(self.bprs) > 40:            # 只留最近 40 个
                     self.bprs = self.bprs[-40:]
+            if bet and bet > 0:
+                self.sizes.append(int(bet))
+                if len(self.sizes) > 40:
+                    self.sizes = self.sizes[-40:]
         except Exception:
             pass
 
@@ -1790,8 +1798,26 @@ class BetPatternDetector:
             return "medium"
         return "unknown"
 
+    def main_size(self):
+        """对手最常用的下注金额（数值型对手的核心信息）。0 = 样本不足。"""
+        try:
+            if not self.sizes:
+                return 0
+            from collections import Counter
+            c = Counter()
+            for x in self.sizes:
+                step = 100 if x < 5000 else 500
+                c[int(round(float(x) / step) * step)] += 1
+            return c.most_common(1)[0][0]
+        except Exception:
+            return 0
+
+    def last_size(self):
+        return self.sizes[-1] if self.sizes else 0
+
     def to_json(self):
-        return {"bprs": self.bprs[-40:], "prior_std": self.prior_std,
+        return {"bprs": self.bprs[-40:], "sizes": self.sizes[-40:],
+                "prior_std": self.prior_std,
                 "prior_weight": self.prior_weight}
 
     @classmethod
@@ -1799,6 +1825,7 @@ class BetPatternDetector:
         obj = cls()
         try:
             obj.bprs = list(d.get("bprs") or [])
+            obj.sizes = [int(x) for x in (d.get("sizes") or [])]
             obj.prior_std = float(d.get("prior_std", 0.20))
             obj.prior_weight = int(d.get("prior_weight", 5))
         except Exception:
@@ -1806,36 +1833,386 @@ class BetPatternDetector:
         return obj
 
 
-class DecisionLogger:
-    """【2026-09-10 新增】决策归因日志。
+# ---- 牌面显示（日志用）--------------------------------------------------
+_RANK_STR = "23456789TJQKA"
+_SUIT_STR = "\u2663\u2666\u2665\u2660"           # 平台码 -8 后：0=♣ 1=♦ 2=♥ 3=♠
 
-    botzone 沙箱**不能写文件**，因此默认输出到 stdout（平台对局日志可查）；
-    本地调试时可 dump 到 JSON 文件。只记录「命中的规则」，不记录牌面细节。
-    开关：decide(..., debug=True) 或环境变量 WB_POKER_DEBUG=1。
+
+def _fmt_card(n):
+    """平台牌号(0~51) → 可读牌面（如 34 → 8♥）。"""
+    try:
+        n = int(n) - 8
+        return _RANK_STR[(n // 4) % 13] + _SUIT_STR[n % 4]
+    except Exception:
+        return "??"
+
+
+_CAT_NAMES = {0: "高牌", 1: "一对", 2: "两对", 3: "三条", 4: "顺子",
+              5: "同花", 6: "葫芦", 7: "四条", 8: "同花顺", 9: "皇家同花顺"}
+
+
+def explain(state, model, ctx=None, with_eq=True):
+    """【2026-09-10 新增】决策上下文快照（日志 / 复盘用），不参与任何决策。
+
+    返回三段（缺项则缺键，调用方需容错）：
+      lock : 锁赢状态（领先差 lead / 锁赢线 line / 进度 / 位置）
+      opp  : 对手画像（原型 + VPIP/PFR/弃牌率/过牌后弃牌率/过牌-加注/下注模式）
+      hand : 本手牌力（底牌 / 公面 / 牌型 / 蒙特卡洛胜率 / 需跟额）
+    """
+    info = {}
+    # ---------------- 锁赢状态 ----------------
+    try:
+        hands_left = max(int(state.max_hand) - int(state.hand_num), 0)
+        my_total = int(state.total_win_chips[state.my_id])
+        opp_total = int(state.total_win_chips[state.opp_id])
+        lead = my_total - opp_total
+        invested = INIT_CHIPS - int(state.my_chips)
+        line = 2 * (_blind_line(state, hands_left, own=True) + invested)
+        if lead > line:
+            status = "\u2705 已锁赢"
+        elif lead > 0:
+            status = "\u26a0\ufe0f 差 %d" % (line - lead)
+        else:
+            status = "\u274c 未锁赢"
+        info["lock"] = {
+            "position": "\u5c0f\u76f2" if state.my_id == state.dealer_id else "\u5927\u76f2",
+            "my_total": my_total, "opp_total": opp_total,
+            "lead": lead, "line": line, "invested": invested,
+            "hands_left": hands_left, "status": status,
+            "progress": (max(0.0, min(1.0, float(lead) / line))
+                          if line > 0 else (1.0 if lead > 0 else 0.0)),
+            "doomed": False,
+        }
+        try:
+            info["lock"]["doomed"] = (_match_adjust(state) == "doomed")
+        except Exception:
+            pass
+    except Exception:
+        pass
+    # ---------------- 对手画像 ----------------
+    try:
+        bp = getattr(model, "bet_pattern", None)
+        try:
+            main_size = bp.main_size() if bp is not None else 0
+        except Exception:
+            main_size = 0
+        try:
+            pattern = bp.get_pattern() if bp is not None else "unknown"
+        except Exception:
+            pattern = "unknown"
+        try:
+            check_fold = round(model.check_fold_rate(), 2)
+            check_raise = round(model.check_raise_rate(), 2)
+        except Exception:
+            check_fold, check_raise = 0.55, 0.10
+        info["opp"] = {
+            "type": model.archetype(),
+            "vpip": round(model.eff_vpip(), 2),
+            "pfr": round(model.eff_pfr(), 2),
+            "fold_to_bet": round(model.eff_fold_to_bet(), 2),
+            "check_fold": check_fold,
+            "check_raise": check_raise,
+            "big_raise": round(model.eff_big_raise(), 2),
+            "bet_freq": round(model.eff_bet_freq(), 2),
+            "pattern": pattern,
+            "main_size": main_size,
+            "hands": int(getattr(model, "hands_seen", 0) or 0),
+        }
+    except Exception:
+        pass
+    # ---------------- 本手牌力 ----------------
+    try:
+        cat = _effective_category(state)
+        hole = " ".join(_fmt_card(c) for c in (state.hole or [])) or "-"
+        board = " ".join(_fmt_card(c) for c in (state.board or [])) or "-"
+        eq = None
+        _eq_on = True
+        try:
+            import os as _os
+            _eq_on = _os.environ.get("WB_POKER_LOG_EQ", "1") != "0"
+        except Exception:
+            pass
+        if with_eq and _eq_on and len(state.board) >= 3 and state.hole:
+            try:
+                eq = monte_carlo_equity(state.hole, state.board, iterations=100)
+            except Exception:
+                eq = None
+        info["hand"] = {
+            "hole": hole, "board": board, "cat": cat,
+            "cat_name": _CAT_NAMES.get(cat, str(cat)),
+            "eq": (round(eq, 2) if eq is not None else "?"),
+            "to_call": int(state.to_call), "pot": int(state.pot),
+            "street": state.stage,
+        }
+    except Exception:
+        pass
+    return info
+
+
+def _candidate_rules(state, model, cat=None):
+    """列出当前局面上「会命中」的规则（日志归因 / 规则健康度统计用）。
+
+    只判断「会不会触发」，不改变决策、不产生随机副作用之外的写入。
+    返回 [{name, act, suggest}]（按实际决策优先级排列）。
+    """
+    out = []
+
+    def add(name, act, suggest=None):
+        out.append({"name": name, "act": act, "suggest": suggest or act})
+
+    try:
+        lk = _lock_win_unified(state)
+        if lk:
+            add("\u89c4\u52192 \u9501\u8d62/\u9632\u9501\u8d62",
+                lk.get("act"), "allin" if lk.get("act") == "allin" else "fold \u9501\u80dc")
+    except Exception:
+        pass
+    try:
+        if _stability_mode(state, model):
+            add("\u89c4\u521910 \u6c42\u7a33", "check", "check(\u4e0d\u4e3b\u52a8\u4e0b\u6ce8)")
+    except Exception:
+        pass
+    try:
+        if _flush_threat(state):
+            add("\u89c4\u521911 \u540c\u82b1\u5a01\u80c1", "fold",
+                "fold(\u624b\u724c\u540c\u82b1\u4e0d\u8db3)")
+    except Exception:
+        pass
+    try:
+        if _opp_checked_this_round(state):
+            w = 1.0
+            try:
+                w = _check_bet_weight(state, model)
+            except Exception:
+                pass
+            add("\u89c4\u521912 \u8fc7\u724c\u540e\u5c0f\u6ce8", "raise",
+                "raise(\u6743\u91cd%.2f, 30~45%%\u6c60)" % w)
+    except Exception:
+        pass
+    try:
+        lb = _lead_bet_proxy(state, model, cat)
+        if lb is not None:
+            add("\u89c4\u521912 \u5148\u624blead", lb.get("act"), "raise 1/3\u6c60")
+    except Exception:
+        pass
+    try:
+        bb = _blocking_bet_proxy(state, model, cat)
+        if bb is not None:
+            add("\u89c4\u52198 \u963b\u9694\u4e0b\u6ce8", bb.get("act"), "raise 1/3\u6c60")
+    except Exception:
+        pass
+    try:
+        pb = _probe_bet_proxy(state)
+        if pb is not None:
+            add("\u89c4\u52199 \u8f7b\u63a2\u6d4b", pb.get("act"), "raise \u63a2\u6d4b")
+    except Exception:
+        pass
+    try:
+        if cat is not None and cat >= TWO_PAIR and state.stage != "preflop":
+            add("\u89c4\u521913 \u5f3a\u724c\u6fc0\u8fdb", "raise",
+                "raise \u2265%d" % GOOD_BET_MIN)
+    except Exception:
+        pass
+    return out
+
+
+def _winning_rule(cands, action):
+    """按优先级挑出与最终动作匹配的规则名（日志归因）。"""
+    try:
+        act = action.get("act")
+        for c in (cands or []):
+            if c.get("act") == act:
+                return c.get("name")
+        if act == "fold":
+            return "\u89c4\u52191/4 \u5927\u6ce8\u5f03\u724c"
+        if act in ("check", "call"):
+            return "\u5e38\u89c4\u7b56\u7565(\u8fc7/\u8ddf)"
+    except Exception:
+        pass
+    return "\u5e38\u89c4\u7b56\u7565"
+
+
+class DecisionLogger:
+    """【2026-09-10 v2】决策日志——目标：每手 3 秒看懂「该保守还是激进」。
+
+    每手输出：
+      1. 锁赢状态（领先差 / 锁赢线 / 进度条 / 是否已锁赢）
+      2. 对手画像（原型 + 关键频率 + 下注模式 + 常用尺度）
+      3. 本手牌力（底牌 / 公面 / 牌型 / 胜率 / 需跟额）
+      4. 候选规则 + 最终动作 + 采纳的规则
+      每 10 手额外输出「规则健康度」（触发 / 采纳 / EV / 评价）。
+
+    沙箱不能写文件 → 输出 stderr（botzone 用 stdout 做协议，绝不可污染）。
+    开关：decide(debug=True) 或 环境变量 WB_POKER_DEBUG=1。
     """
 
     _enabled = False
+    _quiet = False          # True = 只记录不打印（本地渲染工具复用决策逻辑时）
     _records = []
+    _hand_results = {}      # hand -> 该手领先差变化（= 2 × 筹码盈亏）
+    _last_state = None      # (hand, lead)
+    _last_health_hand = 0
 
     @classmethod
     def enable(cls, on=True):
         cls._enabled = bool(on)
 
     @classmethod
-    def log(cls, hand, street, pot, rule, action, detail=""):
+    def reset(cls):
+        cls._records = []
+        cls._hand_results = {}
+        cls._last_state = None
+        cls._last_health_hand = 0
+
+    # ---- 按手登记结果（供规则健康度算 EV）----
+    @classmethod
+    def note_state(cls, state):
         if not cls._enabled:
             return
-        rec = {"hand": hand, "street": street, "pot": pot,
-               "rule": rule, "action": action, "detail": detail}
-        cls._records.append(rec)
-        if len(cls._records) > 200:
-            cls._records = cls._records[-200:]
         try:
-            # 【关键】输出到 stderr——botzone 用 stdout 做协议（逐行 JSON 请求/
-            # 响应），往 stdout 打日志会破坏协议导致非法动作/判负。
+            lead = (int(state.total_win_chips[state.my_id])
+                    - int(state.total_win_chips[state.opp_id]))
+            if cls._last_state is not None:
+                ph, plead = cls._last_state
+                if state.hand_num != ph:
+                    cls._hand_results[ph] = lead - plead
+            cls._last_state = (state.hand_num, lead)
+        except Exception:
+            pass
+
+    # ---- 进度条 ----
+    @staticmethod
+    def progress_bar(frac, width=10):
+        try:
+            frac = max(0.0, min(1.0, float(frac)))
+            n = int(round(frac * width))
+            return "[" + "\u2588" * n + "\u2591" * (width - n) + "] %d%%" % int(round(frac * 100))
+        except Exception:
+            return "[" + "\u2591" * 10 + "] 0%"
+
+    # ---- 单条决策块 ----
+    @classmethod
+    def render_block(cls, rec):
+        i = rec.get("info") or {}
+        out = []
+        lk = i.get("lock") or {}
+        if lk:
+            out.append("=" * 68)
+            out.append("[H%s] %s | 我 %+d | 对手 %+d | 领先差 %d | 锁赢线 %d | %s"
+                       % (rec.get("hand"), lk.get("position", ""),
+                          lk.get("my_total", 0), lk.get("opp_total", 0),
+                          lk.get("lead", 0), lk.get("line", 0),
+                          lk.get("status", "")))
+            out.append("\u9501\u8d62\u8fdb\u5ea6: %s%s  (lead %d / line %d)"
+                       % (cls.progress_bar(lk.get("progress", 0)),
+                          "  \U0001f512\u5df2\u9501\u5b9a" if lk.get("lead", 0) > lk.get("line", 0) else "",
+                          lk.get("lead", 0), lk.get("line", 0)))
+        op = i.get("opp") or {}
+        if op:
+            out.append("[\u5bf9\u624b] %s | VPIP %.2f | PFR %.2f | \u5f03\u724c\u7387 %.2f"
+                       % (op.get("type"), op.get("vpip", 0), op.get("pfr", 0),
+                          op.get("fold_to_bet", 0)))
+            out.append("        \u8fc7\u724c\u540e\u5f03\u724c\u7387 %.2f | \u8fc7\u724c-\u52a0\u6ce8 %.2f | \u5927\u6ce8\u7387 %.2f | \u6837\u672c %d\u624b"
+                       % (op.get("check_fold", 0), op.get("check_raise", 0),
+                          op.get("big_raise", 0), op.get("hands", 0)))
+            out.append("       \u4e0b\u6ce8\u6a21\u5f0f: %s | \u5e38\u7528\u5c3a\u5bf8: %d"
+                       % (op.get("pattern"), op.get("main_size", 0)))
+        hm = i.get("hand") or {}
+        if hm:
+            out.append("[\u672c\u624b] %s | \u5e95\u6c60 %d | %s | %s | \u80dc\u7387 %s%s"
+                       % (rec.get("street"), rec.get("pot", 0), hm.get("hole", "?"),
+                          hm.get("cat_name", "?"), hm.get("eq", "?"),
+                          (" | \u9700\u8ddf %d" % hm.get("to_call"))
+                          if hm.get("to_call") else ""))
+        cs = rec.get("cands") or []
+        if cs:
+            out.append("       \u5019\u9009\u89c4\u5219:")
+            for c in cs[:6]:
+                out.append("         - %s: %s" % (c.get("name"), c.get("suggest")))
+        out.append("       \u6700\u7ec8: %s %s | \u91c7\u7eb3: %s"
+                   % (rec.get("action"), rec.get("detail") or "", rec.get("rule")))
+        return out
+
+    @classmethod
+    def log(cls, hand, street, pot, rule, action, detail="",
+            info=None, cands=None, block=True, record=True):
+        if not cls._enabled:
+            return
+        if not record:
+            return
+        rec = {"hand": hand, "street": street, "pot": pot,
+               "rule": rule, "action": action, "detail": detail,
+               "info": info or {}, "cands": cands or []}
+        cls._records.append(rec)
+        if len(cls._records) > 4000:
+            cls._records = cls._records[-4000:]
+        if not block or cls._quiet:
+            return
+        try:
             import sys
-            sys.stderr.write("[DECISION] %s\n" % rec)
+            for ln in cls.render_block(rec):
+                sys.stderr.write(ln + "\n")
             sys.stderr.flush()
+        except Exception:
+            pass
+
+    # ---- 规则健康度（每 10 手 / 全局）----
+    @classmethod
+    def _rule_health(cls):
+        trig, adopt, hands = {}, {}, {}
+        for r in cls._records:
+            for c in (r.get("cands") or []):
+                n = c.get("name")
+                if n:
+                    trig[n] = trig.get(n, 0) + 1
+            n = r.get("rule")
+            if n and (r.get("cands") or []):
+                adopt[n] = adopt.get(n, 0) + 1
+                hands.setdefault(n, set()).add(r.get("hand"))
+        rows = []
+        for n in sorted(trig, key=lambda x: -trig[x]):
+            tg = trig.get(n, 0)
+            ad = adopt.get(n, 0)
+            ev = sum(cls._hand_results.get(h, 0) for h in hands.get(n, ()))
+            rows.append((n, tg, ad, ev))
+        return rows
+
+    @classmethod
+    def health_lines(cls, period=None):
+        rows = cls._rule_health()
+        if not rows:
+            return []
+        out = ["-" * 68,
+               "[\u89c4\u5219\u5065\u5eb7\u5ea6%s]" % ((" " + period) if period else "")]
+        for n, tg, ad, ev in rows[:12]:
+            rate = (float(ad) / tg) if tg else 0.0
+            if tg >= 3 and ev < 0:
+                mark = "\u274c \u6dfb\u5835"
+            elif tg >= 5 and rate < 0.5:
+                mark = "\u26a0\ufe0f \u88ab\u8986\u76d6\u591a"
+            elif tg >= 5 and ev > 0:
+                mark = "\u2705"
+            elif tg < 3:
+                mark = "\U0001f4a4 \u4f11\u7720"
+            else:
+                mark = "\u00b7"
+            out.append("%-18s \u89e6\u53d1%3d \u91c7\u7eb3%3d \u91c7\u7eb3\u7387%3.0f%% EV%+7d  %s"
+                       % (n, tg, ad, rate * 100, ev, mark))
+        return out
+
+    @classmethod
+    def maybe_health(cls, state):
+        """每 10 手输出一次规则健康度（自动调用）。"""
+        if not cls._enabled or cls._quiet:
+            return
+        try:
+            h = int(state.hand_num)
+            if h % 10 == 0 and h != cls._last_health_hand:
+                cls._last_health_hand = h
+                import sys
+                for ln in cls.health_lines("H%d-%d" % (max(h - 9, 1), h)):
+                    sys.stderr.write(ln + "\n")
+                sys.stderr.flush()
         except Exception:
             pass
 
@@ -1843,7 +2220,7 @@ class DecisionLogger:
     def dump(cls, path):
         try:
             import json
-            with open(path, "w") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 json.dump(cls._records, f, indent=2, ensure_ascii=False)
             return True
         except Exception:
@@ -2490,6 +2867,13 @@ def _last_hand_no_fold(state, action):
 
 
 # ---------------- 合法性安全程序（不变，最后防线） ----------------
+def _safe_adjust(state):
+    try:
+        return _match_adjust(state)
+    except Exception:
+        return "?"
+
+
 def decide(state, model, ctx=None, debug=False):
     """对外入口：包装 _decide_impl，统一记录决策日志（覆盖全部 return 路径）。
 
@@ -2502,23 +2886,34 @@ def decide(state, model, ctx=None, debug=False):
         DecisionLogger.enable(debug or os.environ.get("WB_POKER_DEBUG") == "1")
     except Exception:
         DecisionLogger.enable(debug)
+    # ---- v2 日志：锁赢状态 / 对手画像 / 牌力 / 候选规则 / 归因 ----
+    try:
+        DecisionLogger.note_state(state)
+    except Exception:
+        pass
     action = _decide_impl(state, model, ctx, debug=debug)
     try:
-        _cat = "?"
-        _adj = "?"
-        try:
-            _cat = _effective_category(state)
-        except Exception:
-            pass
-        try:
-            _adj = _match_adjust(state)
-        except Exception:
-            pass
-        DecisionLogger.log(
-            state.hand_num, state.stage, state.pot, "final",
-            str(action.get("act")),
-            "cat=%s adj=%s num=%s to_call=%s pot=%s" % (
-                _cat, _adj, action.get("num"), state.to_call, state.pot))
+        if DecisionLogger._enabled:
+            _cat = None
+            _eq = None
+            try:
+                _cat = _effective_category(state)
+            except Exception:
+                pass
+            _info = explain(state, model, ctx)
+            try:
+                _eq = (_info.get("hand") or {}).get("eq")
+            except Exception:
+                pass
+            _cands = _candidate_rules(state, model, _cat)
+            _rule = _winning_rule(_cands, action)
+            DecisionLogger.log(
+                state.hand_num, state.stage, state.pot, _rule,
+                str(action.get("act")),
+                "num=%s adj=%s" % (action.get("num"),
+                                   _safe_adjust(state)),
+                info=_info, cands=_cands)
+            DecisionLogger.maybe_health(state)
     except Exception:
         pass
     return action

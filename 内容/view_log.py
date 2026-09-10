@@ -178,28 +178,41 @@ def main():
         return 0
 
     DecisionLogger.enable(True)     # 打开日志
+    DecisionLogger._quiet = True    # 由本工具负责渲染，避免 stderr 重复输出
     _lines = []                     # 收集用于导出记事本
 
     def emit(t=""):
         print(t)
         _lines.append(t)
 
-    emit("=" * 72)
-    emit("决策日志（rule=命中规则, action=最终动作, detail=牌型/赛制档/注额）")
-    emit("=" * 72)
+    emit("=" * 68)
+    emit("\u51b3\u7b56\u65e5\u5fd7 v2 \u2014\u2014 \u9501\u8d62\u72b6\u6001 / \u5bf9\u624b\u753b\u50cf / \u724c\u529b&\u80dc\u7387 / \u5019\u9009\u89c4\u5219 / \u5f52\u56e0")
+    emit("=" * 68)
+    _cur_hand = None
+    _opp_shown_hand = None
+
+    # 【关键】整局共用一个对手模型——每步用当前 request 的 history 增量喂它，
+    # 否则对手画像面板永远是空的（样本 0 手 / unknown）。
+    model = OpponentModel()
+    ctx = MatchContext.from_dict(model.ctx_dict)
 
     for i, req in enumerate(requests):
         try:
             state = parse_request(req)
-            if args.hand and state.hand_num not in args.hand:
-                continue
-            model = OpponentModel()
-            ctx = MatchContext.from_dict(model.ctx_dict)
+            # 【关键】无论是否过滤显示，都必须把每步历史喂给模型/ctx——
+            # 否则 --hand 过滤时模型只见过被过滤的那几步，重放结果会失真。
+            try:
+                from opponent import build_model_from_history
+                build_model_from_history(model, req, state)
+            except Exception:
+                pass
             try:
                 ctx.update(state)
                 ctx.sync_baseline(state)
             except Exception:
                 pass
+            if args.hand and state.hand_num not in args.hand:
+                continue
             _before = len(DecisionLogger.records())
             action = decide(state, model, ctx, debug=True)
             recs_holder = DecisionLogger.records()[_before:]
@@ -228,21 +241,74 @@ def main():
                     _diff = "   ~ 尺寸不同(%s vs %s)" % (_hist, _ma)
                 else:
                     _diff = "   (=历史)"
-            emit("第 %-3s手 %-7s 底池=%-6d 我:%-8s 公面:%-14s" %
-                 (state.hand_num, state.stage, state.pot, _hole, _board))
-            emit("     重放: %-14s%s" % (_rp, _diff))
+            # ---- 富格式：锁赢面板（每手一次）----
+            _info = {}
+            try:
+                from strategy import explain as _explain
+                _info = _explain(state, model, ctx)
+            except Exception:
+                _info = {}
+            _lk = (_info or {}).get("lock") or {}
+            if _lk and state.hand_num != _cur_hand:
+                _cur_hand = state.hand_num
+                emit("=" * 68)
+                emit("[H%s] %s | 我 %+d | 对手 %+d | 领先差 %d | 锁赢线 %d | %s"
+                     % (state.hand_num, _lk.get("position", ""),
+                        _lk.get("my_total", 0), _lk.get("opp_total", 0),
+                        _lk.get("lead", 0), _lk.get("line", 0),
+                        _lk.get("status", "")))
+                try:
+                    from strategy import DecisionLogger as _DL
+                    emit("锁赢进度: %s  (lead %d / line %d)"
+                         % (_DL.progress_bar(_lk.get("progress", 0)),
+                            _lk.get("lead", 0), _lk.get("line", 0)))
+                except Exception:
+                    pass
+            # ---- 对手面板：每 10 手或类型变化时刷新 ----
+            _op = (_info or {}).get("opp") or {}
+            if _op and (state.hand_num % 10 == 1 or _opp_shown_hand is None):
+                _opp_shown_hand = state.hand_num
+                emit("-" * 68)
+                emit("[对手 H%s] %s | VPIP %.2f | PFR %.2f | 弃牌率 %.2f"
+                     % (state.hand_num, _op.get("type"), _op.get("vpip", 0),
+                        _op.get("pfr", 0), _op.get("fold_to_bet", 0)))
+                emit("       过牌后弃牌率 %.2f | 过牌-加注 %.2f | 大注率 %.2f | 样本 %d手"
+                     % (_op.get("check_fold", 0), _op.get("check_raise", 0),
+                        _op.get("big_raise", 0), _op.get("hands", 0)))
+                emit("       下注模式: %s | 常用总注额: %d"
+                     % (_op.get("pattern"), _op.get("main_size", 0)))
+            # ---- 本手决策 ----
+            _hm = (_info or {}).get("hand") or {}
+            emit("[本手] 第%s手 %s 底池=%d 我:%s 公面:%s | %s | 胜率 %s"
+                 % (state.hand_num, state.stage, state.pot, _hole, _board,
+                    _hm.get("cat_name", "?"), _hm.get("eq", "?")))
+            _cands = []
+            try:
+                from strategy import _candidate_rules as _cr
+                _cands = _cr(state, model, _hm.get("cat"))
+            except Exception:
+                _cands = []
+            for _c in _cands[:6]:
+                emit("       候选: %-18s %s" % (_c.get("name"), _c.get("suggest")))
+            emit("       重放: %-14s%s" % (_rp, _diff))
             if _hist:
-                emit("     历史: %s" % _hist)
+                emit("       历史: %s" % _hist)
             if recs_holder:
                 for r in recs_holder[-1:]:
-                    emit("     依据: rule=%s detail=%s" % (r.get("rule"), r.get("detail")))
+                    emit("       采纳: %s" % r.get("rule"))
             emit("")
         except Exception as e:
             emit("!! 第%s手处理失败: %s" % (req.get("hand"), e))
 
-    emit("=" * 72)
+    emit("=" * 68)
     recs = DecisionLogger.records()
     emit("共 %d 条日志" % len(recs))
+    # ---- 规则健康度（全局）----
+    try:
+        for _ln in DecisionLogger.health_lines():
+            emit(_ln)
+    except Exception:
+        pass
 
     # ---- 导出记事本 .txt ----
     if args.txt is not None:
