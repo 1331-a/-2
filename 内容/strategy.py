@@ -817,9 +817,17 @@ def _effective_category(state):
     False 导致不降级。改用「手牌两张是否都未进入最强 5 张组合」——逐一
     21 种 5 张组合穷举找最大，检查最大组合是否完全由 board 构成。
     """
+    # 【2026-09-10 修复】翻前（0~2 张公面）无法评 5 张牌 → 返回 HIGH_CARD。
+    # 原实现在 board 为空时 evaluate_7 返回 None → [0] 抛 TypeError →
+    # 被上层 except 吞掉，导致调用方逻辑静默退化（日志里 cat=? 即此因）。
+    if len(state.board) < 3:
+        return HIGH_CARD
     if len(state.board) != 5:
-        return evaluate_7(state.hole + state.board)[0]
+        _ev = evaluate_7(state.hole + state.board)
+        return _ev[0] if _ev else HIGH_CARD
     full = evaluate_7(state.hole + state.board)
+    if not full:
+        return HIGH_CARD
     if full[0] < THREE_OF_A_KIND:
         return full[0]                    # 弱成牌无需公对检查
     # 【2026-09-02 修复】公对降级规则：board 5 张自己已构成 ≥ THREE_OF_A_KIND
