@@ -14,6 +14,11 @@
        python view_log.py payload.json --hand 12 15 30
   4) payload 自检（确认 id 基准/字段完整性，换新对局后先跑这个）：
        python view_log.py payload.json --check
+  5) **BotBattle 对局日志**（记录/botbattle-*.json，事件流格式，自动识别）：
+       python view_log.py botbattle-holdem-20260910200423-052a67b5-log.json
+       python view_log.py <日志名> --seat 0        # 指定我方座位（默认 0）
+       python view_log.py <日志名> --hand 61       # 只看第 61 手
+     文件名可只写名字，工具会在 ./记录/ 等目录自动查找。
 
 输出：每行 [DECISION] JSON —— hand(手数) / street(街) / pot(底池) /
       rule(命中的规则) / action(动作) / detail(牌型+赛制档+注额)
@@ -58,8 +63,44 @@ DEMO_REQUESTS = [
 ]
 
 
-def _load_requests(path):
-    """从 JSON 文件提取 request 列表（兼容 botzone 包装 / 单个 / 裸）。"""
+def _resolve_path(name):
+    """路径解析：支持只写文件名（自动在 ./ 和 ./记录/ 等目录查找）。"""
+    import glob
+    if os.path.isfile(name):
+        return name
+    cands = [name]
+    for d in ("记录", "logs", ".", os.path.join("内容", "记录")):
+        cands.append(os.path.join(d, name))
+    cands.append(name)                    # 再按原样试一次
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    hits = glob.glob(os.path.join("**", name), recursive=True)
+    if hits:
+        return hits[0]
+    return None
+
+
+def _load_requests(path, seat=0, hand=None):
+    """从 JSON 文件提取 request 列表。
+
+    支持三种格式：
+      A) BotBattle 事件流（format == "botbattle.match.log"）——自动转换
+      B) botzone 包装 {"requests":[...]} / {"request":{...}}
+      C) 裸 request
+    返回 (requests, metas)；metas 为 BotBattle 的辅助信息（可为等长 None 列表）。
+    """
+    # A) BotBattle 事件流
+    try:
+        from botbattle_log import load_botbattle
+        bb = load_botbattle(path, my_seat=seat, use_hand=hand)
+        if bb:
+            reqs = [r for r, _m in bb]
+            metas = [m for _r, m in bb]
+            return reqs, metas
+    except Exception:
+        pass
+
     with open(path, "r", encoding="utf-8") as f:
         obj = json.load(f)
     out = []
@@ -73,7 +114,7 @@ def _load_requests(path):
         out.append(obj)
     elif isinstance(obj, list):
         out.extend(obj)
-    return out
+    return out, [None] * len(out)
 
 
 def main():
@@ -84,16 +125,28 @@ def main():
     ap.add_argument("--json", dest="json_out", help="日志落盘路径")
     ap.add_argument("--check", action="store_true",
                     help="只做 payload 自检（id 基准/字段完整性），不跑决策")
+    ap.add_argument("--seat", type=int, default=0,
+                    help="BotBattle 日志：我方座位号（0/1，默认 0）")
     args = ap.parse_args()
 
+    metas = [None] * len(DEMO_REQUESTS)
     if args.demo or not args.payload:
         requests = DEMO_REQUESTS
         print("（演示模式：3 个典型场景）", file=sys.stderr)
     else:
-        requests = _load_requests(args.payload)
-    if not requests:
-        print("没有可用的 request", file=sys.stderr)
-        return 1
+        path = _resolve_path(args.payload)
+        if path is None:
+            print("找不到文件：%s" % args.payload, file=sys.stderr)
+            print("提示：可只写文件名，工具会在 ./记录/ 等目录自动查找；"
+                  "或写完整路径。", file=sys.stderr)
+            return 1
+        if path != args.payload:
+            print("（已定位到 %s）" % path, file=sys.stderr)
+        requests, metas = _load_requests(path, seat=args.seat, hand=None)
+        if not requests:
+            print("没有解析到决策点。若是 BotBattle 日志，请用 --seat 0/1 指定"
+                  "我方座位；或检查文件格式。", file=sys.stderr)
+            return 1
 
     if args.check:
         print("=" * 72)
@@ -124,7 +177,7 @@ def main():
     print("决策日志（rule=命中规则, action=最终动作, detail=牌型/赛制档/注额）")
     print("=" * 72)
 
-    for req in requests:
+    for i, req in enumerate(requests):
         try:
             state = parse_request(req)
             if args.hand and state.hand_num not in args.hand:
@@ -137,8 +190,12 @@ def main():
             except Exception:
                 pass
             action = decide(state, model, ctx, debug=True)
-            print("→ 第%d手 %s 底池=%d 动作=%s" %
-                  (state.hand_num, state.stage, state.pot, action))
+            _m = metas[i] if (metas and i < len(metas) and metas[i]) else {}
+            print("→ 第%d手 %s 底池=%d 动作=%s%s" %
+                  (state.hand_num, state.stage, state.pot, action,
+                   ("  [日志: 街=%s 座位=%s chips=%s]" % (
+                       _m.get("street"), _m.get("dealer"), _m.get("chips")))
+                   if _m else ""))
         except Exception as e:
             print("!! 第%s手处理失败: %s" % (req.get("hand"), e))
 
