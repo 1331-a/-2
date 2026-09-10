@@ -2067,6 +2067,35 @@ def _blocking_bet_proxy(state, model, category):
     return _bet_fraction(state, BLOCKER_BET)             # 1/3 池阻隔注
 
 
+def _lead_bet_proxy(state, model, category):
+    """【规则12·2026-09-10 用户规则】我方先手（OOP）主动 lead 小注。
+
+    背景：我方先手（非庄位）时对手尚未行动，opp_checked=False → 所有
+    分支末尾 _opp_check_bet(False) 直接过牌，导致"我方总是被动过牌"。
+    用户规则：先手也应主动下小注施压（不再免费送牌给对手看）。
+
+    触发：翻后 + 非庄位 + 非纯空气 + 底池 ≤ 3000。
+    纯空气（HIGH_CARD 且无坚果无强听）不过滤保留——lead 诈唬纯送，
+    仍走后续 BLUFF EV 门控路径。
+    尺寸：底池 1/3（BLOCKER_BET）。
+    返回 None 表示不触发（继续后续分支）。
+    """
+    try:
+        if state.stage not in ("flop", "turn", "river"):
+            return None
+        if state.pot > 3000:
+            return None
+        # 纯空气（无成牌无听牌）→ 不主动 lead
+        if category == HIGH_CARD and not _has_nuts_or_strong_draw(state):
+            return None
+        # 对手是超激进型（bet_freq 高）且我们无强牌 → 避免被 raise 掀翻
+        if model.eff_bet_freq() >= 0.70 and category < ONE_PAIR:
+            return None
+        return _bet_fraction(state, BLOCKER_BET)    # 1/3 池 lead
+    except Exception:
+        return None
+
+
 def _probe_bet_proxy(state):
     """【规则9·2026-09-07 用户规则】轻探测下注（Probe Bet Proxy）。
 
@@ -3000,11 +3029,16 @@ def _stability_mode(state, model):
 def _check_side_stable(state, model, eq, category, strong, good, medium,
                        big_draw, draw, tex, arch, adj, is_river,
                        i_aggressor):
-    """【规则10】求稳模式的主动侧：一律过牌（不主动下注）。
+    """【规则10】求稳模式的主动侧：不主动大注，但对手 check 后的小注仍执行。
 
-    对手爱 allin / 快锁赢时不赌——过牌免费看牌，把决策留给对手。
-    强牌(≥三条/坚果级)例外在调用处已排除（strong=True 直接走常规 _check_side）。
+    对手爱 allin / 快锁赢时不赌——大注不做，降低波动。
+    【2026-09-10 修正】"对手过牌后强制小注"（规则12）优先级高于求稳的
+    消极过牌：0.40 池(cap 1000)小注成本可控，且对手已示弱，弃牌权益高，
+    不应该被求稳吞掉（用户反馈：对手过牌我仍过牌）。
     """
+    opp_checked = _opp_checked_this_round(state)
+    if opp_checked:
+        return _opp_check_bet(state, True)     # 对手check过 → 强制小注(规则12)
     return {"act": "check"}
 
 
@@ -3087,6 +3121,22 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         if is_river and arch == "station":
             frac = 0.60
         return _bet_fraction(state, frac)
+
+    # 【规则12·2026-09-10 用户规则】主动下注优先于过牌（独立高优先级）。
+    # 用户反馈两问题：① 我方先手(OOP)时 opp_checked 恒 False → 全部
+    # 分支末尾 _opp_check_bet(False) 直接过牌，强制下注被绕过；
+    # ② 过牌后强制下注原本是最低优先级兜底，容易被其他分支吞掉。
+    # 修复：本规则提到 strong/good 价值注之后、big_draw/medium 之前，
+    # 且先手也主动 lead：
+    #   ① 对手本轮已 check（后手，示弱）→ 0.40 池（cap 1000）强制小注；
+    #   ② 我方先手（OOP）+ 非纯空气 + 底池≤3000 → 1/3 池主动 lead，
+    #      不再免费送牌（纯空气无阻挡牌仍过牌，避免被反打成诈唬送分）。
+    if opp_checked:
+        return _opp_check_bet(state, True)          # ① 对手check过 → 强制小注
+    if not state.is_button:
+        _lb = _lead_bet_proxy(state, model, category)
+        if _lb is not None:
+            return _lb                              # ② 我方先手 → 主动 lead 小注
 
     if big_draw:
         # 半诈唬优先级高于控池：强听牌即使当前胜率中等，
