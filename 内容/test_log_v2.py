@@ -246,6 +246,53 @@ check("D2:to_call>0 时 fold(-1) 仍为 -1",
       _final_guard(_st_d2b, -1) == -1, str(_final_guard(_st_d2b, -1)))
 
 
+
+
+# ============ 2026-09-11 M4：decide 入口刷新全部模块级全局 ============
+from strategy import _prepare_globals, _match_adjust
+from match_ctx import (MatchContext, LEVEL_AGGRESSIVE, LEVEL_CONSERVATIVE)
+import time as _time
+
+_m4 = OpponentModel()
+_st_m4 = parse_request({"num_players": 2, "dealer_id": 1, "my_id": 0,
+                        "my_chips": 19900, "my_cards": [34, 17],
+                        "public_cards": [], "history": [], "hand": 63,
+                        "max_hand": 70, "total_win_chips": [-120, 120],
+                        "total_win_games": [0, 0]})
+_ctx_cons = MatchContext.from_dict(OpponentModel().ctx_dict)
+_ctx_cons.level = LEVEL_CONSERVATIVE          # 正偏移 → 更难 doomed
+_ctx_aggr = MatchContext.from_dict(OpponentModel().ctx_dict)
+_ctx_aggr.level = LEVEL_AGGRESSIVE            # 负偏移 → 更易 doomed
+
+# 同一状态在两档下 doomed 判定应当不同（证明 ctx 确实影响判定）
+_S2._prepare_globals(_st_m4, _m4, _ctx_cons)
+_adj_cons = _match_adjust(_st_m4)
+_S2._prepare_globals(_st_m4, _m4, _ctx_aggr)
+_adj_aggr = _match_adjust(_st_m4)
+check("M4:同一状态在保守/激进档下 adjust 不同（ctx 生效）",
+      _adj_cons != _adj_aggr, "%s vs %s" % (_adj_cons, _adj_aggr))
+
+# 把全局故意留成「上一手的保守档」，本手传激进档 → 入口必须刷新
+_S2._CTX = _ctx_cons
+_S2._LEAD_LOCK = False
+_S2._DECISION_STARTED_AT = 0.0
+_a_m4 = decide(_st_m4, _m4, _ctx_aggr)
+check("M4:入口已把 _CTX 刷新为本手 ctx", _S2._CTX is _ctx_aggr)
+check("M4:入口已刷新 _LEAD_LOCK", isinstance(_S2._LEAD_LOCK, bool))
+check("M4:入口已复位 _DECISION_STARTED_AT", _S2._DECISION_STARTED_AT > 0,
+      str(_S2._DECISION_STARTED_AT))
+check("M4:doomed 边界按本手 ctx 判定 → allin",
+      _a_m4.get("act") == "allin", str(_a_m4))
+
+# _prepare_globals 刷新 _OPP_JUMPED / _OPP_BETS_PER_HAND
+_prepare_globals(_st_m4, _m4, _ctx_aggr)
+check("M4:_OPP_JUMPED 已刷新(布尔)", isinstance(_S2._OPP_JUMPED, bool),
+      str(_S2._OPP_JUMPED))
+check("M4:_OPP_BETS_PER_HAND 已刷新(数值)",
+      isinstance(_S2._OPP_BETS_PER_HAND, float),
+      str(_S2._OPP_BETS_PER_HAND))
+
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")

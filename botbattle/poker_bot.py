@@ -2220,43 +2220,58 @@ def _aggressive_strong_bet(state, action):
         return action
 
 
+def _prepare_globals(state, model, ctx, reset_clock=True):
+    """把一次决策所需的**全部模块级全局**一次性刷新。
+
+    【M4·2026-09-11】decide() 入口的锁赢拦截早于 _decide_impl()，而
+    _CTX/_OPP_JUMPED/_OPP_BETS_PER_HAND/_MODEL_REF/_DECISION_STARTED_AT
+    原本只在 _decide_impl 里赋值 → 入口读到的是**上一手的旧值**：
+      · _CTX 过期 → _match_adjust 的 doomed 偏移用旧档位/旧策略位移
+        （差 2×LEVEL_SHIFT_BB 的 lead 偏移）→ doomed 边界漏判/误判；
+      · _OPP_JUMPED 过期 → 「对手突袭大注」标志滞后一手；
+      · _OPP_BETS_PER_HAND 过期 → 跟注门槛微调滞后一手；
+      · _DECISION_STARTED_AT 未复位 → 超时判断基于上一手的起点。
+    统一在这里刷新，decide 入口与 _decide_impl 共用同一份实现（口径一致）。
+    """
+    global _CTX, _OPP_JUMPED, _LEAD_LOCK, _OPP_BETS_PER_HAND, \
+        _DECISION_STARTED_AT, _MODEL_REF
+    if reset_clock:
+        _DECISION_STARTED_AT = time.perf_counter()
+    _CTX = ctx
+    _MODEL_REF = model
+    # 【对手突袭大注】全局标志（翻前/翻后共享，决策一开始就要生效）
+    _OPP_JUMPED = _opp_bet_jumped(state)
+    # 【2026-08-25 用户规则】对手每局下注数量 → 跟注门槛微调
+    try:
+        _OPP_BETS_PER_HAND = float(model.avg_bets_per_hand()) \
+            if model is not None else 0.9
+    except Exception:
+        _OPP_BETS_PER_HAND = 0.9
+    # 【优势锁定】领先 > LEAD_NO_ALLIN → 不 allin + 注码受限
+    _LEAD_LOCK = _is_lead_lock(state)
+
+
 _LW_UNSET = object()      # 哨兵：区分「外层已算出 None」与「未计算」
 
 
-def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET):
+def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
+                 _prepared=False):
     """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
 
     ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
     （对手弃牌推断/激进等级/回撤保护）通过它只调整状态机阈值偏移。
     debug: True 时启用决策日志（DecisionLogger，输出到 stdout / 平台日志）。
     """
-    global _CTX, _OPP_JUMPED, _LEAD_LOCK, _OPP_BETS_PER_HAND, _DECISION_STARTED_AT, _MODEL_REF
-    _DECISION_STARTED_AT = time.perf_counter()
-    _CTX = ctx
-    _MODEL_REF = model
+    # 【M4】全局刷新统一走 _prepare_globals（与 decide 入口同一份实现）。
+    # _prepared=True 表示 decide 入口已经刷过 → 不重复计算、也不复位超时时钟。
+    if not _prepared:
+        _prepare_globals(state, model, ctx, reset_clock=True)
     # 【决策日志】debug=True 或环境变量 WB_POKER_DEBUG=1 时输出归因日志
     try:
         import os
         DecisionLogger.enable(debug or os.environ.get("WB_POKER_DEBUG") == "1")
     except Exception:
         DecisionLogger.enable(debug)
-    # 【对手突袭大注】全局标志：翻前/翻后所有决策共享（优先级最高——
-    # 领先较大时不 allin、面对突袭大注收紧防守，都在决策一开始生效）
-    _OPP_JUMPED = _opp_bet_jumped(state)
-    # 【2026-08-25 用户规则】对手每局下注数量（最近窗口均值）→ 全局标志，
-    # _face_bet 跟注门槛据此微调（高侵略收紧 / 被动放宽）
-    try:
-        _OPP_BETS_PER_HAND = float(model.avg_bets_per_hand()) \
-            if model is not None else 0.9
-    except Exception:
-        _OPP_BETS_PER_HAND = 0.9
-    # 【优势锁定】领先 > LEAD_NO_ALLIN → 不 allin + 注码≤LEAD_MAX_BET
-    # （用户规则，优先级最高：决策一开始就进入锁定模式）
-    try:
-        _LEAD_LOCK = (state.total_win_chips[state.my_id]
-                      - state.total_win_chips[state.opp_id]) > LEAD_NO_ALLIN
-    except Exception:
-        _LEAD_LOCK = False
     # 【优先级 2·规则2（2026-09-10 合并）】锁胜 / 防锁赢统一决策——
     # 原来分散的三条（doom 防锁赢 / fold_out 锁胜弃牌 / 盈利锁胜全下）
     # 本质是同一件事：本局胜败对「最终锁赢」的影响，合并为 _lock_win_unified。
@@ -4671,10 +4686,11 @@ def decide(state, model, ctx=None, debug=False):
     # 该动作被平台拒收后 fallback 的结果。
     action = None
     _lw0 = _LW_UNSET
+    # 【M4·2026-09-11】入口一次性刷新**全部**模块级全局（_CTX/_OPP_JUMPED/
+    # _OPP_BETS_PER_HAND/_LEAD_LOCK/_DECISION_STARTED_AT）——
+    # 否则下面的锁赢拦截会读到上一手旧值（doomed 偏移差 2×LEVEL_SHIFT_BB）。
     try:
-        # 【P0】刷新 _LEAD_LOCK（入口早于 _decide_impl，否则下游读到上一手旧值）
-        global _LEAD_LOCK
-        _LEAD_LOCK = _is_lead_lock(state)
+        _prepare_globals(state, model, ctx, reset_clock=True)
     except Exception:
         pass
     try:
@@ -4688,7 +4704,8 @@ def decide(state, model, ctx=None, debug=False):
     # 【M2】把已算好的 _lw0 传进去 → 不再重复调用 _lock_win_unified
     if action is None:
         try:
-            action = _decide_impl(state, model, ctx, debug=debug, _lw=_lw0)
+            action = _decide_impl(state, model, ctx, debug=debug, _lw=_lw0,
+                                  _prepared=True)
         except Exception:
             action = _safe_fallback_action(state)
     try:
