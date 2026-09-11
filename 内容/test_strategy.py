@@ -16,7 +16,7 @@ sys.path.insert(0, ".")
 from game_state import parse_request   # noqa: E402
 from opponent import OpponentModel     # noqa: E402
 from strategy import (decide, _blocking_bet_proxy, _effective_category,
-                           _flush_threat, _my_flush_top_rank)  # noqa: E402
+                           _flush_threat)  # noqa: E402
 
 # 牌号 -> BotZone 编码（内部 = n+8）
 HA, DA, SA, CA = 48, 49, 50, 51  # 四张 A

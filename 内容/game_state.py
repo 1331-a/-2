@@ -205,10 +205,6 @@ class GameState:
         return self.my_chips
 
     @property
-    def opp_left(self):
-        return self.opp_chips
-
-    @property
     def my_total(self):
         return self.round_bet_mine + self.my_chips
 

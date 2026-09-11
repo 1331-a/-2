@@ -13,55 +13,11 @@ ranges.py — 翻牌前起手牌强度评估与范围管理。
 
 百分位是范围决策的标准语言：
   「庄家位开池前 80% 的牌」「3-bet 前 14% 的牌」「大盲防守前 55%」
-比 Chen 阈值更直观、更贴近现代单挑理论（HU 中庄家应开池 60~90%）。
+比固定阈值更直观、更贴近现代单挑理论（HU 中庄家应开池 60~90%）。
 
-Chen 公式保留（equity 的旧采样路径与调试用）。
 """
 
-import math
-
-# ---------------- Chen 公式（保留兼容） ----------------
-_CHEN_POINTS = {
-    14: 10, 13: 8, 12: 7, 11: 6, 10: 5, 9: 4.5, 8: 4,
-    7: 3.5, 6: 3, 5: 2.5, 4: 2, 3: 1.5, 2: 1,
-}
-_GAP_PENALTY = {0: 0, 1: -1, 2: -2, 3: -4}
-
-
-def chen_score(hole):
-    """计算两张底牌的 Chen 分数（约 1~20，越高越强）。"""
-    r = sorted([c // 4 for c in hole])
-    suited = (hole[0] % 4) == (hole[1] % 4)
-
-    if r[0] == r[1]:  # 对子
-        s = _CHEN_POINTS[r[0]] * 2
-        return max(s, 5)
-
-    hi, lo = r[1], r[0]
-    s = _CHEN_POINTS[hi]
-    if suited:
-        s += 2
-    gap = hi - lo - 1
-    s += _GAP_PENALTY.get(gap, -5)
-    if hi < 12 and gap <= 1:
-        s += 1
-    return math.ceil(s * 2) / 2.0
-
-
-def hand_bucket(chen):
-    """把 Chen 分数归入粗略强度档位（兼容旧接口）。"""
-    if chen >= 12:
-        return "premium"
-    if chen >= 9:
-        return "strong"
-    if chen >= 7:
-        return "medium"
-    if chen >= 5:
-        return "marginal"
-    return "trash"
-
-
-# ---------------- 单挑胜率强度分（升级版核心） ----------------
+# ---------------- 单挑胜率强度分 ----------------
 def _raw_strength(hi, lo, suited):
     """
     估计起手牌在单挑中对抗随机手牌的胜率（约 33~85）。
@@ -125,20 +81,3 @@ def hand_percentile(hole):
 
 
 # ---------------- 翻前范围辅助 ----------------
-def in_range(hole, pct):
-    """该牌是否位于前 pct 比例的范围内（pct: 0~1，越小越紧）。"""
-    return hand_percentile(hole) <= pct
-
-
-def random_hand_in_range(pct, rng, excluded=()):
-    """
-    从「前 pct 比例」的起手范围内随机抽一手牌（拒绝采样）。
-    excluded 中的内部编码牌不可用。用于蒙特卡洛对手范围抽样。
-    """
-    excluded = set(excluded)
-    deck = [c for c in range(8, 60) if c not in excluded]
-    for _ in range(120):
-        h = rng.sample(deck, 2)
-        if hand_percentile(h) <= pct:
-            return h
-    return rng.sample(deck, 2)  # 兜底：范围极窄抽不中时随机

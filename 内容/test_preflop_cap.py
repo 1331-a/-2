@@ -140,16 +140,13 @@ check("翻前2000封顶:AKs 4-bet≤2000或降级",
       (a.get("act") == "raise" and a["num"] <= 2000), str(a))
 
 # ============ D. 超强牌扩展（AQ/AK/KQ）============
-from strategy import _is_super_hand, _is_sub_strong   # noqa: E402
+from strategy import _is_super_hand   # noqa: E402
 
 
 def _I(n):
     return n + 8   # 平台牌号 → 内部编码
 
 
-check("超强牌:AKo是次强非超强", _is_super_hand([_I(48), _I(45)]) is False and _is_sub_strong([_I(48), _I(45)]) is True, "")
-check("超强牌:AQo是次强非超强", _is_super_hand([_I(48), _I(41)]) is False and _is_sub_strong([_I(48), _I(41)]) is True, "")
-check("超强牌:KQo是次强非超强", _is_super_hand([_I(44), _I(41)]) is False and _is_sub_strong([_I(44), _I(41)]) is True, "")
 check("超强牌:AJo不是", _is_super_hand([_I(48), _I(37)]) is False, "")
 check("超强牌:KJo不是", _is_super_hand([_I(44), _I(37)]) is False, "")
 

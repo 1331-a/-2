@@ -23,7 +23,7 @@ strategy.py — AI 决策引擎（升级版）。
 import time
 
 from game_state import INIT_CHIPS
-from evaluator import (TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND,
+from evaluator import (CATEGORY_NAMES, TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND,
                        FULL_HOUSE, FLUSH, STRAIGHT_FLUSH, HIGH_CARD,
                        evaluate_7, evaluate_5)
 from equity import monte_carlo_equity
@@ -102,9 +102,6 @@ RISK_HANDS_LEFT = 20         # 落后场景的剩余局数上限
 # 【改良】本类牌面下对手任意配对（Q/K/公对牌/口袋对）都是两对或三条，
 # Q 踢脚与 K 踢脚几乎无差别——故踢脚 < A 时面对全下要么硬弃（<Q）要么
 # 以极高门槛决策（Q/K 踢脚），只有 A 踢脚的裸公对才允许正常数学决策。
-RIVER_TRAP_KICKER = 12        # 踢脚 < Q → 硬弃（用户规则，不计算）
-RIVER_TRAP_WARN_KICKER = 14   # 踢脚 < A → warning（Q/K 踢脚，高门槛）
-RIVER_TRAP_WARN_MARGIN = 0.15 # warning 档跟全下所需的额外胜率门槛
 
 # ---- 全下下限（盈利门槛）----
 # 【规则】只有「投入筹码量 > 当前总盈利 + ALLIN_FLOOR_CONST」时才允许
@@ -175,8 +172,6 @@ STEAL_FOLD_MIN_CAT = 4        # 被加注/全下时唯一例外：顺子及以�
 # 且 手牌对抗随机牌胜率 > 30% → 立即全下锁胜，防止利润回吐。
 # 与 LEAD_LOCK 关系（用户确认）：LEAD_LOCK 优先——领先>2000 时注码受限，
 # 不可能出现「已投 > 盈利+2000」的深投入场景，本规则自然不触发。
-PROFIT_LOCK_CONST = 2000      # 已投须超过 总盈亏 + 此值
-PROFIT_LOCK_EQ = 0.30         # 对抗随机牌的胜率底线（防纯垃圾牌推）
 
 # ---- 规则3：下注额限制（第三优先级）----
 # 【规则】手牌不属于超强牌（AA/KK/QQ/JJ/AKs）时，主动下注/加注的总注额
@@ -185,7 +180,6 @@ PROFIT_LOCK_EQ = 0.30         # 对抗随机牌的胜率底线（防纯垃圾牌
 BET_CAP = 3000                # 非超强牌主动下注总注额上限（2026-08-25: 1000→3000）
 GOOD_BET_MIN = 2000           # 【规则13】好牌(≥两对)主动下注的最小总注额(2026-09-10)
 BET_CAP_POT = 2000            # 底池超过此值时完全放弃主动下注（过牌/跟注）
-BET_CAP_FRAC = 0.50           # 降级后的下注额（底池 50%）
 
 # ---- 必须赢下（MUST-WIN）：本次下注落败即致对手锁胜 → 无条件全下 ----
 # 【用户规则】牌面有利于自己（两对+非弱两对，或胜率≥MUSTWIN_EQ）且
@@ -317,23 +311,6 @@ def _is_super_hand(hole):
         return True
     suited = (hole[0] % 4) == (hole[1] % 4)
     return hi == 14 and lo == 13 and suited   # AKs（同花 AK）
-
-
-def _is_sub_strong(hole):
-    """次强牌：AQ/AK/KQ（含同花与不同花；AKo 属次强，AKs 是超强）。
-    仅大幅落后（desperate/doomed）时豁免翻前 1000 上限（用户规则），
-    其余时段与普通牌一样受 PREFLOP_MAX_BET 约束。
-    """
-    r = sorted(c // 4 for c in hole)
-    hi, lo = r[1], r[0]
-    if hi == lo and hi >= 11:
-        return False                      # 超强对子不在此列
-    suited = (hole[0] % 4) == (hole[1] % 4)
-    if hi == 14 and lo == 13 and suited:
-        return False                      # AKs 是超强牌
-    if hi == 14 and lo >= 12:             # AQ / AK（含 AQs/AQo/AKo）
-        return True
-    return hi == 13 and lo == 12          # KQ（含 KQs/KQo）
 
 
 def _is_lead_lock(state):
@@ -1099,24 +1076,6 @@ def _clamp(x, lo, hi):
 
 
 # ---------------- 对局状态调整（风控·宏观层） ----------------
-def _passive_side(state):
-    """我方是否被动（对手本轮已主动下注/全押，须响应其注额）。
-
-    - 本局有人全押 → 被动（只能跟/弃/全押，无主动下注空间）；
-    - 翻前：对手本轮下注 > 大盲 = 主动加注 → 被动；仅放盲注（=大盲）→ 主动
-      （SB 补盲 to_call=50 不算被动，仍可主动加注施压）；
-    - 翻后：对手本轮已下注 → 被动；对手 check（下注 0）→ 主动。
-    """
-    try:
-        if state.any_allin or state.opp_is_allin:
-            return True
-        if state.stage == "preflop":
-            return state.opp_round_bet > state.big_blind
-        return state.opp_round_bet > 0
-    except Exception:
-        return state.to_call > 0
-
-
 def _match_adjust(state):
     """
     max_hand 手定胜负的比赛中，根据领先量与剩余手数调整风险偏好：
@@ -1802,33 +1761,6 @@ class BetSizer:
             base *= 0.90                              # 翻牌留空间
         return max(int(pot * base), 1)
 
-    @staticmethod
-    def bluff_size(pot, big_blind, model):
-        """诈唬尺度：在尺寸桶里选「弃牌权益 − 风险」EV 最高者。
-
-        用响应学习的实测弃牌率（对手对该尺寸的真实反应）优先于全局估计。
-        """
-        best_size, best_ev = 0, 0.0
-        for ratio in (0.40, 0.55, 0.75, 1.00):
-            size = int(pot * ratio)
-            if size <= 0:
-                continue
-            fr = None
-            try:
-                fr = model.learned_fold_rate(False, size, big_blind, pot,
-                                             cur_hand=None)
-            except Exception:
-                fr = None
-            if fr is None:
-                try:
-                    fr = float(model.eff_fold_to_bet())
-                except Exception:
-                    fr = 0.40
-            ev = fr * pot - (1.0 - fr) * size          # 弃牌赢池 − 被跟损失
-            if ev > best_ev:
-                best_size, best_ev = size, ev
-        return best_size
-
 
 class BetPatternDetector:
     """【2026-09-10 新增】判断对手是「数值型」还是「比例型」下注。
@@ -1881,21 +1813,6 @@ class BetPatternDetector:
             return "proportional"                  # 比例型
         return "mixed"
 
-    def read_bet(self, pot, opp_bet):
-        """读牌：结合类型解读对手本次下注的强弱。"""
-        pattern = self.get_pattern()
-        if pattern == "numeric":
-            # 金额固定：底池小 → 超池（两极化）；底池大 → 正常尺度
-            return "polarized" if pot < 1500 else "medium_strong"
-        if pattern == "proportional":
-            bpr = float(opp_bet) / max(pot, 1)
-            if bpr > 1.0:
-                return "polarized"
-            if bpr > 0.6:
-                return "strong"
-            return "medium"
-        return "unknown"
-
     def main_size(self):
         """对手最常用的下注金额（数值型对手的核心信息）。0 = 样本不足。"""
         try:
@@ -1909,9 +1826,6 @@ class BetPatternDetector:
             return c.most_common(1)[0][0]
         except Exception:
             return 0
-
-    def last_size(self):
-        return self.sizes[-1] if self.sizes else 0
 
     def to_json(self):
         return {"bprs": self.bprs[-40:], "sizes": self.sizes[-40:],
@@ -1943,10 +1857,6 @@ def _fmt_card(n):
         return _RANK_STR[(n // 4) % 13] + _SUIT_STR[n % 4]
     except Exception:
         return "??"
-
-
-_CAT_NAMES = {0: "高牌", 1: "一对", 2: "两对", 3: "三条", 4: "顺子",
-              5: "同花", 6: "葫芦", 7: "四条", 8: "同花顺", 9: "皇家同花顺"}
 
 
 def explain(state, model, ctx=None, with_eq=True):
@@ -2037,7 +1947,7 @@ def explain(state, model, ctx=None, with_eq=True):
                 eq = None
         info["hand"] = {
             "hole": hole, "board": board, "cat": cat,
-            "cat_name": _CAT_NAMES.get(cat, str(cat)),
+            "cat_name": CATEGORY_NAMES.get(cat, str(cat)),
             "eq": (round(eq, 2) if eq is not None else "?"),
             "to_call": int(state.to_call), "pot": int(state.pot),
             "street": state.stage,
@@ -2422,9 +2332,6 @@ def _postflop_decide(state, model):
 def _fold_equity(model, adj):
     """有效弃牌权益（诈唬收益的核心输入），按对局状态打折/加成。"""
     fe = model.eff_fold_to_bet()
-def _fold_equity(model, adj):
-    """有效弃牌权益（诈唬收益的核心输入），按对局状态打折/加成。"""
-    fe = model.eff_fold_to_bet()
     if adj == "protect":
         fe *= 0.5      # 领先保收益：诈唬大幅压缩
     elif adj in ("desperate", "doomed"):
@@ -2688,23 +2595,6 @@ def _flush_threat(state):
         if state.to_call <= 3000: return False
         return True
     except Exception: return False
-
-
-def _my_flush_top_rank(state):
-    """我方最强同花最大牌 rank(0-12 → 2-A),无同花返 None。"""
-    try:
-        from evaluator import evaluate_7
-        from itertools import combinations
-        all_cards = list(state.hole) + list(state.board)
-        best = None
-        for combo in combinations(all_cards, 5):
-            e = evaluate_7(list(combo))
-            if best is None or e > best:
-                best = e
-        if best is None or best[0] != 5:
-            return None
-        return best[1]
-    except Exception: return None
 
 
 def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,

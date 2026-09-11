@@ -34,7 +34,6 @@ WINDOW = 20                     # 滑动窗口：最近 20 局（规则1：对�
 BLIND_NETS = (50, 100)          # 直接收盲的单局净赢（对手弃 SB/BB）→ 对手弃牌
 LOCK_RATE = 0.65                # 弃牌率阈值：最近20局直接收盲率 > 65%（规则1）
 LOCK_ALLIN_FREQ = 0.10          # 全下频率上限：最近20局对手全下 < 10%（规则1）
-LOCK_MIN_SAMPLES = 8            # 判定疑似锁胜所需的最少样本局数
 
 LEVEL_CONSERVATIVE = 0          # 保守：正常策略，不额外激进
 LEVEL_NORMAL = 1                # 正常

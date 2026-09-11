@@ -116,11 +116,6 @@ class OpponentModel:
         return (self.preflop_raise + self.postflop_bet) / total
 
     @property
-    def looseness(self):
-        """松紧程度（兼容旧接口，= VPIP）。"""
-        return self.vpip
-
-    @property
     def fold_to_bet(self):
         """面对下注的弃牌率（原始值）。"""
         if self.faces_bet == 0:

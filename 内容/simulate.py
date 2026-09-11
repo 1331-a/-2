@@ -40,14 +40,15 @@ class CallingStation:
         self.model = opponent.OpponentModel()
 
     def act(self, state):
-        chen = ranges.chen_score(state.hole)
+        # 起手牌百分位（0~1，越小越强）；原 chen_score 已随死代码清理移除
+        pct = ranges.hand_percentile(state.hole)
         if state.to_call == 0:
-            if chen >= 12:
+            if pct <= 0.12:
                 return {"act": "raise", "num": state.curbet[state.my_id] + 3 * state.big_blind}
             return {"act": "check"}
         if state.to_call >= state.my_left:
             return {"act": "call"}
-        if chen >= 12:
+        if pct <= 0.12:
             return {"act": "raise", "num": state.min_raise_to() * 2}
         return {"act": "call"}
 

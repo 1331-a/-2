@@ -116,18 +116,3 @@ def evaluate_7(cards):
             best = e
     return best
 
-
-def category_name(result):
-    """返回牌型的中文名称。"""
-    return CATEGORY_NAMES.get(result[0], "未知")
-
-
-def compare(my_cards, opp_cards):
-    """比较双方手牌（7 张），返回 1（我胜）/ 0（平）/ -1（我负）。"""
-    m = evaluate_7(my_cards)
-    o = evaluate_7(opp_cards)
-    if m > o:
-        return 1
-    if m < o:
-        return -1
-    return 0

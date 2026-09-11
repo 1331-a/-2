@@ -15,7 +15,7 @@ sys.path.insert(0, ".")
 from game_state import parse_request  # noqa: E402
 from opponent import OpponentModel  # noqa: E402
 from match_ctx import MatchContext  # noqa: E402
-from strategy import decide, _is_super_hand, _is_sub_strong, _match_adjust  # noqa: E402
+from strategy import decide, _is_super_hand, _match_adjust  # noqa: E402
 
 fails = 0
 
@@ -186,9 +186,6 @@ check("规则3:AA超强", _is_super_hand([56, 58]) is True, "")
 check("规则3:KK超强", _is_super_hand([52, 54]) is True, "")
 check("规则3:JJ超强", _is_super_hand([44, 46]) is True, "")
 check("规则3:AKs超强", _is_super_hand([56, 52]) is True, "")
-check("规则3:AKo次强非超强(2026-08-23)", _is_super_hand([56, 53]) is False and _is_sub_strong([56, 53]) is True, "")
-check("规则3:AQo次强非超强(2026-08-23)", _is_super_hand([56, 49]) is False and _is_sub_strong([56, 49]) is True, "")
-check("规则3:KQo次强非超强(2026-08-23)", _is_super_hand([52, 49]) is False and _is_sub_strong([52, 49]) is True, "")
 check("规则3:TT非超强", _is_super_hand([40, 42]) is False, "")
 
 # ================= 规则4：大于三条的牌型不能仅由公共牌组成 =================

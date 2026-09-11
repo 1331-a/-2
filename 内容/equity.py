@@ -71,28 +71,3 @@ def _sample_opponent(deck, range_pct, rng):
             return h
     return rng.sample(deck, 2)  # 范围极窄时兜底随机
 
-
-def estimate_showdown_equity(hole, board, iterations=300, rng=None, deadline=None):
-    """
-    估算当前成牌在摊牌时的胜率（不补发公共牌，仅评估当前牌型
-    对抗随机对手成牌）。河牌决策用：纯 value/bluff 判断。
-    """
-    rng = rng or _rng
-    if len(board) < 3:
-        return monte_carlo_equity(hole, board, iterations, 1.0, rng, deadline)
-    deck = [c for c in full_deck() if c not in hole and c not in board]
-    wins = ties = total = 0
-    for i in range(iterations):
-        if deadline is not None and (i & 15) == 0 and time.time() >= deadline:
-            break
-        opp = rng.sample(deck, 2)
-        my_score = evaluate_7(hole + board)
-        opp_score = evaluate_7(opp + board)
-        if my_score > opp_score:
-            wins += 1
-        elif my_score == opp_score:
-            ties += 1
-        total += 1
-    if total == 0:
-        return 0.5
-    return (wins + 0.5 * ties) / total
