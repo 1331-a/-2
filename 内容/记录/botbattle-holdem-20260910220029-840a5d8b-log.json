@@ -1,0 +1,7231 @@
+{
+  "format": "botbattle.match.log",
+  "format_version": 1,
+  "match": {
+    "bot_a": {
+      "display_name": "测01",
+      "id": 1186,
+      "is_human": false,
+      "name": "amc",
+      "owner_display": "j1331",
+      "owner_name": "C1331"
+    },
+    "bot_b": {
+      "display_name": "测01",
+      "id": 1186,
+      "is_human": false,
+      "name": "amc",
+      "owner_display": "j1331",
+      "owner_name": "C1331"
+    },
+    "contest_id": null,
+    "created_at": "2026-09-10T22:00:29",
+    "ended_at": "2026-09-10T22:05:51",
+    "game_id": "holdem",
+    "human_seat": null,
+    "id": "20260910220029-840a5d8b",
+    "match_type": "challenge",
+    "protocol_version": "holdem_action_v1",
+    "reason": "completed",
+    "result": {
+      "deltas": [
+        -19944,
+        19944
+      ],
+      "normalized_delta": -199.44,
+      "rounds_played": 70
+    },
+    "ruleset_version": "holdem_hu_nlhe_allin_v2",
+    "started_at": "2026-09-10T22:00:30",
+    "status": "completed",
+    "technical_loss": 0,
+    "time_control": {
+      "applies_to": "both_bots",
+      "id": "holdem_per_decision_60s_v1",
+      "mode": "per_decision",
+      "seconds": 60
+    },
+    "winner": 1
+  },
+  "replay": {
+    "event_count": 707,
+    "events": [
+      {
+        "first": 0,
+        "game_id": "holdem",
+        "num_hands": 70,
+        "time_control": {
+          "applies_to": "both_bots",
+          "id": "holdem_per_decision_60s_v1",
+          "mode": "per_decision",
+          "seconds": 60
+        },
+        "type": "match_start"
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 0,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 0,
+        "holes": [
+          [
+            "As",
+            "Ad"
+          ],
+          [
+            "5s",
+            "Kh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.974,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.026
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 0,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 0,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Js",
+          "4s",
+          "5c"
+        ],
+        "dealt": [
+          "Js",
+          "4s",
+          "5c"
+        ],
+        "hand": 0,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.871,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.129
+      },
+      {
+        "action": "raise",
+        "amount": 198,
+        "hand": 0,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.779,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.221
+      },
+      {
+        "action": "raise",
+        "amount": 399,
+        "hand": 0,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.774,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.226
+      },
+      {
+        "action": "call",
+        "amount": 201,
+        "hand": 0,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Js",
+          "4s",
+          "5c",
+          "5d"
+        ],
+        "dealt": [
+          "5d"
+        ],
+        "hand": 0,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.762,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.238
+      },
+      {
+        "action": "raise",
+        "amount": 906,
+        "hand": 0,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.781,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.219
+      },
+      {
+        "action": "call",
+        "amount": 906,
+        "hand": 0,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Js",
+          "4s",
+          "5c",
+          "5d",
+          "8c"
+        ],
+        "dealt": [
+          "8c"
+        ],
+        "hand": 0,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.79,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.21
+      },
+      {
+        "action": "raise",
+        "amount": 4173,
+        "hand": 0,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.78,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.22
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 0,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Js",
+          "4s",
+          "5c",
+          "5d",
+          "8c"
+        ],
+        "chips": [
+          18395,
+          21605
+        ],
+        "deltas": [
+          -1605,
+          1605
+        ],
+        "hand": 0,
+        "net": [
+          -1605,
+          1605
+        ],
+        "pot": 3210,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 1,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 1,
+        "holes": [
+          [
+            "6c",
+            "Kc"
+          ],
+          [
+            "Ac",
+            "Ah"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.891,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.109
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 1,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 1,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "4s",
+          "Jc",
+          "Tc"
+        ],
+        "dealt": [
+          "4s",
+          "Jc",
+          "Tc"
+        ],
+        "hand": 1,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.748,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.252
+      },
+      {
+        "action": "raise",
+        "amount": 330,
+        "hand": 1,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.781,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.219
+      },
+      {
+        "action": "raise",
+        "amount": 660,
+        "hand": 1,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.709,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.291
+      },
+      {
+        "action": "call",
+        "amount": 330,
+        "hand": 1,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "4s",
+          "Jc",
+          "Tc",
+          "7c"
+        ],
+        "dealt": [
+          "7c"
+        ],
+        "hand": 1,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.776,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.224
+      },
+      {
+        "action": "raise",
+        "amount": 1440,
+        "hand": 1,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.794,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.206
+      },
+      {
+        "action": "call",
+        "amount": 1440,
+        "hand": 1,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "4s",
+          "Jc",
+          "Tc",
+          "7c",
+          "As"
+        ],
+        "dealt": [
+          "As"
+        ],
+        "hand": 1,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.721,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.279
+      },
+      {
+        "action": "raise",
+        "amount": 6240,
+        "hand": 1,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.794,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.206
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 1,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "4s",
+          "Jc",
+          "Tc",
+          "7c",
+          "As"
+        ],
+        "chips": [
+          22400,
+          17600
+        ],
+        "deltas": [
+          2400,
+          -2400
+        ],
+        "hand": 1,
+        "net": [
+          795,
+          -795
+        ],
+        "pot": 4800,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 2,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 2,
+        "holes": [
+          [
+            "7h",
+            "2d"
+          ],
+          [
+            "Ks",
+            "7d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.957,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.043
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 2,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 2,
+        "net": [
+          745,
+          -745
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 3,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 3,
+        "holes": [
+          [
+            "Qd",
+            "3h"
+          ],
+          [
+            "5d",
+            "8s"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 3,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 3,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Qh",
+          "7h",
+          "6d"
+        ],
+        "dealt": [
+          "Qh",
+          "7h",
+          "6d"
+        ],
+        "hand": 3,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.771,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.229
+      },
+      {
+        "action": "raise",
+        "amount": 228,
+        "hand": 3,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.791,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.209
+      },
+      {
+        "action": "call",
+        "amount": 228,
+        "hand": 3,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Qh",
+          "7h",
+          "6d",
+          "Js"
+        ],
+        "dealt": [
+          "Js"
+        ],
+        "hand": 3,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.805,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.195
+      },
+      {
+        "action": "raise",
+        "amount": 401,
+        "hand": 3,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.789,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.211
+      },
+      {
+        "action": "call",
+        "amount": 401,
+        "hand": 3,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Qh",
+          "7h",
+          "6d",
+          "Js",
+          "Kd"
+        ],
+        "dealt": [
+          "Kd"
+        ],
+        "hand": 3,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.778,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.222
+      },
+      {
+        "action": "raise",
+        "amount": 613,
+        "hand": 3,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.886,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.114
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 3,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Qh",
+          "7h",
+          "6d",
+          "Js",
+          "Kd"
+        ],
+        "chips": [
+          20929,
+          19071
+        ],
+        "deltas": [
+          929,
+          -929
+        ],
+        "hand": 3,
+        "net": [
+          1674,
+          -1674
+        ],
+        "pot": 1858,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 4,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 4,
+        "holes": [
+          [
+            "Ac",
+            "3d"
+          ],
+          [
+            "Kc",
+            "3s"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 4,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.944,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.056
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 4,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "6h",
+          "5s",
+          "4h"
+        ],
+        "dealt": [
+          "6h",
+          "5s",
+          "4h"
+        ],
+        "hand": 4,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.789,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.211
+      },
+      {
+        "action": "raise",
+        "amount": 198,
+        "hand": 4,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.739,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.261
+      },
+      {
+        "action": "call",
+        "amount": 198,
+        "hand": 4,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "6h",
+          "5s",
+          "4h",
+          "7h"
+        ],
+        "dealt": [
+          "7h"
+        ],
+        "hand": 4,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.786,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.214
+      },
+      {
+        "action": "raise",
+        "amount": 747,
+        "hand": 4,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.778,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.222
+      },
+      {
+        "action": "call",
+        "amount": 747,
+        "hand": 4,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "6h",
+          "5s",
+          "4h",
+          "7h",
+          "Js"
+        ],
+        "dealt": [
+          "Js"
+        ],
+        "hand": 4,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.732,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.268
+      },
+      {
+        "action": "raise",
+        "amount": 3237,
+        "hand": 4,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.778,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.222
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 4,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "6h",
+          "5s",
+          "4h",
+          "7h",
+          "Js"
+        ],
+        "chips": [
+          18755,
+          21245
+        ],
+        "deltas": [
+          -1245,
+          1245
+        ],
+        "hand": 4,
+        "net": [
+          429,
+          -429
+        ],
+        "pot": 2490,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 5,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 5,
+        "holes": [
+          [
+            "8h",
+            "Ad"
+          ],
+          [
+            "4c",
+            "2c"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.906,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.094
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 5,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 5,
+        "net": [
+          479,
+          -479
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 6,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 6,
+        "holes": [
+          [
+            "8d",
+            "8s"
+          ],
+          [
+            "4c",
+            "6d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 6,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 6,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 6,
+        "net": [
+          579,
+          -579
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 7,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 7,
+        "holes": [
+          [
+            "3c",
+            "Jc"
+          ],
+          [
+            "Jh",
+            "9c"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 7,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 7,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "5d",
+          "3d",
+          "Td"
+        ],
+        "dealt": [
+          "5d",
+          "3d",
+          "Td"
+        ],
+        "hand": 7,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.779,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.221
+      },
+      {
+        "action": "raise",
+        "amount": 198,
+        "hand": 7,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.882,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.118
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 7,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "5d",
+          "3d",
+          "Td"
+        ],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 7,
+        "net": [
+          879,
+          -879
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 8,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 8,
+        "holes": [
+          [
+            "4s",
+            "Ah"
+          ],
+          [
+            "3s",
+            "Qc"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.911,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.089
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 8,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 8,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "9c",
+          "5c",
+          "3d"
+        ],
+        "dealt": [
+          "9c",
+          "5c",
+          "3d"
+        ],
+        "hand": 8,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.791,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.209
+      },
+      {
+        "action": "raise",
+        "amount": 198,
+        "hand": 8,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.778,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.222
+      },
+      {
+        "action": "call",
+        "amount": 198,
+        "hand": 8,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "9c",
+          "5c",
+          "3d",
+          "7c"
+        ],
+        "dealt": [
+          "7c"
+        ],
+        "hand": 8,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.792,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.208
+      },
+      {
+        "action": "raise",
+        "amount": 498,
+        "hand": 8,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.777,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.223
+      },
+      {
+        "action": "call",
+        "amount": 498,
+        "hand": 8,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "9c",
+          "5c",
+          "3d",
+          "7c",
+          "Ac"
+        ],
+        "dealt": [
+          "Ac"
+        ],
+        "hand": 8,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.838,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.162
+      },
+      {
+        "action": "raise",
+        "amount": 2589,
+        "hand": 8,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.782,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.218
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 8,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "9c",
+          "5c",
+          "3d",
+          "7c",
+          "Ac"
+        ],
+        "chips": [
+          19004,
+          20996
+        ],
+        "deltas": [
+          -996,
+          996
+        ],
+        "hand": 8,
+        "net": [
+          -117,
+          117
+        ],
+        "pot": 1992,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 9,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 9,
+        "holes": [
+          [
+            "5s",
+            "7d"
+          ],
+          [
+            "3c",
+            "Kh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.914,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.086
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 9,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.911,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.089
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 9,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19900,
+          20100
+        ],
+        "deltas": [
+          -100,
+          100
+        ],
+        "hand": 9,
+        "net": [
+          -217,
+          217
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 10,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 10,
+        "holes": [
+          [
+            "9s",
+            "3h"
+          ],
+          [
+            "9c",
+            "Ts"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.899,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.101
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 10,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 10,
+        "net": [
+          -267,
+          267
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 11,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 11,
+        "holes": [
+          [
+            "6h",
+            "Ks"
+          ],
+          [
+            "Js",
+            "Kd"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 11,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.876,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.124
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 11,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8h",
+          "Qs",
+          "9d"
+        ],
+        "dealt": [
+          "8h",
+          "Qs",
+          "9d"
+        ],
+        "hand": 11,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.775,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.225
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 11,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.77,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.23
+      },
+      {
+        "action": "raise",
+        "amount": 277,
+        "hand": 11,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.774,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.226
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 11,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8h",
+          "Qs",
+          "9d"
+        ],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 11,
+        "net": [
+          -567,
+          567
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 12,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 12,
+        "holes": [
+          [
+            "8s",
+            "Qs"
+          ],
+          [
+            "Jh",
+            "4c"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.933,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.067
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 12,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 12,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 12,
+        "net": [
+          -467,
+          467
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 13,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 13,
+        "holes": [
+          [
+            "9d",
+            "2s"
+          ],
+          [
+            "7c",
+            "As"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.979,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.021
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 13,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 13,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19900,
+          20100
+        ],
+        "deltas": [
+          -100,
+          100
+        ],
+        "hand": 13,
+        "net": [
+          -567,
+          567
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 14,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 14,
+        "holes": [
+          [
+            "6s",
+            "2c"
+          ],
+          [
+            "Ad",
+            "Th"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 14,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 14,
+        "net": [
+          -617,
+          617
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 15,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 15,
+        "holes": [
+          [
+            "Jc",
+            "7s"
+          ],
+          [
+            "As",
+            "Ad"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.902,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.098
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 15,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 15,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "9d",
+          "Qh",
+          "7h"
+        ],
+        "dealt": [
+          "9d",
+          "Qh",
+          "7h"
+        ],
+        "hand": 15,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.774,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.226
+      },
+      {
+        "action": "raise",
+        "amount": 198,
+        "hand": 15,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.792,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.208
+      },
+      {
+        "action": "raise",
+        "amount": 399,
+        "hand": 15,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.772,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.228
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 15,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "9d",
+          "Qh",
+          "7h"
+        ],
+        "chips": [
+          19502,
+          20498
+        ],
+        "deltas": [
+          -498,
+          498
+        ],
+        "hand": 15,
+        "net": [
+          -1115,
+          1115
+        ],
+        "pot": 996,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 16,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 16,
+        "holes": [
+          [
+            "Kd",
+            "Qd"
+          ],
+          [
+            "Tc",
+            "Ac"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.912,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.088
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 16,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.911,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.089
+      },
+      {
+        "action": "raise",
+        "amount": 850,
+        "hand": 16,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "call",
+        "amount": 550,
+        "hand": 16,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Ks",
+          "Ts",
+          "4s"
+        ],
+        "dealt": [
+          "Ks",
+          "Ts",
+          "4s"
+        ],
+        "hand": 16,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.793,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.207
+      },
+      {
+        "action": "raise",
+        "amount": 561,
+        "hand": 16,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.778,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.222
+      },
+      {
+        "action": "call",
+        "amount": 561,
+        "hand": 16,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Ks",
+          "Ts",
+          "4s",
+          "9h"
+        ],
+        "dealt": [
+          "9h"
+        ],
+        "hand": 16,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.796,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.204
+      },
+      {
+        "action": "raise",
+        "amount": 931,
+        "hand": 16,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.758,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.242
+      },
+      {
+        "action": "call",
+        "amount": 931,
+        "hand": 16,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Ks",
+          "Ts",
+          "4s",
+          "9h",
+          "7h"
+        ],
+        "dealt": [
+          "7h"
+        ],
+        "hand": 16,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.793,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.207
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 16,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.765,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.235
+      },
+      {
+        "action": "raise",
+        "amount": 2000,
+        "hand": 16,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.793,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.207
+      },
+      {
+        "action": "call",
+        "amount": 2000,
+        "hand": 16,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Ks",
+          "Ts",
+          "4s",
+          "9h",
+          "7h"
+        ],
+        "chips": [
+          24342,
+          15658
+        ],
+        "deltas": [
+          4342,
+          -4342
+        ],
+        "hand": 16,
+        "net": [
+          3227,
+          -3227
+        ],
+        "pot": 8684,
+        "reason": "showdown",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 17,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 17,
+        "holes": [
+          [
+            "8d",
+            "Ad"
+          ],
+          [
+            "3d",
+            "8h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 17,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 17,
+        "net": [
+          3277,
+          -3277
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 18,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 18,
+        "holes": [
+          [
+            "8h",
+            "8c"
+          ],
+          [
+            "2s",
+            "Kd"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 18,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 18,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Jc",
+          "5h",
+          "3s"
+        ],
+        "dealt": [
+          "Jc",
+          "5h",
+          "3s"
+        ],
+        "hand": 18,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.787,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.213
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 18,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.776,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.224
+      },
+      {
+        "action": "raise",
+        "amount": 253,
+        "hand": 18,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.783,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.217
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 18,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Jc",
+          "5h",
+          "3s"
+        ],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 18,
+        "net": [
+          3577,
+          -3577
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 19,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 19,
+        "holes": [
+          [
+            "6h",
+            "2d"
+          ],
+          [
+            "4d",
+            "8h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 19,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 19,
+        "net": [
+          3627,
+          -3627
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 20,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 20,
+        "holes": [
+          [
+            "Js",
+            "2s"
+          ],
+          [
+            "Ah",
+            "Tc"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 20,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.964,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.036
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 20,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8c",
+          "6c",
+          "6h"
+        ],
+        "dealt": [
+          "8c",
+          "6c",
+          "6h"
+        ],
+        "hand": 20,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "allin",
+        "amount": 19700,
+        "hand": 20,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.722,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.278
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 20,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8c",
+          "6c",
+          "6h"
+        ],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 20,
+        "net": [
+          3327,
+          -3327
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 21,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 21,
+        "holes": [
+          [
+            "Qd",
+            "As"
+          ],
+          [
+            "3c",
+            "2d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.906,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.094
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 21,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 21,
+        "net": [
+          3377,
+          -3377
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 22,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 22,
+        "holes": [
+          [
+            "7d",
+            "4h"
+          ],
+          [
+            "3c",
+            "4s"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.896,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.104
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 22,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 22,
+        "net": [
+          3327,
+          -3327
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 23,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 23,
+        "holes": [
+          [
+            "8c",
+            "2c"
+          ],
+          [
+            "9c",
+            "Ac"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 23,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 23,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19900,
+          20100
+        ],
+        "deltas": [
+          -100,
+          100
+        ],
+        "hand": 23,
+        "net": [
+          3227,
+          -3227
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 24,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 24,
+        "holes": [
+          [
+            "4d",
+            "6h"
+          ],
+          [
+            "2c",
+            "Ts"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 24,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 24,
+        "net": [
+          3177,
+          -3177
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 25,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 25,
+        "holes": [
+          [
+            "Qc",
+            "Ac"
+          ],
+          [
+            "8d",
+            "4s"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 25,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 25,
+        "net": [
+          3227,
+          -3227
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 26,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 26,
+        "holes": [
+          [
+            "Ah",
+            "Tc"
+          ],
+          [
+            "2s",
+            "5h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 26,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 26,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.832,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.168
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 26,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 26,
+        "net": [
+          2927,
+          -2927
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 27,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 27,
+        "holes": [
+          [
+            "6c",
+            "4s"
+          ],
+          [
+            "Kh",
+            "8h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 27,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.968,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.032
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 27,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19900,
+          20100
+        ],
+        "deltas": [
+          -100,
+          100
+        ],
+        "hand": 27,
+        "net": [
+          2827,
+          -2827
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 28,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 28,
+        "holes": [
+          [
+            "Kc",
+            "5d"
+          ],
+          [
+            "Kh",
+            "Ks"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 28,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "raise",
+        "amount": 850,
+        "hand": 28,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 28,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 28,
+        "net": [
+          2527,
+          -2527
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 29,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 29,
+        "holes": [
+          [
+            "2h",
+            "Ad"
+          ],
+          [
+            "As",
+            "6d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 29,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.906,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.094
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 29,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "2d",
+          "2c",
+          "Tc"
+        ],
+        "dealt": [
+          "2d",
+          "2c",
+          "Tc"
+        ],
+        "hand": 29,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.705,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.295
+      },
+      {
+        "action": "raise",
+        "amount": 346,
+        "hand": 29,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.782,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.218
+      },
+      {
+        "action": "call",
+        "amount": 346,
+        "hand": 29,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "2d",
+          "2c",
+          "Tc",
+          "5d"
+        ],
+        "dealt": [
+          "5d"
+        ],
+        "hand": 29,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.776,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.224
+      },
+      {
+        "action": "raise",
+        "amount": 751,
+        "hand": 29,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "allin",
+        "amount": 19354,
+        "hand": 29,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.778,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.222
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 29,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "2d",
+          "2c",
+          "Tc",
+          "5d"
+        ],
+        "chips": [
+          18603,
+          21397
+        ],
+        "deltas": [
+          -1397,
+          1397
+        ],
+        "hand": 29,
+        "net": [
+          1130,
+          -1130
+        ],
+        "pot": 2794,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 30,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 30,
+        "holes": [
+          [
+            "Tc",
+            "4h"
+          ],
+          [
+            "2h",
+            "9c"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.974,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.026
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 30,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 30,
+        "net": [
+          1080,
+          -1080
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 31,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 31,
+        "holes": [
+          [
+            "3c",
+            "2h"
+          ],
+          [
+            "8s",
+            "7d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.911,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.089
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 31,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 31,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19900,
+          20100
+        ],
+        "deltas": [
+          -100,
+          100
+        ],
+        "hand": 31,
+        "net": [
+          980,
+          -980
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 32,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 32,
+        "holes": [
+          [
+            "Ac",
+            "8c"
+          ],
+          [
+            "5s",
+            "Jh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 32,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 32,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 32,
+        "net": [
+          1080,
+          -1080
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 33,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 33,
+        "holes": [
+          [
+            "8h",
+            "3h"
+          ],
+          [
+            "Ah",
+            "Qd"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 33,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 33,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19900,
+          20100
+        ],
+        "deltas": [
+          -100,
+          100
+        ],
+        "hand": 33,
+        "net": [
+          980,
+          -980
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 34,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 34,
+        "holes": [
+          [
+            "5h",
+            "Ac"
+          ],
+          [
+            "Tc",
+            "9s"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 34,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.9,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.1
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 34,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "As",
+          "7c",
+          "Th"
+        ],
+        "dealt": [
+          "As",
+          "7c",
+          "Th"
+        ],
+        "hand": 34,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.786,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.214
+      },
+      {
+        "action": "raise",
+        "amount": 198,
+        "hand": 34,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.776,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.224
+      },
+      {
+        "action": "raise",
+        "amount": 399,
+        "hand": 34,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.791,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.209
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 34,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "As",
+          "7c",
+          "Th"
+        ],
+        "chips": [
+          20498,
+          19502
+        ],
+        "deltas": [
+          498,
+          -498
+        ],
+        "hand": 34,
+        "net": [
+          1478,
+          -1478
+        ],
+        "pot": 996,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 35,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 35,
+        "holes": [
+          [
+            "9d",
+            "Ac"
+          ],
+          [
+            "Qh",
+            "As"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 35,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 35,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8s",
+          "Kd",
+          "Jh"
+        ],
+        "dealt": [
+          "8s",
+          "Kd",
+          "Jh"
+        ],
+        "hand": 35,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.77,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.23
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 35,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.787,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.213
+      },
+      {
+        "action": "raise",
+        "amount": 202,
+        "hand": 35,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.773,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.227
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 35,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8s",
+          "Kd",
+          "Jh"
+        ],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 35,
+        "net": [
+          1178,
+          -1178
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 36,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 36,
+        "holes": [
+          [
+            "4c",
+            "3d"
+          ],
+          [
+            "Ks",
+            "2c"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 36,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 36,
+        "net": [
+          1128,
+          -1128
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 37,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 37,
+        "holes": [
+          [
+            "8d",
+            "7d"
+          ],
+          [
+            "Qh",
+            "8h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.929,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.071
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 37,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 37,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Jh",
+          "4c",
+          "6h"
+        ],
+        "dealt": [
+          "Jh",
+          "4c",
+          "6h"
+        ],
+        "hand": 37,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.845,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.155
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 37,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.792,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.208
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 37,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Jh",
+          "4c",
+          "6h",
+          "5h"
+        ],
+        "dealt": [
+          "5h"
+        ],
+        "hand": 37,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.766,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.234
+      },
+      {
+        "action": "raise",
+        "amount": 450,
+        "hand": 37,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.789,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.211
+      },
+      {
+        "action": "raise",
+        "amount": 1950,
+        "hand": 37,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.844,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.156
+      },
+      {
+        "action": "call",
+        "amount": 1500,
+        "hand": 37,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Jh",
+          "4c",
+          "6h",
+          "5h",
+          "Qd"
+        ],
+        "dealt": [
+          "Qd"
+        ],
+        "hand": 37,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.771,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.229
+      },
+      {
+        "action": "raise",
+        "amount": 1000,
+        "hand": 37,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.97,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.03
+      },
+      {
+        "action": "allin",
+        "amount": 17750,
+        "hand": 37,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.775,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.225
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 37,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Jh",
+          "4c",
+          "6h",
+          "5h",
+          "Qd"
+        ],
+        "chips": [
+          16750,
+          23250
+        ],
+        "deltas": [
+          -3250,
+          3250
+        ],
+        "hand": 37,
+        "net": [
+          -2122,
+          2122
+        ],
+        "pot": 6500,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 38,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 38,
+        "holes": [
+          [
+            "3h",
+            "2h"
+          ],
+          [
+            "6d",
+            "Jc"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 38,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 38,
+        "net": [
+          -2172,
+          2172
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 39,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 39,
+        "holes": [
+          [
+            "6h",
+            "Kc"
+          ],
+          [
+            "5c",
+            "Jh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 39,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 39,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "5d",
+          "7h",
+          "Ac"
+        ],
+        "dealt": [
+          "5d",
+          "7h",
+          "Ac"
+        ],
+        "hand": 39,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.873,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.127
+      },
+      {
+        "action": "allin",
+        "amount": 19700,
+        "hand": 39,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.792,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.208
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 39,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "5d",
+          "7h",
+          "Ac"
+        ],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 39,
+        "net": [
+          -1872,
+          1872
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 40,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 40,
+        "holes": [
+          [
+            "8d",
+            "Jc"
+          ],
+          [
+            "5c",
+            "9d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.982,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.018
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 40,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 40,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 40,
+        "net": [
+          -1772,
+          1772
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 41,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 41,
+        "holes": [
+          [
+            "Ad",
+            "9h"
+          ],
+          [
+            "Kh",
+            "Qs"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.913,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.087
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 41,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.902,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.098
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 41,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "2c",
+          "Ac",
+          "Jd"
+        ],
+        "dealt": [
+          "2c",
+          "Ac",
+          "Jd"
+        ],
+        "hand": 41,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.773,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.227
+      },
+      {
+        "action": "raise",
+        "amount": 228,
+        "hand": 41,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.792,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.208
+      },
+      {
+        "action": "call",
+        "amount": 228,
+        "hand": 41,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "2c",
+          "Ac",
+          "Jd",
+          "Tc"
+        ],
+        "dealt": [
+          "Tc"
+        ],
+        "hand": 41,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.897,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.103
+      },
+      {
+        "action": "allin",
+        "amount": 19472,
+        "hand": 41,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.791,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.209
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 41,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "2c",
+          "Ac",
+          "Jd",
+          "Tc"
+        ],
+        "chips": [
+          20528,
+          19472
+        ],
+        "deltas": [
+          528,
+          -528
+        ],
+        "hand": 41,
+        "net": [
+          -1244,
+          1244
+        ],
+        "pot": 1056,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 42,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 42,
+        "holes": [
+          [
+            "7s",
+            "Tc"
+          ],
+          [
+            "Ad",
+            "6h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.906,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.094
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 42,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.904,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.096
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 42,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8c",
+          "Td",
+          "Jd"
+        ],
+        "dealt": [
+          "8c",
+          "Td",
+          "Jd"
+        ],
+        "hand": 42,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.784,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.216
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 42,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.777,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.223
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 42,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8c",
+          "Td",
+          "Jd",
+          "4s"
+        ],
+        "dealt": [
+          "4s"
+        ],
+        "hand": 42,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.787,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.213
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 42,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.723,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.277
+      },
+      {
+        "action": "raise",
+        "amount": 228,
+        "hand": 42,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.787,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.213
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 42,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8c",
+          "Td",
+          "Jd",
+          "4s"
+        ],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 42,
+        "net": [
+          -944,
+          944
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 43,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 43,
+        "holes": [
+          [
+            "6c",
+            "Kc"
+          ],
+          [
+            "Qd",
+            "As"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 43,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 43,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "5c",
+          "Ah",
+          "7d"
+        ],
+        "dealt": [
+          "5c",
+          "Ah",
+          "7d"
+        ],
+        "hand": 43,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.777,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.223
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 43,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.785,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.215
+      },
+      {
+        "action": "raise",
+        "amount": 228,
+        "hand": 43,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.767,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.233
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 43,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "5c",
+          "Ah",
+          "7d"
+        ],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 43,
+        "net": [
+          -1244,
+          1244
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 44,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 44,
+        "holes": [
+          [
+            "9d",
+            "6s"
+          ],
+          [
+            "2d",
+            "8h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.911,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.089
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 44,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.898,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.102
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 44,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 44,
+        "net": [
+          -1144,
+          1144
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 45,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 45,
+        "holes": [
+          [
+            "Qh",
+            "8d"
+          ],
+          [
+            "4s",
+            "Qd"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.998,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.002
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 45,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.905,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.095
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 45,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "3s",
+          "Ac",
+          "Jd"
+        ],
+        "dealt": [
+          "3s",
+          "Ac",
+          "Jd"
+        ],
+        "hand": 45,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.841,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.159
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 45,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.787,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.213
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 45,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "3s",
+          "Ac",
+          "Jd",
+          "Tc"
+        ],
+        "dealt": [
+          "Tc"
+        ],
+        "hand": 45,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.771,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.229
+      },
+      {
+        "action": "raise",
+        "amount": 330,
+        "hand": 45,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.709,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.291
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 45,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "3s",
+          "Ac",
+          "Jd",
+          "Tc"
+        ],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 45,
+        "net": [
+          -844,
+          844
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 46,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 46,
+        "holes": [
+          [
+            "4s",
+            "3s"
+          ],
+          [
+            "Ts",
+            "6s"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.902,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.098
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 46,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 46,
+        "net": [
+          -894,
+          894
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 47,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 47,
+        "holes": [
+          [
+            "Jc",
+            "9h"
+          ],
+          [
+            "Td",
+            "6d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.906,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.094
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 47,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 47,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Js",
+          "2c",
+          "2h"
+        ],
+        "dealt": [
+          "Js",
+          "2c",
+          "2h"
+        ],
+        "hand": 47,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.721,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.279
+      },
+      {
+        "action": "raise",
+        "amount": 378,
+        "hand": 47,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.463,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.537
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 47,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "Js",
+          "2c",
+          "2h"
+        ],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 47,
+        "net": [
+          -594,
+          594
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 48,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 48,
+        "holes": [
+          [
+            "7d",
+            "7c"
+          ],
+          [
+            "2s",
+            "3c"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 48,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 48,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 48,
+        "net": [
+          -494,
+          494
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 49,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 49,
+        "holes": [
+          [
+            "4d",
+            "4h"
+          ],
+          [
+            "4c",
+            "9s"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.904,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.096
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 49,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 49,
+        "net": [
+          -444,
+          444
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 50,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 50,
+        "holes": [
+          [
+            "Jc",
+            "5d"
+          ],
+          [
+            "5h",
+            "5c"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 50,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.902,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.098
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 50,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8c",
+          "2c",
+          "Td"
+        ],
+        "dealt": [
+          "8c",
+          "2c",
+          "Td"
+        ],
+        "hand": 50,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.787,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.213
+      },
+      {
+        "action": "raise",
+        "amount": 198,
+        "hand": 50,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.769,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.231
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 50,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8c",
+          "2c",
+          "Td"
+        ],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 50,
+        "net": [
+          -744,
+          744
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 51,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 51,
+        "holes": [
+          [
+            "3c",
+            "6h"
+          ],
+          [
+            "9s",
+            "As"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 51,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 51,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19900,
+          20100
+        ],
+        "deltas": [
+          -100,
+          100
+        ],
+        "hand": 51,
+        "net": [
+          -844,
+          844
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 52,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 52,
+        "holes": [
+          [
+            "5d",
+            "3s"
+          ],
+          [
+            "Jd",
+            "3h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.905,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.095
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 52,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          19950,
+          20050
+        ],
+        "deltas": [
+          -50,
+          50
+        ],
+        "hand": 52,
+        "net": [
+          -894,
+          894
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 53,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 53,
+        "holes": [
+          [
+            "Qh",
+            "3s"
+          ],
+          [
+            "5s",
+            "Jh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 53,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 53,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8d",
+          "9c",
+          "2h"
+        ],
+        "dealt": [
+          "8d",
+          "9c",
+          "2h"
+        ],
+        "hand": 53,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.769,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.231
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 53,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.777,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.223
+      },
+      {
+        "action": "raise",
+        "amount": 220,
+        "hand": 53,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.77,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.23
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 53,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "8d",
+          "9c",
+          "2h"
+        ],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 53,
+        "net": [
+          -1194,
+          1194
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 54,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 54,
+        "holes": [
+          [
+            "5s",
+            "Qh"
+          ],
+          [
+            "8d",
+            "Ad"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 54,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.835,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.165
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 54,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 54,
+        "net": [
+          -1094,
+          1094
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 55,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 55,
+        "holes": [
+          [
+            "Kd",
+            "9d"
+          ],
+          [
+            "Ts",
+            "6d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 55,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 55,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.834,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.166
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 55,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 55,
+        "net": [
+          -794,
+          794
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 56,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 56,
+        "holes": [
+          [
+            "Th",
+            "Tc"
+          ],
+          [
+            "8h",
+            "3h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 56,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.912,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.088
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 56,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 56,
+        "net": [
+          -694,
+          694
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 57,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 57,
+        "holes": [
+          [
+            "5d",
+            "Qc"
+          ],
+          [
+            "Ac",
+            "Js"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 57,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "call",
+        "amount": 200,
+        "hand": 57,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "6d",
+          "7d",
+          "3c"
+        ],
+        "dealt": [
+          "6d",
+          "7d",
+          "3c"
+        ],
+        "hand": 57,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.764,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.236
+      },
+      {
+        "action": "check",
+        "amount": 0,
+        "hand": 57,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.517,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.483
+      },
+      {
+        "action": "raise",
+        "amount": 217,
+        "hand": 57,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.736,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.264
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 57,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "board": [
+          "6d",
+          "7d",
+          "3c"
+        ],
+        "chips": [
+          19700,
+          20300
+        ],
+        "deltas": [
+          -300,
+          300
+        ],
+        "hand": 57,
+        "net": [
+          -994,
+          994
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 58,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 58,
+        "holes": [
+          [
+            "Td",
+            "2h"
+          ],
+          [
+            "3d",
+            "Qh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.908,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.092
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 58,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.833,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.167
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 58,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 58,
+        "net": [
+          -894,
+          894
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 59,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 59,
+        "holes": [
+          [
+            "6s",
+            "4h"
+          ],
+          [
+            "Ac",
+            "Ts"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.905,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.095
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 59,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.911,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.089
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 59,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.812,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.188
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 59,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20300,
+          19700
+        ],
+        "deltas": [
+          300,
+          -300
+        ],
+        "hand": 59,
+        "net": [
+          -594,
+          594
+        ],
+        "pot": 600,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 60,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 60,
+        "holes": [
+          [
+            "Jd",
+            "9d"
+          ],
+          [
+            "Js",
+            "Jh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.904,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.096
+      },
+      {
+        "action": "raise",
+        "amount": 300,
+        "hand": 60,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.985,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.015
+      },
+      {
+        "action": "raise",
+        "amount": 850,
+        "hand": 60,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 60,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.831,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.169
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 60,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [
+          "6s",
+          "5s",
+          "8d"
+        ],
+        "dealt": [
+          "6s",
+          "5s",
+          "8d"
+        ],
+        "hand": 60,
+        "street": "flop",
+        "type": "deal_board"
+      },
+      {
+        "board": [
+          "6s",
+          "5s",
+          "8d",
+          "Kd"
+        ],
+        "dealt": [
+          "Kd"
+        ],
+        "hand": 60,
+        "street": "turn",
+        "type": "deal_board"
+      },
+      {
+        "board": [
+          "6s",
+          "5s",
+          "8d",
+          "Kd",
+          "5c"
+        ],
+        "dealt": [
+          "5c"
+        ],
+        "hand": 60,
+        "street": "river",
+        "type": "deal_board"
+      },
+      {
+        "board": [
+          "6s",
+          "5s",
+          "8d",
+          "Kd",
+          "5c"
+        ],
+        "chips": [
+          0,
+          40000
+        ],
+        "deltas": [
+          -20000,
+          20000
+        ],
+        "hand": 60,
+        "net": [
+          -20594,
+          20594
+        ],
+        "pot": 40000,
+        "reason": "showdown",
+        "type": "settle",
+        "winners": [
+          1
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 61,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 61,
+        "holes": [
+          [
+            "9s",
+            "Ah"
+          ],
+          [
+            "Qs",
+            "Ac"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.932,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.068
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 61,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 61,
+        "net": [
+          -20544,
+          20544
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 62,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 62,
+        "holes": [
+          [
+            "6h",
+            "8c"
+          ],
+          [
+            "4d",
+            "7h"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 62,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.912,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.088
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 62,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 62,
+        "net": [
+          -20444,
+          20444
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 63,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 63,
+        "holes": [
+          [
+            "4h",
+            "Ad"
+          ],
+          [
+            "8s",
+            "As"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 63,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 63,
+        "net": [
+          -20394,
+          20394
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 64,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 64,
+        "holes": [
+          [
+            "9d",
+            "2d"
+          ],
+          [
+            "Ac",
+            "5d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.9,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.1
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 64,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 64,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 64,
+        "net": [
+          -20294,
+          20294
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 65,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 65,
+        "holes": [
+          [
+            "9s",
+            "2c"
+          ],
+          [
+            "2h",
+            "Jc"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 65,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 65,
+        "net": [
+          -20244,
+          20244
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 66,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 66,
+        "holes": [
+          [
+            "3d",
+            "7s"
+          ],
+          [
+            "5c",
+            "2d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.904,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.096
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 66,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 66,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 66,
+        "net": [
+          -20144,
+          20144
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 67,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 67,
+        "holes": [
+          [
+            "3h",
+            "3c"
+          ],
+          [
+            "6c",
+            "Kh"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 67,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 67,
+        "net": [
+          -20094,
+          20094
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 1,
+        "chips": [
+          19950,
+          19900
+        ],
+        "hand": 68,
+        "sb": 0,
+        "type": "hand_start"
+      },
+      {
+        "hand": 68,
+        "holes": [
+          [
+            "8d",
+            "8c"
+          ],
+          [
+            "Qh",
+            "3d"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.91,
+        "seat": 0,
+        "type": "time_used",
+        "used": 0.09
+      },
+      {
+        "action": "allin",
+        "amount": 20000,
+        "hand": 68,
+        "player": 0,
+        "type": "action"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.909,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.091
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 68,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20100,
+          19900
+        ],
+        "deltas": [
+          100,
+          -100
+        ],
+        "hand": 68,
+        "net": [
+          -19994,
+          19994
+        ],
+        "pot": 200,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "bb": 0,
+        "chips": [
+          19900,
+          19950
+        ],
+        "hand": 69,
+        "sb": 1,
+        "type": "hand_start"
+      },
+      {
+        "hand": 69,
+        "holes": [
+          [
+            "4c",
+            "3h"
+          ],
+          [
+            "As",
+            "Jd"
+          ]
+        ],
+        "type": "deal_hole"
+      },
+      {
+        "budget": 60,
+        "remaining": 59.907,
+        "seat": 1,
+        "type": "time_used",
+        "used": 0.093
+      },
+      {
+        "action": "fold",
+        "amount": 0,
+        "hand": 69,
+        "player": 1,
+        "type": "action"
+      },
+      {
+        "board": [],
+        "chips": [
+          20050,
+          19950
+        ],
+        "deltas": [
+          50,
+          -50
+        ],
+        "hand": 69,
+        "net": [
+          -19944,
+          19944
+        ],
+        "pot": 100,
+        "reason": "fold",
+        "type": "settle",
+        "winners": [
+          0
+        ]
+      },
+      {
+        "deltas": [
+          -19944,
+          19944
+        ],
+        "reason": "completed",
+        "type": "match_end",
+        "winner": 1
+      }
+    ],
+    "match_id": "20260910220029-840a5d8b",
+    "updated_at": "2026-09-10T22:05:51"
+  }
+}

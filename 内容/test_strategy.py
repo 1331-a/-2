@@ -198,7 +198,11 @@ ahead_air = req(my_id=0, my_chips=19500, my_cards=[24, 17],
                          {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}])
 m = foldy()  # 即使对手爱弃牌，领先时也降波动
 a = act(ahead_air, m)
-check("大领先锁胜:直接弃牌", a == {"act": "fold"}, str(a))
+# 【2026-09-11】对手已 check → to_call==0，fold 非法 → 应 check（同样不再投入）
+check("大领先锁胜:不投入(fold/check，to_call=0 时必为 check)",
+      a.get("act") in ("fold", "check"), str(a))
+check("大领先锁胜:to_call==0 时必须 check（fold 会被平台拒收）",
+      a == {"act": "check"}, str(a))
 
 # ---------- 4b. 锁胜弃牌边界 ----------
 # 70 手赛制，第 65 手，领先 6000：阈值=2.5×200×5=2500 → 触发锁胜（AA 也弃）

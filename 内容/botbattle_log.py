@@ -122,7 +122,10 @@ def load_botbattle(path, my_seat=0, use_hand=None):
                                      for c in (holes or [[], []])[my_seat]],
                         "public_cards": [card_to_platform(c) for c in board],
                         "history": [_action_to_history(a, st) for a, st in actions],
-                        "hand": (hand_idx or 0) + 1,     # botzone 用 1-based
+                        # 【2026-09-11 修正】原样发平台 hand（0-based）——
+                        # 必须与真实请求一致，否则重放时 hands_left 会多算一手，
+                        # 锁赢线虚高 ~300（就是「锁赢还加注」的根因）。
+                        "hand": hand_idx,
                         "max_hand": num_hands,
                         "total_win_chips": total_win[:],
                         "total_win_games": [0, 0],
@@ -131,7 +134,7 @@ def load_botbattle(path, my_seat=0, use_hand=None):
                     _act = str(ev.get("action", ""))
                     _amt = int(ev.get("amount", 0) or 0)
                     _actual = ("%s %d" % (_act, _amt)) if _amt else _act
-                    out.append((req, {"hand": (hand_idx or 0) + 1,
+                    out.append((req, {"hand": (hand_idx or 0) + 1,   # 显示用 1-based
                                       "street": street,
                                       "chips": chips[:],
                                       "dealer": dealer,

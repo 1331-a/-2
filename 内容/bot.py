@@ -28,6 +28,19 @@ from strategy import decide
 
 _ACT_TO_RESPONSE = {"fold": -1, "allin": -2, "call": 0, "check": 0}
 
+# 【2026-09-11】诊断用：per-hand 请求字段自检 + 安全网修正播报
+_LAST_HAND = [None]
+
+
+def _log(msg):
+    """诊断输出 —— 必须写 stderr（stdout 是平台协议通道）。"""
+    try:
+        import sys as _sys
+        _sys.stderr.write(msg + "\n")
+        _sys.stderr.flush()
+    except Exception:
+        pass
+
 
 def _to_response(action):
     """把内部动作 dict 转为 response 整数。"""
@@ -155,9 +168,32 @@ def _handle_line(obj):
                 # 可用环境变量 WB_POKER_DEBUG=0 关闭
                 import os as _os
                 _dbg = _os.environ.get("WB_POKER_DEBUG", "1") != "0"
+                # 【2026-09-11】每手打印一次请求关键字段——换平台/换赛季
+                # （如 BotArena）时第一时间看出协议是否变了（字段缺失/基准变化）。
+                try:
+                    if _dbg and state.hand_num != _LAST_HAND[0]:
+                        _LAST_HAND[0] = state.hand_num
+                        _log("[REQ] hand=%s max_hand=%s my_chips=%s dealer=%s "
+                             "twc=%s cards=%d pub=%d hist=%d"
+                             % (state.hand_num, state.max_hand, state.my_chips,
+                                state.dealer_id, list(state.total_win_chips),
+                                len(state.hole or []), len(state.board or []),
+                                len(request.get("history") or [])))
+                except Exception:
+                    pass
                 action = decide(state, model, ctx, debug=_dbg)
-                resp = _to_response(action)
-                resp = _final_guard(state, resp)
+                _raw = _to_response(action)
+                resp = _final_guard(state, _raw)
+                # 安全网是否改过动作？（若这里频繁出现，说明决策层产出了
+                # 平台不接受的动作 —— 例如 to_call==0 时的 fold）
+                try:
+                    if _dbg and resp != _raw:
+                        _log("[GUARD] 安全网修正 %s → resp=%s (to_call=%s "
+                             "my_left=%s any_allin=%s)"
+                             % (action.get("act"), resp, state.to_call,
+                                state.my_left, state.any_allin))
+                except Exception:
+                    pass
                 model.ctx_dict = ctx.to_dict()
                 data_out = model.to_json()
             except Exception:

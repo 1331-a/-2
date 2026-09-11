@@ -54,7 +54,8 @@ def main():
     lock_pts, lock_bad, odd = [], [], []
     for i, req in enumerate(reqs):
         st = parse_request(req)
-        hl = st.max_hand - st.hand_num
+        from strategy import _hands_left
+        hl = _hands_left(st)
         lead = st.total_win_chips[st.my_id] - st.total_win_chips[st.opp_id]
         inv = INIT_CHIPS - st.my_chips
         bl = _blind_line(st, hl, own=True)
@@ -62,7 +63,9 @@ def main():
         is_lock = _fold_out_active(st)
         act = decide(st, OpponentModel()).get("act")
         m = metas[i] if (metas and i < len(metas) and metas[i]) else {}
-        tag = "第%s手/%s" % (st.hand_num, st.stage)
+        _mt = ((metas[i] or {}) if (metas and i < len(metas)) else {}) or {}
+        _dh = _mt.get("hand") or (st.hand_num + 1)
+        tag = "第%s手/%s" % (_dh, st.stage)
 
         if is_lock:
             lock_pts.append((tag, lead, thr, act))

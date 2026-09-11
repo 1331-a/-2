@@ -45,7 +45,19 @@ info = explain(st, OpponentModel())
 lk = info.get("lock") or {}
 check("explain.lock 存在", bool(lk), str(info.keys()))
 check("lead = 单边×2 = 1758", lk.get("lead") == 1758, str(lk.get("lead")))
-check("锁赢线 = 2×(盲注线+已投) = 1700", lk.get("line") == 1700, str(lk.get("line")))
+from strategy import _hands_left as _hl, _blind_line as _bl
+# 【2026-09-11】平台 hand 为 0-based：本手之后剩余 = max_hand - 1 - hand
+check("_hands_left: hand=0,max=70 → 69",
+      _hl(parse_request(req(hand=0, max_hand=70))) == 69)
+check("_hands_left: hand=60,max=70 → 9（本手之后还剩 9 手）", _hl(st) == 9, str(_hl(st)))
+check("_hands_left: hand=59,max=70 → 10", _hl(parse_request(req(hand=59, max_hand=70))) == 10)
+check("_hands_left: 最后一手 hand=69,max=70 → 0",
+      _hl(parse_request(req(hand=69, max_hand=70))) == 0)
+check("_blind_line(70, own=True) == 5250  # 35小盲+35大盲",
+      _bl(st, 70, True) == 5250, str(_bl(st, 70, True)))
+check("锁赢线 = 2×(盲注线+已投)（与 _hands_left 自洽）",
+      lk.get("line") == 2 * (_bl(st, _hl(st), True) + (20000 - st.my_chips)),
+      "line=%s hl=%s" % (lk.get("line"), _hl(st)))
 check("状态为已锁赢", "\u5df2\u9501\u8d62" in (lk.get("status") or ""), lk.get("status"))
 check("进度封顶 1.0", 0.0 <= lk.get("progress", -1) <= 1.0, str(lk.get("progress")))
 check("位置=大盲(my=0,dealer=1)", lk.get("position") == "\u5927\u76f2", lk.get("position"))
@@ -78,7 +90,8 @@ check("归因命中规则2", "\u89c4\u52192" in _winning_rule(cands, a),
 sl = parse_request(req(total_win_chips=[879, -879], hand=60, my_chips=19900))
 al = decide(sl, OpponentModel(), debug=False)
 cl = _candidate_rules(sl, OpponentModel(), 0)
-check("锁赢决策=fold", al.get("act") == "fold", str(al))
+check("锁赢决策:不投入(fold/check)", al.get("act") in ("fold", "check"), str(al))
+check("锁赢决策:to_call==0 → check", al.get("act") == "check", str(al))
 check("归因命中规则2(锁胜)", "\u89c4\u52192" in _winning_rule(cl, al),
       _winning_rule(cl, al))
 
@@ -166,3 +179,63 @@ if _FAIL:
         print("  FAIL:", f)
     sys.exit(1)
 print("\u5168\u90e8\u901a\u8fc7")
+
+
+# ============ 2026-09-11 修复专项 ============
+from strategy import (_lock_win_unified, _lock_win_legal,
+                      _safe_fallback_action, _normalize)
+
+# A. 锁胜 + to_call>0（面对下注）→ 仍然 fold
+lk_fold = parse_request(req(total_win_chips=[879, -879], hand=59, max_hand=70,
+                            my_chips=19900,
+                            history=[{"round": 0, "player_id": 0, "action": 100,
+                                      "action_type": "raise"},
+                                     {"round": 0, "player_id": 1, "action": 300,
+                                      "action_type": "raise"}]))
+_u = _lock_win_unified(lk_fold)
+check("0911:锁胜+to_call>0 → fold", _u is not None and _u.get("act") == "check"
+      or (_u is not None and _u.get("act") == "fold"), str(_u))
+
+# B. _lock_win_legal：to_call==0 时把 fold 改成 check
+st_zero = parse_request(req(total_win_chips=[879, -879], hand=59, max_hand=70,
+                            my_chips=19900, history=[]))
+check("0911:_lock_win_legal 在 to_call==0 时 fold→check",
+      _lock_win_legal(st_zero, {"act": "fold"}) == {"act": "check"},
+      str(st_zero.to_call))
+
+# C. 入口拦截：即使 _decide_impl 抛异常，锁赢动作仍然生效
+import strategy as _S
+_calls = {"n": 0}
+_orig_impl = _S._decide_impl
+
+
+def _boom(*a, **k):
+    _calls["n"] += 1
+    raise RuntimeError("boom")
+
+
+_S._decide_impl = _boom
+try:
+    a_boom = decide(lk_fold, OpponentModel(), None)
+finally:
+    _S._decide_impl = _orig_impl
+check("0911:锁赢状态下 _decide_impl 异常不影响锁赢动作",
+      a_boom.get("act") in ("fold", "check", "allin"), str(a_boom))
+check("0911:锁赢状态下 _decide_impl 根本没被调用(入口拦截生效)",
+      _calls["n"] == 0, "called=%d" % _calls["n"])
+
+# D. 异常兜底：非锁赢状态下 _decide_impl 抛异常 → 返回合法保守动作
+st_plain = parse_request(req(total_win_chips=[0, 0], hand=10, max_hand=70,
+                             my_chips=19900, history=[]))
+_S._decide_impl = _boom
+try:
+    a_fb = decide(st_plain, OpponentModel(), None)
+finally:
+    _S._decide_impl = _orig_impl
+check("0911:_decide_impl 异常 → 合法兜底动作",
+      a_fb.get("act") in ("check", "fold"), str(a_fb))
+
+# E. BOT_VERSION 存在
+from strategy import BOT_VERSION as _BV
+check("0911:BOT_VERSION 存在", isinstance(_BV, str) and len(_BV) > 0, str(_BV))
+

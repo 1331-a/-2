@@ -20,6 +20,17 @@ jobs:
         with:
           python-version: '3.11'
 
+      # 【2026-09-11】把 git 短 SHA 打进 ELF，并体现在产物名里——
+      # 这样「下载的是哪一版」可以肉眼自证（压缩包名带 hash），
+      # 机器人 stderr 日志首行也会打印 [BOT_VERSION] <sha>。
+      - name: Stamp version (git short SHA)
+        run: |
+          SHA=$(git rev-parse --short=7 HEAD)
+          echo "SHA=$SHA" >> "$GITHUB_ENV"
+          sed -i "s/^BOT_VERSION = .*/BOT_VERSION = \"$SHA\"/" botbattle/poker_bot.py
+          echo "--- 打版本后确认 ---"
+          grep -n '^BOT_VERSION' botbattle/poker_bot.py
+
       - name: Install PyInstaller
         run: pip install "pyinstaller>=6.10,<7"
 
@@ -34,7 +45,7 @@ jobs:
       - name: Upload ELF artifact
         uses: actions/upload-artifact@v4
         with:
-          name: poker_bot-linux-x86_64
+          name: poker_bot-linux-x86-64-${{ env.SHA }}
           path: botbattle/dist/poker_bot
           if-no-files-found: error
           retention-days: 90

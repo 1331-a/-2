@@ -1686,6 +1686,11 @@ BLOCKER = 0.45             # 中等牌有位置的小注施压
 # ---- 计算预算 ----
 MC_ITERATIONS = 1000       # 蒙特卡洛最大抽样数
 TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，预留充足余量
+# 【2026-09-11】机器人版本号——构建时由 CI 用 git 短 SHA 覆盖
+# （见 .github/workflows/build-elf.yml）。用于自证「场上跑的是哪一版 ELF」：
+# 下载的压缩包名 / stderr 日志里的 [DECISION] 首行都会带这个值。
+BOT_VERSION = "dev"
+
 DECISION_TIMEOUT = 0.90    # 清单规定的硬超时保护（秒）
 
 # ---- 翻前全下决策（按累计盈亏动态分档，防止「优势下跟 all-in 比运气」）----
@@ -1983,6 +1988,14 @@ def _lock_win_unified(state):
             return {"act": "allin"}
         # B. 锁胜弃牌（领先到绝对安全 → fold 保胜）
         if _fold_out_active(state):
+            # 【P0·2026-09-11】to_call==0 时 **fold 非法**（能过牌就必须过牌），
+            # 平台可能拒收该动作并 fallback 到其它动作（极端情况会变成加注）。
+            # 锁胜目标是「本局不再投入」→ check 与 fold 等价，且一定合法。
+            try:
+                if int(state.to_call) <= 0:
+                    return {"act": "check"}
+            except Exception:
+                pass
             return {"act": "fold"}
         # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
         if not _LEAD_LOCK and _profit_lock_allin(state):
@@ -2012,7 +2025,7 @@ def _profit_lock_allin(state):
         #     lead - 2×invested ≤ -2×_blind_line(hands_left, own=False)
         # 即「本局失败 → 对手锁赢」。此式不含盈利前提（落后侧由 doom 覆盖，
         # 盈利侧由本函数覆盖，两者本质相同）。
-        hands_left = state.max_hand - state.hand_num
+        hands_left = _hands_left(state)
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         invested = INIT_CHIPS - state.my_chips
@@ -2221,14 +2234,25 @@ def _decide_impl(state, model, ctx=None, debug=False):
         if _lw.get("act") == "allin" and _decision_timed_out():
             DecisionLogger.log(state.hand_num, state.stage, state.pot,
                                "lock_win(timeout)", "fold",
-                               block=False, record=False)
-            return {"act": "fold"}
+                               block=False, record=True,
+                               cands=[{"name": "\u89c4\u52192 \u9501\u8d62/\u9632\u9501\u8d62",
+                                       "act": "fold",
+                                       "suggest": "fold \u9501\u80dc(timeout)"}])
+            return _normalize(state, {"act": "fold"})
         _tag = "lock_win:allin" if _lw.get("act") == "allin" else "lock_win:fold"
-        DecisionLogger.log(state.hand_num, state.stage, state.pot, _tag,
-                           str(_lw.get("act")),
-                           "A=doom B=foldout C=profitlock",
-                           block=False, record=False)
-        return _lw
+        # 【P1-2·2026-09-11】record=True —— 锁赢决策纳入「规则健康度」统计
+        # （此前 record=False 导致锁赢点不进健康度表）。
+        DecisionLogger.log(
+            state.hand_num, state.stage, state.pot, _tag,
+            str(_lw.get("act")), "A=doom B=foldout C=profitlock",
+            block=False, record=True,
+            cands=[{"name": "\u89c4\u52192 \u9501\u8d62/\u9632\u9501\u8d62",
+                    "act": str(_lw.get("act")),
+                    "suggest": ("allin \u9632\u9501\u8d62" if _lw.get("act") == "allin"
+                                else "fold \u9501\u80dc")}])
+        # 【P0-2·2026-09-11】锁赢分支也必须过安全网 _normalize——
+        # 防 to_call==0 时的非法 fold / 越界 allin 直接被平台拒收。
+        return _normalize(state, _lw)
 
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
     if should_avoid_risk(state):
@@ -2521,7 +2545,7 @@ def _risk_avoid_route(state, model):
     领先时保护筹码、落后时按数学底线拼、中间档降级为普通一对评估。
     """
     pnl = state.total_win_chips[state.my_id]
-    hands_left = state.max_hand - state.hand_num
+    hands_left = _hands_left(state)
     to_call = state.to_call
 
     if pnl > 0:
@@ -2553,6 +2577,30 @@ def _risk_avoid_route(state, model):
     if state.stage == "preflop":
         return _preflop_decide(state, model)
     return _postflop_decide(state, model)
+
+
+def _hands_left(state):
+    """本手**之后**还剩几手（锁赢线 / doom 追回线的盲注轮换基数）。
+
+    【2026-09-11 关键修复 · 用户实战截图「锁赢了还在加注」】
+    平台（BotArena / BotBattle）request.hand 是 **0-based**（0 .. max_hand-1；
+    对局日志/回放界面显示为「第 hand+1 手」）。
+    原实现 `max_hand - hand_num` 把「本手」也计进剩余手数 → **多算一手** →
+    锁赢线虚高约 2×150 = 300 → 该锁胜弃牌时不敢弃（继续加注）、该认 doomed
+    时不 allin —— 与实战表现完全一致。
+    实测：两局对局日志把 hand 回退 1 后重放，锁赢点动作不符从 3~4 处降到 0 处。
+    兼容 1-based 平台：hand_num >= max_hand 时视为最后一手（返回 0）。
+    """
+    try:
+        h = int(state.hand_num)
+        m = int(state.max_hand)
+    except Exception:
+        return 0
+    if m <= 0:
+        return 0
+    if h >= m:                      # 1-based 平台 / 越界 → 最后一手
+        return 0
+    return max(0, m - 1 - h)
 
 
 def _blind_line(state, hands, own=True):
@@ -2618,7 +2666,7 @@ def _fold_out_active(state):
     try:
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
-        hands_left = state.max_hand - state.hand_num
+        hands_left = _hands_left(state)
         invested = INIT_CHIPS - state.my_chips          # 本局已投入（含盲注/跟注/加注）
         return lead > 2 * (_blind_line(state, hands_left) + invested)
     except Exception:
@@ -2667,7 +2715,7 @@ def _match_adjust(state):
        强制施压只用确定性数学条件（本局输后对手可锁胜）。
     """
     try:
-        hands_left = state.max_hand - state.hand_num
+        hands_left = _hands_left(state)
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         bb = state.big_blind
@@ -2763,7 +2811,7 @@ def _preflop_allin_decide(state, model):
         thr = ALLIN_THR["big_behind"]     # 大幅落后：放宽到任何有潜力的牌
 
     # 终局修正：剩 ≤15 手时，领先保护更严、落后搏命更凶（对手没时间翻盘）
-    hands_left = state.max_hand - state.hand_num
+    hands_left = _hands_left(state)
     if hands_left <= 15:
         thr = thr + ALLIN_ENDGAME_SHIFT if lead > 0 else thr - ALLIN_ENDGAME_SHIFT
 
@@ -3491,7 +3539,7 @@ def explain(state, model, ctx=None, with_eq=True):
     info = {}
     # ---------------- 锁赢状态 ----------------
     try:
-        hands_left = max(int(state.max_hand) - int(state.hand_num), 0)
+        hands_left = _hands_left(state)
         my_total = int(state.total_win_chips[state.my_id])
         opp_total = int(state.total_win_chips[state.opp_id])
         lead = my_total - opp_total
@@ -3706,6 +3754,29 @@ class DecisionLogger:
                 if state.hand_num != ph:
                     cls._hand_results[ph] = lead - plead
             cls._last_state = (state.hand_num, lead)
+        except Exception:
+            pass
+
+    # ---- 版本播报（每局只输出一次，便于确认场上 ELF 版本）----
+    _announced = False
+
+    @classmethod
+    def announce_once(cls):
+        if cls._announced:
+            return
+        cls._announced = True
+        try:
+            import sys
+            _f = ""
+            try:
+                _f = __file__
+            except Exception:
+                pass
+            sys.stderr.write(
+                "[BOT_VERSION] %s | __file__=%s  (\u82e5\u4e0e\u6700\u65b0 commit "
+                "\u4e0d\u4e00\u81f4 \u2192 \u573a\u4e0a\u8dd1\u7684\u662f\u65e7 ELF)\n"
+                % (BOT_VERSION, _f))
+            sys.stderr.flush()
         except Exception:
             pass
 
@@ -3981,7 +4052,7 @@ def _stability_mode(state, model):
         if freq >= 0.20:
             return True
         # 条件 2：我方 lead ≥ 锁赢线 80%（_blind_line own=True = 绝对安全线）
-        hands_left = state.max_hand - state.hand_num
+        hands_left = _hands_left(state)
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
         safe_line = _blind_line(state, hands_left, own=True)
@@ -4479,7 +4550,7 @@ def _last_hand_no_fold(state, action):
                 - state.total_win_chips[state.opp_id])
         invested = INIT_CHIPS - state.my_chips
         lead_after_fold = lead - 2 * invested
-        hands_left = state.max_hand - state.hand_num
+        hands_left = _hands_left(state)
         if hands_left <= 0:
             # ③ 最后一手：弃牌后不领先即输 → 禁弃
             lock = not (lead_after_fold > 0)
@@ -4499,6 +4570,26 @@ def _last_hand_no_fold(state, action):
 
 
 # ---------------- 合法性安全程序（不变，最后防线） ----------------
+def _lock_win_legal(state, action):
+    """把锁赢动作改成平台一定接受的形式（P0：to_call==0 不能 fold）。"""
+    try:
+        if action.get("act") == "fold" and int(state.to_call) <= 0:
+            return {"act": "check"}
+    except Exception:
+        pass
+    return action
+
+
+def _safe_fallback_action(state):
+    """决策层异常时的最保守合法动作（不弃牌也能过就过）。"""
+    try:
+        if int(state.to_call) <= 0:
+            return {"act": "check"}
+    except Exception:
+        pass
+    return {"act": "fold"}
+
+
 def _safe_adjust(state):
     try:
         return _match_adjust(state)
@@ -4518,12 +4609,33 @@ def decide(state, model, ctx=None, debug=False):
         DecisionLogger.enable(debug or os.environ.get("WB_POKER_DEBUG") == "1")
     except Exception:
         DecisionLogger.enable(debug)
+    try:
+        if DecisionLogger._enabled and not DecisionLogger._quiet:
+            DecisionLogger.announce_once()
+    except Exception:
+        pass
     # ---- v2 日志：锁赢状态 / 对手画像 / 牌力 / 候选规则 / 归因 ----
     try:
         DecisionLogger.note_state(state)
     except Exception:
         pass
-    action = _decide_impl(state, model, ctx, debug=debug)
+    # 【P0-3·2026-09-11】入口硬性锁赢拦截：锁胜/防锁赢是确定性硬规则，
+    # 不允许被后续任何分支（含异常路径）覆盖；同时保证动作合法
+    # （to_call==0 不 fold）——用户实战里出现的「锁赢却加注」正是
+    # 该动作被平台拒收后 fallback 的结果。
+    action = None
+    try:
+        _lw0 = _lock_win_unified(state)
+        if _lw0 is not None:
+            action = _normalize(state, _lock_win_legal(state, _lw0))
+    except Exception:
+        action = None
+    # 【P1-3·2026-09-11】_decide_impl 异常兜底：绝不把异常抛给平台
+    if action is None:
+        try:
+            action = _decide_impl(state, model, ctx, debug=debug)
+        except Exception:
+            action = _safe_fallback_action(state)
     try:
         if DecisionLogger._enabled:
             _cat = None
@@ -4719,6 +4831,19 @@ import sys
 
 _ACT_TO_RESPONSE = {"fold": -1, "allin": -2, "call": 0, "check": 0}
 
+# 【2026-09-11】诊断用：per-hand 请求字段自检 + 安全网修正播报
+_LAST_HAND = [None]
+
+
+def _log(msg):
+    """诊断输出 —— 必须写 stderr（stdout 是平台协议通道）。"""
+    try:
+        import sys as _sys
+        _sys.stderr.write(msg + "\n")
+        _sys.stderr.flush()
+    except Exception:
+        pass
+
 
 def _to_response(action):
     """把内部动作 dict 转为 response 整数。"""
@@ -4846,9 +4971,32 @@ def _handle_line(obj):
                 # 可用环境变量 WB_POKER_DEBUG=0 关闭
                 import os as _os
                 _dbg = _os.environ.get("WB_POKER_DEBUG", "1") != "0"
+                # 【2026-09-11】每手打印一次请求关键字段——换平台/换赛季
+                # （如 BotArena）时第一时间看出协议是否变了（字段缺失/基准变化）。
+                try:
+                    if _dbg and state.hand_num != _LAST_HAND[0]:
+                        _LAST_HAND[0] = state.hand_num
+                        _log("[REQ] hand=%s max_hand=%s my_chips=%s dealer=%s "
+                             "twc=%s cards=%d pub=%d hist=%d"
+                             % (state.hand_num, state.max_hand, state.my_chips,
+                                state.dealer_id, list(state.total_win_chips),
+                                len(state.hole or []), len(state.board or []),
+                                len(request.get("history") or [])))
+                except Exception:
+                    pass
                 action = decide(state, model, ctx, debug=_dbg)
-                resp = _to_response(action)
-                resp = _final_guard(state, resp)
+                _raw = _to_response(action)
+                resp = _final_guard(state, _raw)
+                # 安全网是否改过动作？（若这里频繁出现，说明决策层产出了
+                # 平台不接受的动作 —— 例如 to_call==0 时的 fold）
+                try:
+                    if _dbg and resp != _raw:
+                        _log("[GUARD] 安全网修正 %s → resp=%s (to_call=%s "
+                             "my_left=%s any_allin=%s)"
+                             % (action.get("act"), resp, state.to_call,
+                                state.my_left, state.any_allin))
+                except Exception:
+                    pass
                 model.ctx_dict = ctx.to_dict()
                 data_out = model.to_json()
             except Exception:

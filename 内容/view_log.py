@@ -164,7 +164,7 @@ def main():
                         - st.total_win_chips[st.opp_id])
                 print("第%d个: hand=%s my_id=%s dealer_id=%s id_base=%s(%s) "
                       "my_chips=%s lead=%s max_hand=%s" % (
-                          i + 1, st.hand_num, st.my_id, st.dealer_id,
+                          i + 1, (st.hand_num + 1), st.my_id, st.dealer_id,
                           st.id_base, "1-based已归一化" if st.id_base else "0-based",
                           st.my_chips, lead, st.max_hand))
                 if st.id_base:
@@ -212,7 +212,10 @@ def main():
                 ctx.sync_baseline(state)
             except Exception:
                 pass
-            if args.hand and state.hand_num not in args.hand:
+            # 显示/过滤用 1-based 手号（平台 hand 是 0-based，见 botbattle_log）
+            _m0 = metas[i] if (metas and i < len(metas) and metas[i]) else {}
+            _dh = (_m0 or {}).get("hand") or (state.hand_num + 1)
+            if args.hand and _dh not in args.hand:
                 continue
             _before = len(DecisionLogger.records())
             action = decide(state, model, ctx, debug=True)
@@ -250,11 +253,11 @@ def main():
             except Exception:
                 _info = {}
             _lk = (_info or {}).get("lock") or {}
-            if _lk and state.hand_num != _cur_hand:
-                _cur_hand = state.hand_num
+            if _lk and _dh != _cur_hand:
+                _cur_hand = _dh
                 emit("=" * 68)
                 emit("[H%s] %s | 我 %+d | 对手 %+d | 领先差 %d | 锁赢线 %d | %s"
-                     % (state.hand_num, _lk.get("position", ""),
+                     % (_dh, _lk.get("position", ""),
                         _lk.get("my_total", 0), _lk.get("opp_total", 0),
                         _lk.get("lead", 0), _lk.get("line", 0),
                         _lk.get("status", "")))
@@ -267,11 +270,11 @@ def main():
                     pass
             # ---- 对手面板：每 10 手或类型变化时刷新 ----
             _op = (_info or {}).get("opp") or {}
-            if _op and (state.hand_num % 10 == 1 or _opp_shown_hand is None):
-                _opp_shown_hand = state.hand_num
+            if _op and (_dh % 10 == 1 or _opp_shown_hand is None):
+                _opp_shown_hand = _dh
                 emit("-" * 68)
                 emit("[对手 H%s] %s | VPIP %.2f | PFR %.2f | 弃牌率 %.2f"
-                     % (state.hand_num, _op.get("type"), _op.get("vpip", 0),
+                     % (_dh, _op.get("type"), _op.get("vpip", 0),
                         _op.get("pfr", 0), _op.get("fold_to_bet", 0)))
                 emit("       过牌后弃牌率 %.2f | 过牌-加注 %.2f | 大注率 %.2f | 样本 %d手"
                      % (_op.get("check_fold", 0), _op.get("check_raise", 0),
@@ -281,7 +284,7 @@ def main():
             # ---- 本手决策 ----
             _hm = (_info or {}).get("hand") or {}
             emit("[本手] 第%s手 %s 底池=%d 我:%s 公面:%s | %s | 胜率 %s"
-                 % (state.hand_num, state.stage, state.pot, _hole, _board,
+                 % (_dh, state.stage, state.pot, _hole, _board,
                     _hm.get("cat_name", "?"), _hm.get("eq", "?")))
             _cands = []
             try:
@@ -299,12 +302,11 @@ def main():
                     emit("       采纳: %s" % r.get("rule"))
             emit("")
             # ---- 每 10 手输出一次规则健康度 ----
-            if (state.hand_num % 10 == 0
-                    and state.hand_num != _last_health):
-                _last_health = state.hand_num
+            if (_dh % 10 == 0 and _dh != _last_health):
+                _last_health = _dh
                 try:
                     for _ln in DecisionLogger.health_lines(
-                            "H%d-%d" % (max(state.hand_num - 9, 1), state.hand_num)):
+                            "H%d-%d" % (max(_dh - 9, 1), _dh)):
                         emit(_ln)
                     emit("")
                 except Exception:
