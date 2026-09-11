@@ -1966,6 +1966,35 @@ def _is_sub_strong(hole):
     return hi == 13 and lo == 12          # KQ（含 KQs/KQo）
 
 
+def _is_lead_lock(state):
+    """优势锁定：领先 > LEAD_NO_ALLIN → 不 allin、注码受限。
+
+    【P0·2026-09-11】原实现把结果存进模块级 _LEAD_LOCK，而 decide() 入口
+    拦截在 _decide_impl 之前调用 _lock_win_unified → 读到的是**上一手的旧值**
+    （过期）→ 可能在本应「不 allin」的领先局面走进 profit_lock 全下，
+    违反 LEAD_LOCK 硬规则。改为任何地方都按当前 state 现算。
+    """
+    try:
+        return (int(state.total_win_chips[state.my_id])
+                - int(state.total_win_chips[state.opp_id])) > LEAD_NO_ALLIN
+    except Exception:
+        return False
+
+
+def _lock_line(state):
+    """锁赢线 = 2 ×（本手已投 + 本手之后剩余盲注线）。
+
+    【M1·2026-09-11】要点：lead（twc[我]-twc[对手]）本身是「筹码差」的 **2 倍**，
+    所以任何与 lead 比较的阈值都必须带这个 2×——否则门槛只有一半
+    （_stability_mode 曾用 0.8×_blind_line，等于 40% 锁赢线就求稳 → 过度求稳）。
+    """
+    try:
+        invested = INIT_CHIPS - int(state.my_chips)
+        return 2 * (_blind_line(state, _hands_left(state), own=True) + invested)
+    except Exception:
+        return 0
+
+
 def _lock_win_unified(state):
     """【规则2·2026-09-10 合并】锁胜 / 防锁赢统一决策（优先级 2）。
 
@@ -1998,7 +2027,8 @@ def _lock_win_unified(state):
                 pass
             return {"act": "fold"}
         # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
-        if not _LEAD_LOCK and _profit_lock_allin(state):
+        # 【P0】用现算值而非模块级 _LEAD_LOCK（后者在入口拦截时是过期值）
+        if not _is_lead_lock(state) and _profit_lock_allin(state):
             return {"act": "allin"}
     except Exception:
         pass
@@ -2190,7 +2220,10 @@ def _aggressive_strong_bet(state, action):
         return action
 
 
-def _decide_impl(state, model, ctx=None, debug=False):
+_LW_UNSET = object()      # 哨兵：区分「外层已算出 None」与「未计算」
+
+
+def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET):
     """根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。
 
     ctx: 可选 MatchContext（bot 层从 globaldata 恢复）。三个赛制模块
@@ -2229,7 +2262,8 @@ def _decide_impl(state, model, ctx=None, debug=False):
     # 本质是同一件事：本局胜败对「最终锁赢」的影响，合并为 _lock_win_unified。
     #   优先级 1 = _LEAD_LOCK 优势锁定标志（领先 >LEAD_NO_ALLIN 时不 allin）
     #   优先级 2 = 本规则（含 doom，故 doom 不再是独立第 1 条）
-    _lw = _lock_win_unified(state)
+    # 【M2】外层 decide() 入口已算过 → 直接复用，避免重复调用（也可能不一致）
+    _lw = _lock_win_unified(state) if _lw is _LW_UNSET else _lw
     if _lw is not None:
         if _lw.get("act") == "allin" and _decision_timed_out():
             DecisionLogger.log(state.hand_num, state.stage, state.pot,
@@ -2666,9 +2700,9 @@ def _fold_out_active(state):
     try:
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
-        hands_left = _hands_left(state)
-        invested = INIT_CHIPS - state.my_chips          # 本局已投入（含盲注/跟注/加注）
-        return lead > 2 * (_blind_line(state, hands_left) + invested)
+        # 【M1·2026-09-11】与 _lock_line 同源（2×（盲注线+本手已投）），
+        # 避免两处公式各自演化再次分叉。
+        return lead > _lock_line(state)
     except Exception:
         return False
 
@@ -3544,7 +3578,7 @@ def explain(state, model, ctx=None, with_eq=True):
         opp_total = int(state.total_win_chips[state.opp_id])
         lead = my_total - opp_total
         invested = INIT_CHIPS - int(state.my_chips)
-        line = 2 * (_blind_line(state, hands_left, own=True) + invested)
+        line = _lock_line(state)      # 统一锁赢线（含 2× 与 本手已投）
         if lead > line:
             status = "\u2705 已锁赢"
         elif lead > 0:
@@ -4051,12 +4085,14 @@ def _stability_mode(state, model):
         freq = model.allin_count / max(model.hands_seen, 1)
         if freq >= 0.20:
             return True
-        # 条件 2：我方 lead ≥ 锁赢线 80%（_blind_line own=True = 绝对安全线）
-        hands_left = _hands_left(state)
+        # 条件 2：我方 lead ≥ **锁赢线**的 80%。
+        # 【M1·2026-09-11】原用 0.8×_blind_line —— 但 lead 是筹码差的 2 倍，
+        # 等于「40% 锁赢线」就求稳 → 过度求稳（健康度表里本规则 EV 最差）。
+        # 统一改用 _lock_line(state)（含 2× 与 本手已投）。
         lead = (state.total_win_chips[state.my_id]
                 - state.total_win_chips[state.opp_id])
-        safe_line = _blind_line(state, hands_left, own=True)
-        if safe_line > 0 and lead >= 0.8 * safe_line:
+        line = _lock_line(state)
+        if line > 0 and lead >= 0.8 * line:
             return True
     except Exception:
         pass
@@ -4581,7 +4617,17 @@ def _lock_win_legal(state, action):
 
 
 def _safe_fallback_action(state):
-    """决策层异常时的最保守合法动作（不弃牌也能过就过）。"""
+    """决策层异常时的最保守合法动作（不弃牌也能过就过）。
+
+    【M3·2026-09-11】必须先判 doomed：doomed = 弃牌就把锁赢拱手让人，
+    弃牌等于直接认输 → 唯一活路是 allin；原实现无条件 fold，极端情况下
+    （决策层抛异常正好发生在 doomed 局面）会白送比赛。
+    """
+    try:
+        if _match_adjust(state) == "doomed":
+            return {"act": "allin"}
+    except Exception:
+        pass
     try:
         if int(state.to_call) <= 0:
             return {"act": "check"}
@@ -4624,16 +4670,25 @@ def decide(state, model, ctx=None, debug=False):
     # （to_call==0 不 fold）——用户实战里出现的「锁赢却加注」正是
     # 该动作被平台拒收后 fallback 的结果。
     action = None
+    _lw0 = _LW_UNSET
+    try:
+        # 【P0】刷新 _LEAD_LOCK（入口早于 _decide_impl，否则下游读到上一手旧值）
+        global _LEAD_LOCK
+        _LEAD_LOCK = _is_lead_lock(state)
+    except Exception:
+        pass
     try:
         _lw0 = _lock_win_unified(state)
         if _lw0 is not None:
             action = _normalize(state, _lock_win_legal(state, _lw0))
     except Exception:
         action = None
+        _lw0 = None
     # 【P1-3·2026-09-11】_decide_impl 异常兜底：绝不把异常抛给平台
+    # 【M2】把已算好的 _lw0 传进去 → 不再重复调用 _lock_win_unified
     if action is None:
         try:
-            action = _decide_impl(state, model, ctx, debug=debug)
+            action = _decide_impl(state, model, ctx, debug=debug, _lw=_lw0)
         except Exception:
             action = _safe_fallback_action(state)
     try:
@@ -4864,7 +4919,10 @@ def _final_guard(state, resp):
         my_left = state.my_left
 
         if resp == -1:
-            return -1  # 弃牌永远合法
+            # 【D2·2026-09-11】to_call==0 时 **fold 非法**（能过牌就必须过牌）。
+            # 返回 -1 会被平台拒收，并可能 fallback 成其它动作（极端情况是加注）
+            # —— 这正是「锁赢了还在加注」的一个可能成因。改为 0（过牌）。
+            return -1 if to_call > 0 else 0
         if resp == -2:
             if my_left > 0:
                 return -2  # 全押合法

@@ -172,6 +172,80 @@ check("进度条 0%%", "0%" in DecisionLogger.progress_bar(0.0),
 check("进度条 100%%", "100%" in DecisionLogger.progress_bar(1.5),
       DecisionLogger.progress_bar(1.5))
 
+
+
+# ============ 2026-09-11 五项审查修复专项 ============
+from strategy import (_is_lead_lock, _lock_line, _safe_fallback_action,
+                      _LW_UNSET, _decide_impl, _stability_mode)
+import strategy as _S2
+from bot import _final_guard
+
+
+def _mk(twc, hand=30, my_chips=19900):
+    return parse_request({"num_players": 2, "dealer_id": 1, "my_id": 0,
+                          "my_chips": my_chips, "my_cards": [34, 17],
+                          "public_cards": [], "history": [], "hand": hand,
+                          "max_hand": 70, "total_win_chips": twc,
+                          "total_win_games": [0, 0]})
+
+
+# --- P0：外层入口不得依赖过期的模块级 _LEAD_LOCK ---
+_st_p0 = _mk([5000, -5000])
+check("P0:_is_lead_lock 现算(领先10000>2000)", _is_lead_lock(_st_p0) is True)
+_S2._LEAD_LOCK = False                      # 伪造「上一手留下的旧值」
+_u_p0 = _S2._lock_win_unified(_st_p0)
+check("P0:过期 _LEAD_LOCK 不影响 _lock_win_unified",
+      _u_p0 is not None and _u_p0.get("act") in ("check", "fold"), str(_u_p0))
+decide(_st_p0, OpponentModel(), None)
+check("P0:decide 入口刷新 _LEAD_LOCK", _S2._LEAD_LOCK is True,
+      str(_S2._LEAD_LOCK))
+
+# --- M1：_lock_line 含 2× 与 本手已投；求稳阈值 = 80%×锁赢线 ---
+_st_m1 = _mk([1516, -1516], hand=47)
+_line_m1 = _lock_line(_st_m1)
+check("M1:_lock_line = 2×(盲注线+已投)", _line_m1 == 2 * (
+    _bl(_st_m1, _hl(_st_m1), True) + (20000 - _st_m1.my_chips)),
+    "line=%s" % _line_m1)
+check("M1:锁赢线 3500（第48手）", _line_m1 == 3500, str(_line_m1))
+# 旧写法阈值(0.8×blind_line=1400)会误触发；新写法 2800
+_st_m1b = _mk([(1400 // 2), -(1400 // 2)], hand=47)
+check("M1:lead 仅 40% 锁赢线 → 不该求稳",
+      _stability_mode(_st_m1b, OpponentModel()) is False,
+      "lead=%d line=%d" % (1400, _lock_line(_st_m1b)))
+_st_m1c = _mk([(3000 // 2), -(3000 // 2)], hand=47)
+check("M1:lead >80% 锁赢线 → 求稳",
+      _stability_mode(_st_m1c, OpponentModel()) is True,
+      "lead=%d line=%d" % (3000, _lock_line(_st_m1c)))
+
+# --- M2：_decide_impl 支持复用外层算好的 _lw（避免重复调用）---
+_st_m2 = _mk([0, 0], hand=30)
+_u_m2 = _S2._lock_win_unified(_st_m2)
+_a_m2 = _decide_impl(_st_m2, OpponentModel(), None, False, _u_m2)
+check("M2:_decide_impl 接受 _lw 参数且不报错",
+      isinstance(_a_m2, dict) and "act" in _a_m2, str(_a_m2))
+check("M2:哨兵 _LW_UNSET 存在", _LW_UNSET is not None)
+
+# --- M3：doomed 兜底必须 allin ---
+check("M3:doomed 兜底 → allin",
+      _safe_fallback_action(_mk([-100, 100], hand=69)) == {"act": "allin"},
+      str(_safe_fallback_action(_mk([-100, 100], hand=69))))
+check("M3:非 doomed 且 to_call<=0 → check",
+      _safe_fallback_action(_mk([0, 0], hand=30)) == {"act": "check"},
+      str(_safe_fallback_action(_mk([0, 0], hand=30))))
+
+# --- D2：bot._final_guard 在 to_call==0 时不能返回 fold ---
+_st_d2 = _mk([0, 0], hand=30, my_chips=20000)
+_st_d2.opp_round_bet = 0
+_st_d2._to_call = 0
+check("D2:to_call==0 时 fold(-1) → 0(过牌)",
+      _final_guard(_st_d2, -1) == 0, str(_final_guard(_st_d2, -1)))
+_st_d2b = _mk([0, 0], hand=30, my_chips=19900)
+_st_d2b.opp_round_bet = 300
+_st_d2b._to_call = 200
+check("D2:to_call>0 时 fold(-1) 仍为 -1",
+      _final_guard(_st_d2b, -1) == -1, str(_final_guard(_st_d2b, -1)))
+
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")
