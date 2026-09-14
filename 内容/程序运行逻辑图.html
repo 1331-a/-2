@@ -182,7 +182,7 @@
 
 <rect x="210" y="102" width="420" height="56" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
 <text x="420" y="122" font-size="14" font-weight="500" fill="#633806" text-anchor="middle" dominant-baseline="central">_prepare_globals(state, model, ctx, reset_clock=True)</text>
-<text x="420" y="140" font-size="12" fill="#854F0B" text-anchor="middle" dominant-baseline="central">① 先刷新全部模块级全局（_CTX / _LEAD_LOCK / _OPP_JUMPED …）</text>
+<text x="420" y="140" font-size="12" fill="#854F0B" text-anchor="middle" dominant-baseline="central">① 先刷新全部模块级全局（_CTX / _OPP_JUMPED / _OPP_BETS_PER_HAND …）</text>
 
 <path d="M420 158 L420 170" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
 
@@ -322,7 +322,7 @@
    ├─ ctx.sync_baseline(state)           # 同步激进档
    ├─ decide(state, model, ctx, debug)   # strategy.py   ← 见下
    │  ├─ DecisionLogger.note_state(state)
-   │  ├─ _prepare_globals(state, model, ctx)   # 刷新 _CTX/_LEAD_LOCK/…
+   │  ├─ _prepare_globals(state, model, ctx)   # 刷新 _CTX/_OPP_JUMPED/…
    │  ├─ _lock_win_unified(state)              # 规则2
    │  │  ├─ _match_adjust(state)               # → "doomed"？
    │  │  ├─ _fold_out_active(state) → _lock_line(state) → _blind_line/_hands_left

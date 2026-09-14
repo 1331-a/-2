@@ -67,17 +67,20 @@ check("领先3000:不再受 1000 注码上限（改由牌型上限 ≤3000）",
 check("领先3000:超强牌(AA)不再被强制弃牌", a.get("act") != "fold", str(a))
 
 # ---------- 2. 领先时面对全下：不再无条件禁止 allin ----------
-# 领先 3000 + 对手全下 + 一对 A（<三条 → 注额上限 2000）→ 仍被上限拦下
+# 领先 3000 + 对手全下 + 一对 A（<三条）。
+# 【2026-09-14 用户规则】不再由「牌型注额上限」拦下（该限制已废止：面对
+# 对手 all-in 的定向决策说了算）→ 此处弃牌是决策层按赔率判定（跟注额巨大
+# → required 很高，一对的 eq 不够）。金额写真实值，避免 to_call 失真。
 st2 = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
                         my_chips=18500,
                         history=[{"round": 0, "player_id": 0, "action": 500,
                                   "action_type": "raise"},
                                  {"round": 0, "player_id": 1, "action": 0,
                                   "action_type": "call"},
-                                 {"round": 1, "player_id": 1, "action": -2,
+                                 {"round": 1, "player_id": 1, "action": 18500,
                                   "action_type": "allin"}]))
 a = decide(st2, OpponentModel())
-check("领先3000:一对(<三条)面对全下仍被注额上限拦下 → fold",
+check("领先3000:一对面对全下按赔率弃牌(注额上限已废止)",
       a == {"act": "fold"}, str(a))
 
 # 同样领先，但手牌 ≥三条 → 不再被优势锁定阻拦（全下门槛判定）

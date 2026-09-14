@@ -16,7 +16,7 @@ sys.path.insert(0, ".")
 from game_state import parse_request   # noqa: E402
 from opponent import OpponentModel     # noqa: E402
 from strategy import (decide, _blocking_bet_proxy, _effective_category,
-                           _flush_threat)  # noqa: E402
+                      _flush_threat, _normalize)  # noqa: E402
 
 # 牌号 -> BotZone 编码（内部 = n+8）
 HA, DA, SA, CA = 48, 49, 50, 51  # 四张 A
@@ -402,7 +402,9 @@ def allin_req(my_cards, pnl_me, hand=30, max_hand=70):
     return req(my_id=0, my_chips=19500, my_cards=my_cards, hand=hand,
                max_hand=max_hand, total_win_chips=[pnl_me, -pnl_me],
                history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
-                        {"round": 0, "player_id": 1, "action": -2, "action_type": "allin"}])
+                        # 【2026-09-14】对手全下必须写真实金额（20000）：写 -2 会让
+                        # to_call 塌缩为占位 1 → 赔率失真 → 弱牌也会被判跟注
+                        {"round": 0, "player_id": 1, "action": 20000, "action_type": "allin"}])
 
 # 大幅领先(+6000) + AA：本应跟全下，但 LEAD_LOCK（领先>2000 无论如何不 allin）
 # 是更高优先级规则 → 弃牌（用户规则：优势超过2000不allin，优先级最高）
@@ -416,11 +418,19 @@ check("全下分档:大幅领先72o弃牌", a == {"act": "fold"}, str(a))
 # 强制弃牌，而是按「跟全下门槛」（超强牌豁免翻前 1000 上限）→ 跟
 a = act(allin_req([44, 46], 2000))
 check("全下分档:小幅领先KK跟全下(LEAD_LOCK已移除)", a == {"act": "allin"}, str(a))
-# 均势 + TT：翻前跟全下 19500 > 1000（用户新规 2026-08-24：翻前投入≤1000）
-# → 不再跟全下，直接弃牌（翻前手牌最多一对，无法支撑大额投入；doomed 例外）
-a = act(allin_req([32, 33], 0))
-check("全下分档:均势TT翻前大额跟全下→弃",
-      a == {"act": "fold"}, str(a))
+# 均势 + TT：翻前跟全下 —— 【2026-09-14 用户规则】旧「翻前金额>1000 → 弃」
+# 已废止：针对对手 all-in 的定向决策（规则2/规则16/全下分档）说了算，
+# _normalize 不再把 allin 降级。此处直测安全网（确定性，不受 MC 噪声影响）：
+#   · allin → 原样放行（旧代码会降级成 fold）
+#   · call（跟注即全下）→ 转 allin
+# 决策层侧「弱牌不跟」由下一条 72o 断言覆盖。
+_st = parse_request(allin_req([32, 33], 0))
+check("全下分档:翻前跟全下不再被1000上限降级(直测)",
+      _normalize(_st, {"act": "allin"}) == {"act": "allin"},
+      str(_normalize(_st, {"act": "allin"})))
+check("全下分档:跟注即全下不再被金额上限拦成fold(直测)",
+      _normalize(_st, {"act": "call"}) == {"act": "allin"},
+      str(_normalize(_st, {"act": "call"})))
 # 均势 + 72o：eq≈0.30 < 0.55 → 弃
 a = act(allin_req([23, 2], 0))
 check("全下分档:均势72o弃牌", a == {"act": "fold"}, str(a))

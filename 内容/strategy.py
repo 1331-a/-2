@@ -663,7 +663,10 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
                                 else "fold \u9501\u80dc")}])
         # 【P0-2·2026-09-11】锁赢分支也必须过安全网 _normalize——
         # 防 to_call==0 时的非法 fold / 越界 allin 直接被平台拒收。
-        return _normalize(state, _lw)
+        # 【2026-09-14 方案1】同时走 _lock_win_legal：给锁赢 allin 打免检
+        # 标记（lk），避免被牌型/金额上限降级（ctx 保守偏移使 _match_adjust
+        # 不是 doomed 时，原实现会把 doom/盈利锁胜的 allin 降级成 fold）。
+        return _normalize(state, _lock_win_legal(state, _lw))
 
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
     if should_avoid_risk(state):
@@ -3204,8 +3207,24 @@ def _last_hand_no_fold(state, action):
 
 # ---------------- 合法性安全程序（不变，最后防线） ----------------
 def _lock_win_legal(state, action):
-    """把锁赢动作改成平台一定接受的形式（P0：to_call==0 不能 fold）。"""
+    """把锁赢动作改成平台一定接受的形式 + 给锁赢 allin 打「免检」标记。
+
+    P0：to_call==0 时 fold 非法（平台会拒收并 fallback）→ 转 check。
+
+    【2026-09-14 用户规则】锁赢类 allin（doomed / 盈利锁胜）是**针对对手
+    all-in 的定向规则**，它要替换掉此前所有针对 allin 的金额/牌型限制
+    （翻前 1000 上限、翻后牌型注额上限 _bet_limit、全下下限等）。
+    这里给 allin 打内部标记 lk，_normalize 见到标记一律放行。
+
+    动机（实测）：ctx 保守偏移（threshold_offset>0）会把 lead 抬高 →
+    _match_adjust 不再是 doomed → 同一局面下 doom/盈利锁胜的 allin 反被
+    _bet_limit 降级成 fold，规则2 的意图被推翻。
+    """
     try:
+        if action.get("act") == "allin":
+            _a = dict(action)
+            _a["lk"] = 1
+            return _a
         if action.get("act") == "fold" and int(state.to_call) <= 0:
             return {"act": "check"}
     except Exception:
@@ -3320,33 +3339,46 @@ def decide(state, model, ctx=None, debug=False):
 def _normalize(state, action):
     """
     防止非法操作触发的最终安全程序。
-    - 规则5：本局有人全押 → 只能弃牌/全押；
+    - 规则5：本局有人全押 → 只能弃牌/全押（**定向决策免检**：见下）；
     - check 仅当无需跟注；call 需筹码严格大于跟注额；
     - raise 夹紧到 [最小加注, 筹码上界)，越界转全下；
     - 未知动作一律退化为最安全合法动作。
+
+    【2026-09-14 用户规则·重要】针对对手 all-in 的定向决策不再受金额/牌型
+    限制约束，两处例外：
+      ① `lk` 标记（规则2 锁赢/防锁赢产生的 allin）→ 直接放行；
+      ② `state.any_allin`（本局有人全押 = 我方面对对手 all-in）→ 不再用
+         _over_limit(翻前 1000) / _bet_limit(牌型 2000/3000) 把 allin 降级。
+    主动全下（我方先押、无人全押）仍保留原有牌型分级限制。
     """
     act = action.get("act", "fold")
     to_call = state.to_call
     my_left = state.my_left
+    # 锁赢类 allin 免检标记（由 _lock_win_legal 打上）
+    lk_allin = bool(action.get("lk")) and act == "allin"
 
     # 规则5：本局有人全押 → 只允许弃牌(-1)/全押(-2)
     if state.any_allin:
+        # 【2026-09-14 用户规则】锁赢类 allin 带 lk 标记 → 免检直通
+        # （方案1：锁赢是对手 all-in 的定向规则，替换所有既有 allin 限制）
+        if lk_allin:
+            return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         # 【doomed 禁弃】本局失败后对手即可锁胜 → 弃牌=直接认输，全下搏翻盘
         # （doomed 已在 decide 入口无条件 allin，此处为兜底——决策层若漏判）
         if act == "fold" and _match_adjust(state) == "doomed":
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         if act == "fold":
             return {"act": "fold"}
-        # 【用户规则 2026-08-24】翻前跟全下金额 > 1000 且非 doomed → 弃。
-        # 「翻前投入不能大于 1000」沿用到翻前：翻前无公共牌、手牌最多一对
-        # （< 三条），任何大额投入都无法由牌型支撑 → 一律 1000 封顶。
-        if _over_limit(state, my_left):
-            return {"act": "fold"}
-        # 【用户规则 2026-08-25】翻后 allin 超当前牌型上限 → 弃牌
-        # （分级上限 _bet_limit：小两对 2000 / 其余<三条 3000 / ≥三条 不限；
-        #  doomed 不限——规则5 内只允许弃/全押）。
-        if state.stage != "preflop" and my_left > _bet_limit(state):
-            return {"act": "fold"}
+        # 【2026-09-14 用户规则·替换旧限制】「有人全押」= 我方正面对对手
+        # all-in，此时的 allin 属于**针对对手 all-in 的定向决策**（规则2 锁赢、
+        # 规则16 + _preflop_allin_decide 跟全下、翻后全下分支），必须替换掉
+        # 此前所有针对 allin 的金额/牌型限制——原两条已废止：
+        #   · 「翻前跟全下 >1000 且非 doomed/非超强牌 → 弃」：会让
+        #     _preflop_allin_decide 判定该跟的牌（如均势 TT）被改成弃牌；
+        #   · 「翻后跟全下 > _bet_limit → 弃」：会让两对/顶对面对全下只能弃。
+        # 跟注与否已由规则2（锁赢硬规则）、规则16（局数/对手习惯放宽）、
+        # _preflop_allin_decide（赔率+盈亏分档）与翻后全下分支（eff_req+margin）
+        # 按胜率判定，此处不再二次设限。
         return {"act": "allin"} if my_left > 0 else {"act": "fold"}
 
     if act == "fold":
@@ -3362,11 +3394,19 @@ def _normalize(state, action):
 
     if act == "allin":
         if my_left > 0:
+            # 【2026-09-14 用户规则】锁赢类 allin（lk 标记）：规则2 是硬规则，
+            # 不走任何牌型/金额降级，直接放行。
+            if lk_allin:
+                return {"act": "allin"}
             # 【用户规则 2026-08-24】翻前全下金额 > 1000 且非 doomed → 降级：
-            #   跟全下 → 弃；主动全下 → 降级为 1000 上限加注（保持游戏进行）。
+            #   主动全下 → 降级为 1000 上限加注（保持游戏进行）。
+            #   （「跟全下 → 弃」已由 2026-09-14 用户规则废止：面对对手
+            #     all-in 的定向决策不再受旧限制约束）
             if _over_limit(state, my_left):
-                if to_call > 0:
-                    return {"act": "fold"}
+                # 「跟注即全下」（to_call ≥ my_left）＝面对对手 all-in 的定向
+                # 决策 → 放行；主动 shove（to_call < my_left）仍降级为上限加注。
+                if to_call > 0 and to_call >= my_left:
+                    return {"act": "allin"}
                 num = PREFLOP_MAX_BET
                 min_r = state.min_raise()
                 if num < min_r:
@@ -3374,8 +3414,8 @@ def _normalize(state, action):
                 return {"act": "raise", "num": num}
             # 【用户规则 2026-08-25】翻后 allin 超当前牌型上限 → 降级
             if state.stage != "preflop" and my_left > _bet_limit(state):
-                if to_call > 0:
-                    return {"act": "fold"}   # 跟全下超限 → 弃
+                if to_call > 0 and to_call >= my_left:
+                    return {"act": "allin"}   # 跟注即全下：定向决策说了算
                 # 主动全下超限 → 降级为该牌型上限的普通加注（保持游戏进行）
                 num = _bet_limit(state)
                 min_r = state.min_raise()
@@ -3389,12 +3429,10 @@ def _normalize(state, action):
         if to_call <= 0:
             return {"act": "check"}
         if to_call >= my_left:      # 需严格 my_left > to_call 才能跟注
-            # 【用户规则 2026-08-24】翻前跟注即全下且金额 > 1000 非 doomed → 弃
-            if _over_limit(state, my_left):
-                return {"act": "fold"}
-            # 【用户规则 2026-08-25】跟注即全下且金额超当前牌型上限 → 弃（翻后）
-            if state.stage != "preflop" and my_left > _bet_limit(state):
-                return {"act": "fold"}
+            # 【2026-09-14 用户规则·替换旧限制】跟注即全下 = 面对对手 all-in
+            # 的定向决策（翻前 _preflop_allin_decide / 翻后全下分支已按赔率
+            # 与牌力判定）→ 原「翻前金额 >1000 → 弃」「翻后超牌型上限 → 弃」
+            # 两条限制废止，此处不再二次设限。 主动动作仅主动全下（见上）。
             return {"act": "allin"}
         # 【用户规则 2026-08-24】翻前跟注额 > 1000 且非 doomed → 弃。
         # 翻前手牌最多一对（< 三条），无法支撑大额跟注（与翻后大注同逻辑）。

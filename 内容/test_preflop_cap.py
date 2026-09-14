@@ -181,22 +181,25 @@ check("弃牌亏损线:弃牌-2500未超线不触发", a.get("act") != "allin", 
 
 # E4) 翻后对照：我方翻前投1500（pnl=-500 小幅落后），对手flop全下 →
 #     非 doomed（-1000-3000=-4000 > -盲注线3000）→ 不强制 allin
+# 【2026-09-14】对手全下须写真实金额（18500）：写 -2 会让 to_call 塌缩成
+# 占位 1 → 赔率失真 → 弱牌也会被判跟注（本断言的语义就失效了）
 r = req(my_id=0, my_cards=[23, 2], my_chips=18500, total_win_chips=[-500, 500],
         public_cards=[46, 22, 5],
         history=[{"round": 0, "player_id": 0, "action": 1500, "action_type": "raise"},
                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
-                 {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}])
+                 {"round": 1, "player_id": 1, "action": 18500, "action_type": "allin"}])
 a = decide(parse_request(r), OpponentModel())
 check("despair删除:翻后弱牌面对全下不再allin", a.get("act") != "allin", str(a))
 
 # ============ F. allin 金额 ≤2000（仅翻后，用户反馈修复） ============
-# F1) 翻后两对 + 对手全下 + 深筹码（非 despair）→ 跟全下超限 → 弃
+# F1) 翻后两对 + 对手全下 + 深筹码：弃牌由决策层按赔率判定
+# 【2026-09-14】不再是「跟全下超金额上限 → 弃」——该限制已废止
 r = req(my_cards=[42, 13], my_chips=19500, public_cards=[43, 22, 29, 20],
         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                  {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}])
 a = decide(parse_request(r), OpponentModel())
-check("allin上限:两对跟全下超2000→弃", a == {"act": "fold"}, str(a))
+check("全下:两对面对全下按赔率弃牌(注额上限已废止)", a == {"act": "fold"}, str(a))
 
 # F2) 翻后顺子（牌面≥三条）→ 允许 allin
 r = req(my_cards=[36, 32], my_chips=8000, public_cards=[44, 30, 29, 16, 12],
@@ -210,13 +213,23 @@ r = req(my_cards=[36, 32], my_chips=8000, public_cards=[44, 30, 29, 16, 12],
 a = decide(parse_request(r), OpponentModel())
 check("allin上限:顺子允许allin", a == {"act": "allin"}, str(a))
 
-# F3) 翻前跟全下不受金额上限约束（翻前全下分档控制）——回归
+# F3) 【2026-09-14 用户规则·替换旧限制】翻前「跟全下 >1000 → 弃」已废止：
+#     面对对手 all-in 的定向决策（规则2 / 规则16 / 翻前全下分档）说了算，
+#     _normalize 不再把 allin 降级。直测安全网（确定性，不受 MC 噪声影响）。
+from strategy import _normalize as _nz   # noqa: E402
 r = req(my_id=0, my_chips=19500, my_cards=[32, 34],  # TT 均势面对翻前全下
         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
-                 {"round": 0, "player_id": 1, "action": -2, "action_type": "allin"}])
-a = decide(parse_request(r), OpponentModel())
-check("allin上限:翻前均势TT大额全下→弃(2026-08-24)",
-      a == {"act": "fold"}, str(a))
+                 {"round": 0, "player_id": 1, "action": 20000, "action_type": "allin"}])
+_st3 = parse_request(r)
+check("allin上限:翻前跟全下不再被1000上限降级(直测)",
+      _nz(_st3, {"act": "allin"}) == {"act": "allin"},
+      str(_nz(_st3, {"act": "allin"})))
+check("allin上限:跟注即全下不再被1000上限拦成fold(直测)",
+      _nz(_st3, {"act": "call"}) == {"act": "allin"},
+      str(_nz(_st3, {"act": "call"})))
+# 【2026-09-14 注释】原「翻前均势TT大额全下→弃(2026-08-24)」断言已删除：
+# 该场景的弃/跟由决策层按 eq vs thr 判定，而 TT 均势 + 突袭全下时 eq≈0.65
+# 正好落在门槛上（MC 600 次抽样噪声即翻转）→ 不适合做确定性断言。
 
 # ============ G. 翻前投入 ≤1000（2026-08-24 新规，doomed/super_hand 例外） ============
 # G1) 翻前对手 raise 1500，我 AA（BB 已投 100）→ to_call=1400 > 1000
