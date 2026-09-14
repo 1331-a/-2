@@ -34,6 +34,11 @@
 - **doom 判定只用原始 lead**（`lead_raw`）：`_match_adjust` 里 ctx 偏移只作用于 protect/pressure/desperate 阈值，**不再参与 doomed 判定**。原因（截图第 66 手）：ctx 激进偏移 -6BB 把「弃牌只损失 100、完全安全」的局面压成 doomed → 拿 10 高牌（两头顺听牌）无条件 allin 19900。
 - **规则10 强化**：`STABILITY_LINE_FACTOR=0.60`（原硬编码 0.8）+ 新增「剩 ≤8 手且领先」也求稳；求稳时主动侧一律 check（取消「对手过牌 → 强制小注」）；新增 `_stability_guard` 禁止主动加注/主动全下，被动侧只跟（强牌例外：翻后有效牌型 ≥ 两对 / 翻前 AA·KK·QQ·JJ·AKs）。
 
+## 2026-09-14 全下下限豁免 + 弱两对判定修复（commit dd24755）
+- **`_allin_floor_guard` 只约束主动 shove**：「跟对手全下」（`any_allin` 或 `to_call ≥ my_left`）直接放行——否则四条/葫芦这类必胜牌会因「累计投入 ≤ 盈利+1000」被降级成 fold（实测四条弃于 3000 注）。
+- **`should_avoid_risk` 增加 ≥三条 豁免**：手牌 22 + 公面 JJ2 = 葫芦(222JJ) 原被判「弱两对」→ 走 `_risk_avoid_route` 弃牌；现在有效牌型 ≥ 三条一律不算弱两对。
+- 保留：两对面对「突袭大注」（`_OPP_JUMPED` + 牌型 < 三条）仍 fold（用户 2026-09-04 规则）。
+
 ## 2026-08-28 2倍系数修复（commit 232592a，用户反馈驱动）
 - **重大 bug**：lead（我-对手累计净赢差）变化是筹码损失的 **2 倍**（每局弃牌我-X/对手+X→差-2X）；
   `_blind_line` 只返回筹码损失（SB/BB），c6ddf01 精确公式化时直接当 lead 阈值用，少算 2 倍
