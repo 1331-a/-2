@@ -263,13 +263,31 @@ _ctx_cons.level = LEVEL_CONSERVATIVE          # 正偏移 → 更难 doomed
 _ctx_aggr = MatchContext.from_dict(OpponentModel().ctx_dict)
 _ctx_aggr.level = LEVEL_AGGRESSIVE            # 负偏移 → 更易 doomed
 
-# 同一状态在两档下 doomed 判定应当不同（证明 ctx 确实影响判定）
-_S2._prepare_globals(_st_m4, _m4, _ctx_cons)
-_adj_cons = _match_adjust(_st_m4)
-_S2._prepare_globals(_st_m4, _m4, _ctx_aggr)
-_adj_aggr = _match_adjust(_st_m4)
+# 【2026-09-14 修复】ctx 偏移只作用于 protect/pressure/desperate 的阈值，
+# **不再影响 doom**（doom 是确定性硬规则，只用原始 lead 判定）——所以这里
+# 改用 ±30BB(3000) 的 protect 边界来验证「ctx 确实生效」。
+_st_m4b = parse_request({"num_players": 2, "dealer_id": 1, "my_id": 0,
+                         "my_chips": 19900, "my_cards": [34, 17],
+                         "public_cards": [], "history": [], "hand": 63,
+                         "max_hand": 70, "total_win_chips": [1400, -1400],
+                         "total_win_games": [0, 0]})
+_S2._prepare_globals(_st_m4b, _m4, _ctx_cons)
+_adj_cons = _match_adjust(_st_m4b)
+_S2._prepare_globals(_st_m4b, _m4, _ctx_aggr)
+_adj_aggr = _match_adjust(_st_m4b)
 check("M4:同一状态在保守/激进档下 adjust 不同（ctx 生效）",
       _adj_cons != _adj_aggr, "%s vs %s" % (_adj_cons, _adj_aggr))
+check("M4:保守档(正偏移)更早 protect（lead2800→3400≥30BB）",
+      _adj_cons == "protect" and _adj_aggr == "normal",
+      "%s vs %s" % (_adj_cons, _adj_aggr))
+
+# 【2026-09-14 修复】doom 用原始 lead（不叠加 ctx 偏移）——decide 断言见下方。
+_S2._prepare_globals(_st_m4, _m4, _ctx_cons)
+_doom_c = _S2._doom_risk(_st_m4)
+_S2._prepare_globals(_st_m4, _m4, _ctx_aggr)
+_doom_a = _S2._doom_risk(_st_m4)
+check("M4:doom 判定两档一致（确定性公式不受 ctx 影响）",
+      _doom_c == _doom_a, "%s vs %s" % (_doom_c, _doom_a))
 
 # 把全局故意留成「上一手的保守档」，本手传激进档 → 入口必须刷新
 _S2._CTX = _ctx_cons
@@ -279,8 +297,13 @@ check("M4:入口已把 _CTX 刷新为本手 ctx", _S2._CTX is _ctx_aggr)
 check("M4:入口已刷新 _OPP_JUMPED", isinstance(_S2._OPP_JUMPED, bool))
 check("M4:入口已复位 _DECISION_STARTED_AT", _S2._DECISION_STARTED_AT > 0,
       str(_S2._DECISION_STARTED_AT))
-check("M4:doomed 边界按本手 ctx 判定 → allin",
-      _a_m4.get("act") == "allin", str(_a_m4))
+# 【2026-09-14 修复】doom 用原始 lead（不叠加 ctx 偏移）：本场景 lead=-240、
+# 本手已投 100（弃牌只损失 100，安全）→ 激进档也不该被判 doomed 无脑 allin。
+check("M4:doom 不受 ctx 偏移污染 → 不误 allin", _a_m4.get("act") != "allin",
+      str(_a_m4))
+# 【2026-09-14】原断言「M4:doomed 边界按本手 ctx 判定 → allin」已删除：
+# 该断言依赖「ctx 偏移能把 doom 边界推过线」的旧行为，而这正是本次修复的缺陷
+# （会拿没牌的牌无条件 allin）。新断言见上方「doom 不受 ctx 偏移污染」两行。
 
 # _prepare_globals 刷新 _OPP_JUMPED / _OPP_BETS_PER_HAND
 _prepare_globals(_st_m4, _m4, _ctx_aggr)
@@ -693,8 +716,8 @@ for _nm, _cards in (("KQs", (44, 41)), ("ATs", (48, 33))):
 check("0914规则16:强牌(AA)任何情况都跟",
       _preflop_allin_decide(_st16(10, cards=(48, 49)), _m16_quiet).get("act")
       == "allin")
-check("0914规则16:边缘烂牌(K9s)即使末期+爱 allin 也不跟",
-      _preflop_allin_decide(_st16(61, cards=(44, 31)), _m16_aggro).get("act")
+check("0914规则16:边缘烂牌(K6o)即使末期+爱 allin 也不跟",
+      _preflop_allin_decide(_st16(61, cards=(44, 18)), _m16_aggro).get("act")
       == "fold")
 
 # E. 优先级：防锁赢（doomed）在下层之上——弃牌即送掉比赛时无条件 allin
@@ -707,6 +730,50 @@ check("0914规则16:doomed 时无条件 allin（不受跟注门槛影响）",
 check("0914规则16:doomed 决策 = allin",
       decide(_doom, _m16_quiet).get("act") == "allin",
       str(decide(_doom, _m16_quiet)))
+
+# ============ 2026-09-14 规则10 强化：靠近锁赢线/终局领先 → 不主动加注 ============
+from strategy import _stability_mode, _stability_guard   # noqa: E402
+
+
+def _st10(hand=65, lead=67, cards=(32, 22), board=(), hist=()):
+    return parse_request(dict(num_players=2, dealer_id=1, my_id=0,
+                              my_chips=19900, my_cards=list(cards),
+                              public_cards=list(board), history=list(hist),
+                              hand=hand, max_hand=70,
+                              total_win_chips=[lead, -lead],
+                              total_win_games=[0, 0]))
+
+
+check("0914规则10:剩4手+领先 → 求稳",
+      _stability_mode(_st10(), _m16_quiet) is True)
+check("0914规则10:剩9手+持平 → 不求稳",
+      _stability_mode(_st10(hand=60, lead=0), _m16_quiet) is False)
+check("0914规则10:落后 → 不求稳(继续施压)",
+      _stability_mode(_st10(hand=62, lead=-50), _m16_quiet) is False)
+_st10a = _st10()
+check("0914规则10:求稳时主动加注→过牌",
+      _stability_guard(_st10a, _m16_quiet, {"act": "raise", "num": 500})
+      == {"act": "check"},
+      str(_stability_guard(_st10a, _m16_quiet, {"act": "raise", "num": 500})))
+check("0914规则10:求稳时主动全下→过牌",
+      _stability_guard(_st10a, _m16_quiet, {"act": "allin"}) == {"act": "check"},
+      str(_stability_guard(_st10a, _m16_quiet, {"act": "allin"})))
+_st10b = _st10(board=(31, 13, 24),
+               hist=({"round": 0, "player_id": 1, "action": 50,
+                      "action_type": "call"},
+                     {"round": 1, "player_id": 0, "action": 0,
+                      "action_type": "check"},
+                     {"round": 1, "player_id": 1, "action": 343,
+                      "action_type": "raise"}))
+check("0914规则10:求稳时面对下注反加→跟注",
+      _stability_guard(_st10b, _m16_quiet, {"act": "raise", "num": 800})
+      == {"act": "call"},
+      str(_stability_guard(_st10b, _m16_quiet, {"act": "raise", "num": 800})))
+_st10c = _st10(cards=(28, 29), board=(30, 44, 40))
+check("0914规则10:求稳时强牌(三条)仍可加注",
+      _stability_guard(_st10c, _m16_quiet,
+                       {"act": "raise", "num": 900}).get("act") == "raise",
+      str(_stability_guard(_st10c, _m16_quiet, {"act": "raise", "num": 900})))
 
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:

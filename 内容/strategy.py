@@ -91,6 +91,16 @@ ALLIN_RELAX_HANDS_ZERO = 45    # 剩余 ≥ 此手数 → 局数维度不放宽
 ALLIN_RELAX_FREQ_FULL = 0.25   # 对手 allin 频率 ≥ 此值 → 频率维度放宽到满
 ALLIN_RELAX_FREQ_MIN_N = 10    # 频率维度按样本量折算置信度（10 手为满）
 
+# ── 规则10（2026-09-14 用户规则·强化）：靠近锁赢线 / 终局领先 → 不主动加注 ──
+# 用户规则：「靠近锁赢线时不要主动加注，尽量跟注和过牌」。
+#   ① 触发线由硬编码 0.8 下调到 0.6 —— 更早进入求稳；
+#   ② 新增终局条件：剩余 ≤8 手且领先（lead > 0）→ 也求稳；
+#   ③ 求稳模式下**取消**「对手过牌 → 强制小注」（主动下注会把底池做大、
+#      给对手 all-in 的机会），主动侧一律过牌、被动侧只跟不 raise；
+#   ④ 强牌（有效牌型 ≥ 两对）仍保留价值下注 —— 用户针对的是「没牌主动下注」。
+STABILITY_LINE_FACTOR = 0.60   # 求稳触发：lead ≥ 此比例 × 锁赢线
+STABILITY_ENDGAME_HANDS = 8    # 剩 ≤ 此手数且领先 → 也求稳
+
 # ---- 钓鱼下注（对跟注型对手缩小价值注，钓更宽跟注范围）----
 # 【优化思路】对「爱跟注的对手」（跟注站/低弃牌率），0.65~0.75 池的大注
 # 会把他们吓跑，损失价值。这类对手的特点是不看赔率跟注，小注反而能让
@@ -692,6 +702,9 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 【规则15·2026-09-14】未成牌时本手最多诈唬两次 → 第三次起撤（降级为
     # 跟注/过牌）。放在 _normalize 之前，让降级后的动作再过一次合法性校验。
     action = _bluff_cap_guard(state, action)
+    # 【规则10·2026-09-14 用户规则】求稳模式：靠近锁赢线/终局领先时禁止
+    # 主动加注与主动全下（降级为跟注 / 过牌；强牌例外，见函数注释）。
+    action = _stability_guard(state, model, action)
     action = _normalize(state, action)
     # 【规则2 扩展·2026-09-14】放最后：敞口式 doom 下禁止只跟注/加注 →
     # 当手无条件 all-in（须在 _normalize 之后，否则会被牌型注额上限降级）。
@@ -1175,8 +1188,13 @@ def _match_adjust(state):
     """
     try:
         hands_left = _hands_left(state)
-        lead = (state.total_win_chips[state.my_id]
-                - state.total_win_chips[state.opp_id])
+        # 【2026-09-14 修复】doom 判定必须用**原始 lead**（不叠加赛制偏移）：
+        #   原始值 lead_raw —— 「我 - 对手」的客观累计净赢差；
+        #   偏移值 lead     —— lead_raw + (激进等级 + 策略重心) × BB，
+        #                      只用于 protect/pressure/desperate 的阈值。
+        lead_raw = (state.total_win_chips[state.my_id]
+                    - state.total_win_chips[state.opp_id])
+        lead = lead_raw
         bb = state.big_blind
 
         # 激进等级 → 阈值偏移（大盲单位）+ 赢牌策略重心偏移（2026-08-25：
@@ -1200,7 +1218,12 @@ def _match_adjust(state):
         # 【2026-09-14 用户规则】敞口 = 已投入 + to_call（见 _exposure）——
         # 「跟注后失败 → 对手锁赢」同样属于 doomed，必须当手 allin，
         # 不能只跟注。lead 已叠加过 match_ctx 偏移，故传入复用。
-        if _doom_risk(state, lead, hands_left):
+        # 【2026-09-14 用户规则·修复】doom 判定只认原始 lead（见上方 lead_raw）：
+        # 赛制偏移不能改变「本局失败是否把锁赢送给对手」这一客观事实。
+        # 污染后果（实测第 66 手截图）：lead=+134、本手已投 100、剩 4 手 ——
+        # 弃牌只损失 100（完全安全），但 ctx 激进偏移 -6BB 把 lead 压成 -466
+        # → doom 成立 → 拿 10 高牌（两头顺听牌）无条件 allin 19900。
+        if _doom_risk(state, lead_raw, hands_left):
             return "doomed"
 
         if hands_left <= 15:
@@ -2677,28 +2700,34 @@ def _learned_size(model, state, default_frac, is_preflop=False):
 
 
 def _stability_mode(state, model):
-    """【规则10·2026-09-07 用户规则】求稳模式判定。
+    """【规则10·2026-09-07 用户规则；2026-09-14 强化】求稳模式判定。
 
     触发（任一）：
       1. 对手频繁 allin（全下攻击型）——全押手数占比 ≥ 20%
          （每 5 手至少 1 次全下，主动下注大底池会被他梭哈/被反诈唬）；
-      2. 我方接近锁赢线 80%——lead ≥ 0.8×绝对安全线（全程弃牌也能赢），
-         求稳不赌，降低波动保收益。
-    返回 True = 进入求稳（过牌跟注，不主动下注）。
+      2. 我方接近锁赢线（lead ≥ STABILITY_LINE_FACTOR(0.6) × 锁赢线）——
+         求稳不赌，降低波动保收益；
+      3. 【2026-09-14 新增】终局领先：剩余 ≤ STABILITY_ENDGAME_HANDS(8) 手
+         且 lead > 0 —— 已无时间承受波动。
+    返回 True = 进入求稳（过牌跟注，不主动下注/加注）。
     """
     try:
         # 条件 1：对手 allin 频率（allin_count / hands_seen）
         freq = model.allin_count / max(model.hands_seen, 1)
         if freq >= 0.20:
             return True
-        # 条件 2：我方 lead ≥ **锁赢线**的 80%。
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        # 条件 2：我方 lead ≥ 锁赢线 × STABILITY_LINE_FACTOR。
         # 【M1·2026-09-11】原用 0.8×_blind_line —— 但 lead 是筹码差的 2 倍，
         # 等于「40% 锁赢线」就求稳 → 过度求稳（健康度表里本规则 EV 最差）。
         # 统一改用 _lock_line(state)（含 2× 与 本手已投）。
-        lead = (state.total_win_chips[state.my_id]
-                - state.total_win_chips[state.opp_id])
+        # 【2026-09-14 用户规则】比例 0.8 → 0.6（更早求稳）。
         line = _lock_line(state)
-        if line > 0 and lead >= 0.8 * line:
+        if line > 0 and lead >= STABILITY_LINE_FACTOR * line:
+            return True
+        # 条件 3【2026-09-14 用户规则】终局领先 → 不主动加注，只跟注/过牌。
+        if lead > 0 and _hands_left(state) <= STABILITY_ENDGAME_HANDS:
             return True
     except Exception:
         pass
@@ -2708,17 +2737,53 @@ def _stability_mode(state, model):
 def _check_side_stable(state, model, eq, category, strong, good, medium,
                        big_draw, draw, tex, arch, adj, is_river,
                        i_aggressor):
-    """【规则10】求稳模式的主动侧：不主动大注，但对手 check 后的小注仍执行。
+    """【规则10】求稳模式的主动侧：一律不主动下注。
 
-    对手爱 allin / 快锁赢时不赌——大注不做，降低波动。
-    【2026-09-10 修正】"对手过牌后强制小注"（规则12）优先级高于求稳的
-    消极过牌：0.40 池(cap 1000)小注成本可控，且对手已示弱，弃牌权益高，
-    不应该被求稳吞掉（用户反馈：对手过牌我仍过牌）。
+    【2026-09-14 用户规则·强化】「靠近锁赢线时不要主动加注，尽量跟注和过牌」。
+    原实现（2026-09-10）让「对手过牌 → 仍强制小注（规则12）」优先于求稳——
+    现按要求取消：主动下注会把底池做大，对手一手 all-in 就能把「稳赢」
+    变成赌局，与求稳目标直接冲突。
+    注：强牌（有效牌型 ≥ 两对）不会走到这里（调用方 `not strong` 才进求稳）。
     """
-    opp_checked = _opp_checked_this_round(state)
-    if opp_checked:
-        return _opp_check_bet(state, True)     # 对手check过 → 强制小注(规则12)
     return {"act": "check"}
+
+
+def _stability_guard(state, model, action):
+    """【规则10·2026-09-14 用户规则】求稳模式：禁止**主动**加注 / 主动全下。
+
+    用户规则：「靠近锁赢线时不要主动加注，尽量跟注和过牌」。
+    降级规则：
+      · 主动下注/加注（to_call == 0）→ 过牌；
+      · 面对下注时加注（0 < to_call < my_left）→ 跟注；
+      · 跟注即全下（to_call ≥ my_left）→ 保留全下（不跟只能弃，跟注即最优）。
+    例外（真价值牌仍可下注，用户针对的是「没牌还主动加注」）：
+      · 翻后有效牌型 ≥ 两对；翻前超强牌（AA/KK/QQ/JJ/AKs）。
+    位置：`_decide_impl` 出口、`_normalize` 之前（降级动作还要过合法性校验）；
+    规则2（锁赢/防锁赢）在入口已返回，不受本 guard 影响。
+    """
+    if action.get("act") not in ("raise", "allin"):
+        return action
+    try:
+        if not _stability_mode(state, model):
+            return action
+        # ---- 强牌例外 ----
+        try:
+            if _effective_category(state) >= TWO_PAIR:
+                return action
+        except Exception:
+            pass
+        try:
+            if _is_super_hand(state.hole):
+                return action
+        except Exception:
+            pass
+        if int(state.to_call) <= 0:
+            return {"act": "check"}            # 主动侧 → 过牌
+        if int(state.to_call) >= int(state.my_left):
+            return action                      # 跟注即全下 → 保留
+        return {"act": "call"}                 # 被动侧 → 跟注不 raise
+    except Exception:
+        return action
 
 
 def _check_side(state, model, eq, category, strong, good, medium, big_draw,
