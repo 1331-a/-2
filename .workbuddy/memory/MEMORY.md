@@ -27,8 +27,12 @@
 - **核心原则**：凡是「面对对手 all-in」的定向决策（规则2 锁赢/防锁赢、规则16+`_preflop_allin_decide` 跟全下、翻后全下分支）→ **替换此前所有针对 allin 的限制**（翻前 1000 上限、翻后 `_bet_limit` 牌型上限），`_normalize` 不再二次降级。
 - **锁赢 allin 免检标记 lk**：`_lock_win_legal` 给锁赢 allin 打 `lk=1`，`_normalize` 见标记直接放行——修「ctx 保守偏移 → `_match_adjust` 非 doomed → doom 的 allin 被降级成 fold」。
 - **仍保留限制的是我方主动 shove**（无人全押、to_call < my_left → 仍按 1000/牌型上限降级）。
-- **盈利锁胜 C 分支真相**：`_profit_lock_allin(state)` 就是 `_doom_risk(state)`；与 A 分支（`_match_adjust=='doomed'`）唯一差别是 lead 是否叠加 `_CTX` 偏移 → C 仅在 ctx 正偏移（保守档）窗口生效。
+- **盈利锁胜 C 分支 = 死代码**：`_profit_lock_allin(state)` 就是 `_doom_risk(state)`；自 ff7509d 起 A 分支（`_match_adjust=='doomed'`）也改用原始 lead → 两者完全等价，C 永不单独生效（以后可清理）。
 - 【测试陷阱】history 里 allin 必须写**真实金额**（写 -2 会让 to_call 塌缩为 1，赔率失真 → 弱牌也判跟注）。
+
+## 2026-09-14 补充修复（commit ff7509d）
+- **doom 判定只用原始 lead**（`lead_raw`）：`_match_adjust` 里 ctx 偏移只作用于 protect/pressure/desperate 阈值，**不再参与 doomed 判定**。原因（截图第 66 手）：ctx 激进偏移 -6BB 把「弃牌只损失 100、完全安全」的局面压成 doomed → 拿 10 高牌（两头顺听牌）无条件 allin 19900。
+- **规则10 强化**：`STABILITY_LINE_FACTOR=0.60`（原硬编码 0.8）+ 新增「剩 ≤8 手且领先」也求稳；求稳时主动侧一律 check（取消「对手过牌 → 强制小注」）；新增 `_stability_guard` 禁止主动加注/主动全下，被动侧只跟（强牌例外：翻后有效牌型 ≥ 两对 / 翻前 AA·KK·QQ·JJ·AKs）。
 
 ## 2026-08-28 2倍系数修复（commit 232592a，用户反馈驱动）
 - **重大 bug**：lead（我-对手累计净赢差）变化是筹码损失的 **2 倍**（每局弃牌我-X/对手+X→差-2X）；
