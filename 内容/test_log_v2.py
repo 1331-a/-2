@@ -535,6 +535,97 @@ check("0914规则14:决策层对 300 小注从不弃牌",
 check("0914规则14:决策层两种动作都出现(跟注/反加都试)",
       len(_acts14) >= 2, str(_acts14))
 
+
+# ============ 2026-09-14 规则15：未成牌时本手最多诈唬两次 ============
+# 用户规则：手牌没有与公共牌成牌、采用小额诈唬策略时，本手最多诈唬两次；
+# 第三次对手还不弃牌就撤（不再主动投入）。
+# 实现：_my_bluff_count 从 history 按「当时」公面张数还原牌力计数；
+#       _bluff_cap_guard 在 _normalize 之前把超限的 raise 降级。
+from strategy import (_my_bluff_count, _bluff_cap_guard,  # noqa: E402
+                      BLUFF_MAX_PER_HAND)
+
+# 公面 [0,4,13,21,26]：无对、无三同花，且与手牌 [10,44] 全程不成牌
+_B15 = [0, 4, 13, 21, 26]
+
+
+def _st15(hist, cards=(10, 44)):
+    return parse_request({"num_players": 2, "dealer_id": 1, "my_id": 0,
+                          "my_chips": 19500, "my_cards": list(cards),
+                          "public_cards": _B15, "history": hist,
+                          "hand": 40, "max_hand": 70,
+                          "total_win_chips": [0, 0], "total_win_games": [0, 0]})
+
+
+_PRE15 = [{"round": 0, "player_id": 0, "action": 100, "action_type": "raise"},
+          {"round": 0, "player_id": 1, "action": 200, "action_type": "raise"},
+          {"round": 0, "player_id": 0, "action": 200, "action_type": "call"}]
+_F15 = [{"round": 1, "player_id": 0, "action": 300, "action_type": "raise"},
+        {"round": 1, "player_id": 1, "action": 300, "action_type": "call"}]
+_T15 = [{"round": 2, "player_id": 0, "action": 600, "action_type": "raise"},
+        {"round": 2, "player_id": 1, "action": 600, "action_type": "call"}]
+_R15 = [{"round": 3, "player_id": 1, "action": 0, "action_type": "check"}]
+
+# A. 计数：翻前不算、每次未成牌的下注各计一次
+check("0914规则15:未成牌基准牌型 = HIGH_CARD",
+      _effective_category(_st15(_PRE15)) == 0,
+      str(_effective_category(_st15(_PRE15))))
+check("0914规则15:0 次诈唬", _my_bluff_count(_st15(_PRE15)) == 0)
+check("0914规则15:flop 下注(未成牌) → 1 次",
+      _my_bluff_count(_st15(_PRE15 + _F15)) == 1,
+      str(_my_bluff_count(_st15(_PRE15 + _F15))))
+check("0914规则15:flop+turn 下注 → 2 次",
+      _my_bluff_count(_st15(_PRE15 + _F15 + _T15)) == 2,
+      str(_my_bluff_count(_st15(_PRE15 + _F15 + _T15))))
+check("0914规则15:翻前加注不计入诈唬",
+      _my_bluff_count(_st15(_PRE15)) == 0)
+
+# B. 当时已成牌的下注不计（flop 就配成一对）
+check("0914规则15:flop 已成对的下注不计诈唬",
+      _my_bluff_count(_st15(_PRE15 + _F15, cards=(12, 44))) == 0,
+      str(_my_bluff_count(_st15(_PRE15 + _F15, cards=(12, 44)))))
+
+# C. 上限：第 3 次机会 → 不再主动投入
+_capped = _st15(_PRE15 + _F15 + _T15 + _R15)
+check("0914规则15:达到上限(2 次)", _my_bluff_count(_capped) == BLUFF_MAX_PER_HAND)
+check("0914规则15:超限 raise + 可过牌 → 改 check",
+      _bluff_cap_guard(_capped, {"act": "raise", "num": 800}) == {"act": "check"},
+      str(_bluff_cap_guard(_capped, {"act": "raise", "num": 800})))
+_facing = _st15(_PRE15 + _F15 + _T15 +
+                [{"round": 3, "player_id": 1, "action": 400, "action_type": "raise"}])
+check("0914规则15:超限 raise + 面对下注 → 改 call（不再加注诈唬）",
+      _bluff_cap_guard(_facing, {"act": "raise", "num": 1200}) == {"act": "call"},
+      str(_bluff_cap_guard(_facing, {"act": "raise", "num": 1200})))
+
+# D. 只降级 raise；fold/check/call/allin 一律不动
+check("0914规则15:fold 不动",
+      _bluff_cap_guard(_capped, {"act": "fold"}) == {"act": "fold"})
+check("0914规则15:check 不动",
+      _bluff_cap_guard(_capped, {"act": "check"}) == {"act": "check"})
+check("0914规则15:call 不动",
+      _bluff_cap_guard(_capped, {"act": "call"}) == {"act": "call"})
+
+# E. 未达上限（只诈唬 1 次）→ 不受限
+_one = _st15(_PRE15 + _F15 + _R15)
+check("0914规则15:仅 1 次诈唬时不受限",
+      _bluff_cap_guard(_one, {"act": "raise", "num": 800}) == {"act": "raise",
+                                                              "num": 800},
+      str(_bluff_cap_guard(_one, {"act": "raise", "num": 800})))
+
+# F. 已成牌（当前一对）→ 无论诈唬几次都不受限
+_made = _st15(_PRE15 + _F15 + _T15, cards=(26, 44))
+check("0914规则15:已成牌时不受诈唬上限约束",
+      _effective_category(_made) != 0
+      and _bluff_cap_guard(_made, {"act": "raise", "num": 800})
+      == {"act": "raise", "num": 800},
+      "cat=%d" % _effective_category(_made))
+
+# G. 决策层：第 3 次机会不再出现 raise
+_acts15 = set()
+for _ in range(80):
+    _acts15.add(decide(_capped, _m14).get("act"))
+check("0914规则15:决策层第 3 次机会不再主动加注",
+      "raise" not in _acts15, str(_acts15))
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")

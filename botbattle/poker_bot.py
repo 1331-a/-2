@@ -2182,9 +2182,13 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     action = _aggressive_strong_bet(state, action)
     # 【2026-09-10】禁弃兜底已上移并入「规则2·尾段守卫」_lock_win_tail_guard，
     # 此处不再重复调用（避免同一规则两处执行）。
+    # 【规则15·2026-09-14】未成牌时本手最多诈唬两次 → 第三次起撤（降级为
+    # 跟注/过牌）。放在 _normalize 之前，让降级后的动作再过一次合法性校验。
+    action = _bluff_cap_guard(state, action)
     action = _normalize(state, action)
     # 【规则2 扩展·2026-09-14】放最后：敞口式 doom 下禁止只跟注/加注 →
     # 当手无条件 all-in（须在 _normalize 之后，否则会被牌型注额上限降级）。
+    # 注意优先级：doom 是确定性硬规则，会覆盖上面的诈唬上限。
     return _doom_call_upgrade(state, action)
 
 
@@ -3077,6 +3081,11 @@ BLUFF_READ_RAISE_FREQ = 0.35  # 反加小注的比例（其余跟注；两者都
 BLUFF_READ_RAISE_MULT = 3.0   # 反加尺度：对手本轮注额的倍数
 
 
+# ── 规则15（2026-09-14 用户规则）：未成牌时本手最多诈唬两次 ──
+BLUFF_MAX_PER_HAND = 2        # 未与公面成牌时，本手最多主动下注/加注次数
+BLUFF_COUNT_MIN_ROUND = 1     # 只统计翻后（翻前不存在"与公面成牌"概念）
+
+
 def _my_checked_this_round(state):
     """我方本轮（当前街）是否 check 过——与 _opp_checked_this_round 对称。
 
@@ -3528,6 +3537,83 @@ def _fmt_card(n):
         return _RANK_STR[(n // 4) % 13] + _SUIT_STR[n % 4]
     except Exception:
         return "??"
+
+
+def _my_bluff_count(state):
+    """本手我方「未与公面成牌时」的下注/加注次数（= 已诈唬次数）。
+
+    【规则15·2026-09-14 用户规则】用于「未成牌最多诈唬两次」的上限判定。
+
+    从 history 重放：只看我方的下注/加注动作，按**当时**的公面张数还原
+    当时的牌力（翻牌 3 张 / 转牌 4 张 / 河牌 5 张）——当时为高牌（未成牌）
+    即计一次诈唬。翻前的加注不计（翻前不存在「与公面成牌」的概念）。
+
+    说明：听牌（同花/顺子听牌）在当前牌力口径下也是高牌，因此半诈唬同样
+    计入——用户规则原文是「没有与公共牌成牌」，听牌确实未成牌。
+    """
+    request = getattr(state, "request", None) or {}
+    hist = request.get("history") or []
+    hole = list(state.hole or [])
+    board = list(state.board or [])
+    if len(hole) != 2 or len(board) < 3:
+        return 0
+    my_ids = {state.my_id}
+    try:
+        base = int(getattr(state, "id_base", 0) or 0)
+        if base:
+            my_ids.add(state.my_id + base)
+    except Exception:
+        pass
+    n = 0
+    for r in hist:
+        try:
+            if int(r.get("player_id", -99)) not in my_ids:
+                continue
+            rd = int(r.get("round", 0))
+            if rd < BLUFF_COUNT_MIN_ROUND:
+                continue
+            a = r.get("action", 0)
+            at = r.get("action_type", "")
+            if not (at == "raise" or
+                    (isinstance(a, int) and not isinstance(a, bool) and a > 0)):
+                continue
+            k = {1: 3, 2: 4, 3: 5}.get(rd, 3)
+            cards = hole + board[:min(k, len(board))]
+            if len(cards) < 5:
+                continue
+            ev = evaluate_7(cards)
+            if ev and ev[0] == HIGH_CARD:      # 当时未成牌 → 计一次诈唬
+                n += 1
+        except Exception:
+            continue
+    return n
+
+
+def _bluff_cap_guard(state, action):
+    """【规则15·2026-09-14 用户规则】未成牌时的诈唬次数上限。
+
+    用户规则：手牌没有与公共牌成牌、采用小额诈唬策略时，本手最多诈唬
+    两次；第三次对手还不弃牌就撤。
+
+    实现：本手已诈唬 ≥ BLUFF_MAX_PER_HAND 次、且**当前仍未成牌**
+    （_effective_category == HIGH_CARD）时，把主动投入降级：
+      · 面对下注（to_call>0）→ 改为**跟注**（不再加注诈唬；原本该弃牌的
+        动作不会被这里改成跟注——只降级 raise）；
+      · 可以过牌（to_call==0）→ 改为**过牌**（停止继续开火）。
+    只降级 raise；fold / check / call / allin 一律不动。
+    """
+    try:
+        if action.get("act") != "raise":
+            return action
+        if _effective_category(state) != HIGH_CARD:
+            return action
+        if _my_bluff_count(state) < BLUFF_MAX_PER_HAND:
+            return action
+        if int(state.to_call) > 0:
+            return {"act": "call"}
+        return {"act": "check"}
+    except Exception:
+        return action
 
 
 def explain(state, model, ctx=None, with_eq=True):
