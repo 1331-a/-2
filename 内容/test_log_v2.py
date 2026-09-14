@@ -175,7 +175,7 @@ check("进度条 100%%", "100%" in DecisionLogger.progress_bar(1.5),
 
 
 # ============ 2026-09-11 五项审查修复专项 ============
-from strategy import (_is_lead_lock, _lock_line, _safe_fallback_action,
+from strategy import (_lock_line, _safe_fallback_action,
                       _LW_UNSET, _decide_impl, _stability_mode)
 import strategy as _S2
 from bot import _final_guard
@@ -189,16 +189,15 @@ def _mk(twc, hand=30, my_chips=19900):
                           "total_win_games": [0, 0]})
 
 
-# --- P0：外层入口不得依赖过期的模块级 _LEAD_LOCK ---
-_st_p0 = _mk([5000, -5000])
-check("P0:_is_lead_lock 现算(领先10000>2000)", _is_lead_lock(_st_p0) is True)
-_S2._LEAD_LOCK = False                      # 伪造「上一手留下的旧值」
-_u_p0 = _S2._lock_win_unified(_st_p0)
-check("P0:过期 _LEAD_LOCK 不影响 _lock_win_unified",
-      _u_p0 is not None and _u_p0.get("act") in ("check", "fold"), str(_u_p0))
-decide(_st_p0, OpponentModel(), None)
-check("P0:decide 入口刷新 _LEAD_LOCK", _S2._LEAD_LOCK is True,
-      str(_S2._LEAD_LOCK))
+# --- 优势锁定（LEAD_LOCK）已于 2026-09-14 移除 ---
+check("0914:_LEAD_LOCK 全局已移除", not hasattr(_S2, "_LEAD_LOCK"))
+check("0914:_is_lead_lock 已移除", not hasattr(_S2, "_is_lead_lock"))
+check("0914:LEAD_NO_ALLIN / LEAD_MAX_BET 常量已移除",
+      not hasattr(_S2, "LEAD_NO_ALLIN") and not hasattr(_S2, "LEAD_MAX_BET"))
+# 领先 10000（旧 LEAD_LOCK 区间）面对全下：强牌不再被强制弃牌
+_u_p0 = _S2._lock_win_unified(_mk([5000, -5000]))
+check("0914:领先时 _lock_win_unified 仍可给出锁胜/防锁赢",
+      _u_p0 is None or _u_p0.get("act") in ("check", "fold", "allin"), str(_u_p0))
 
 # --- M1：_lock_line 含 2× 与 本手已投；求稳阈值 = 80%×锁赢线 ---
 _st_m1 = _mk([1516, -1516], hand=47)
@@ -274,11 +273,10 @@ check("M4:同一状态在保守/激进档下 adjust 不同（ctx 生效）",
 
 # 把全局故意留成「上一手的保守档」，本手传激进档 → 入口必须刷新
 _S2._CTX = _ctx_cons
-_S2._LEAD_LOCK = False
 _S2._DECISION_STARTED_AT = 0.0
 _a_m4 = decide(_st_m4, _m4, _ctx_aggr)
 check("M4:入口已把 _CTX 刷新为本手 ctx", _S2._CTX is _ctx_aggr)
-check("M4:入口已刷新 _LEAD_LOCK", isinstance(_S2._LEAD_LOCK, bool))
+check("M4:入口已刷新 _OPP_JUMPED", isinstance(_S2._OPP_JUMPED, bool))
 check("M4:入口已复位 _DECISION_STARTED_AT", _S2._DECISION_STARTED_AT > 0,
       str(_S2._DECISION_STARTED_AT))
 check("M4:doomed 边界按本手 ctx 判定 → allin",
@@ -625,6 +623,90 @@ for _ in range(80):
     _acts15.add(decide(_capped, _m14).get("act"))
 check("0914规则15:决策层第 3 次机会不再主动加注",
       "raise" not in _acts15, str(_acts15))
+
+
+# ============ 2026-09-14 规则16：跟 all-in 门槛随局数/对手习惯放宽 ============
+# 用户规则：对手 allin 时，剩余局数越少、对手 allin 次数越多，跟的条件越宽；
+# 但「弃牌会导致对手锁赢 / 最后一局弃牌直接输」由防锁赢规则优先（在下层）。
+from strategy import (_call_allin_relax, _preflop_allin_decide,  # noqa: E402
+                      ALLIN_RELAX_CAP, ALLIN_RELAX_HANDS_FULL)
+
+
+def _st16(hand, cards=(48, 45), my_chips=19900, twc=(0, 0)):
+    return parse_request({"num_players": 2, "dealer_id": 1, "my_id": 0,
+                          "my_chips": my_chips, "my_cards": list(cards),
+                          "public_cards": [],
+                          "history": [{"round": 0, "player_id": 1,
+                                       "action": 20000,
+                                       "action_type": "allin"}],
+                          "hand": hand, "max_hand": 70,
+                          "total_win_chips": list(twc),
+                          "total_win_games": [0, 0]})
+
+
+def _m16(hands, allins):
+    m = OpponentModel()
+    m.hands_seen = hands
+    m.allin_count = allins
+    m.preflop_raise = 3
+    m.preflop_call = 5
+    m.preflop_fold = 2
+    return m
+
+
+_m16_quiet = _m16(10, 0)
+_m16_aggro = _m16(10, 3)
+
+# A. 剩余局数越少 → 放宽越多（对手 allin 频率为 0）
+_r_hi = _call_allin_relax(_st16(0), _m16_quiet)     # 剩 69 手
+_r_lo = _call_allin_relax(_st16(61), _m16_quiet)    # 剩 8 手
+check("0914规则16:剩余局数越少放宽越多",
+      _r_lo > _r_hi, "剩69=%.3f 剩8=%.3f" % (_r_hi, _r_lo))
+check("0914规则16:剩余充足(≥45手)不放宽", _r_hi == 0.0, str(_r_hi))
+check("0914规则16:剩余≤8手时局数维度放宽到满",
+      _r_lo > 0.04, str(_r_lo))
+
+# B. 对手 allin 频率越高 → 放宽越多，且小样本折算置信度
+_r_f0 = _call_allin_relax(_st16(0), _m16(10, 0))
+_r_f1 = _call_allin_relax(_st16(0), _m16(10, 1))
+_r_f3 = _call_allin_relax(_st16(0), _m16(10, 3))
+check("0914规则16:对手 allin 频率越高放宽越多",
+      _r_f0 < _r_f1 < _r_f3,
+      "%.3f < %.3f < %.3f" % (_r_f0, _r_f1, _r_f3))
+check("0914规则16:小样本按置信度折算(4手1次 < 10手3次)",
+      _call_allin_relax(_st16(0), _m16(4, 1)) < _r_f3,
+      "%.3f" % _call_allin_relax(_st16(0), _m16(4, 1)))
+
+# C. 上限
+check("0914规则16:叠加放宽不超过上限",
+      _call_allin_relax(_st16(61), _m16_aggro) <= ALLIN_RELAX_CAP + 1e-9,
+      str(_call_allin_relax(_st16(61), _m16_aggro)))
+
+# D. 决策层：中等牌「早期+对手保守」弃 → 「末期+对手爱 allin」跟
+#    （用 KQs / ATs：实测这两张的翻转最稳健；AQs 恰在阈值边界，MC 噪声大）
+for _nm, _cards in (("KQs", (44, 41)), ("ATs", (48, 33))):
+    _e = _preflop_allin_decide(_st16(10, cards=_cards), _m16_quiet).get("act")
+    _l = _preflop_allin_decide(_st16(61, cards=_cards), _m16_aggro).get("act")
+    check("0914规则16:%s 早期+保守对手 → fold" % _nm, _e == "fold", str(_e))
+    check("0914规则16:%s 末期+爱 allin 对手 → allin(条件放宽)" % _nm,
+          _l == "allin", str(_l))
+check("0914规则16:强牌(AA)任何情况都跟",
+      _preflop_allin_decide(_st16(10, cards=(48, 49)), _m16_quiet).get("act")
+      == "allin")
+check("0914规则16:边缘烂牌(K9s)即使末期+爱 allin 也不跟",
+      _preflop_allin_decide(_st16(61, cards=(44, 31)), _m16_aggro).get("act")
+      == "fold")
+
+# E. 优先级：防锁赢（doomed）在下层之上——弃牌即送掉比赛时无条件 allin
+_doom = _st16(66, cards=(23, 2), my_chips=15000, twc=(-3000, 3000))
+check("0914规则16:doomed 状态由规则2 先接管",
+      _match_adjust(_doom) == "doomed", _match_adjust(_doom))
+check("0914规则16:doomed 时无条件 allin（不受跟注门槛影响）",
+      (_lock_win_unified(_doom) or {}).get("act") == "allin",
+      str(_lock_win_unified(_doom)))
+check("0914规则16:doomed 决策 = allin",
+      decide(_doom, _m16_quiet).get("act") == "allin",
+      str(decide(_doom, _m16_quiet)))
 
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:

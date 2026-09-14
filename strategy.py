@@ -78,6 +78,19 @@ ALLIN_THR = {              # key 见 _preflop_allin_decide 档位说明
 }
 ALLIN_ENDGAME_SHIFT = 0.03  # 终局（剩≤15手）修正：领先更严 / 落后更宽
 
+# ── 规则16（2026-09-14 用户规则）：跟 all-in 门槛随局数/对手习惯放宽 ──
+# 两个维度都让**条件变宽**（降低所需胜率）：
+#   ① 剩余局数越少 → 越宽（时间不够，必须赌）
+#   ② 对手 allin 频率越高 → 越宽（对手范围更宽，我们的胜率要求更低）
+# 放宽量叠加后受 ALLIN_RELAX_CAP 限制，不会盖过 ALLIN_THR 的档位结构。
+ALLIN_RELAX_HANDS_MAX = 0.05   # 局数维度最大放宽（胜率）
+ALLIN_RELAX_FREQ_MAX = 0.06    # 对手 allin 频率维度最大放宽（胜率）
+ALLIN_RELAX_CAP = 0.09         # 总放宽上限
+ALLIN_RELAX_HANDS_FULL = 8     # 剩余 ≤ 此手数 → 局数维度放宽到满
+ALLIN_RELAX_HANDS_ZERO = 45    # 剩余 ≥ 此手数 → 局数维度不放宽
+ALLIN_RELAX_FREQ_FULL = 0.25   # 对手 allin 频率 ≥ 此值 → 频率维度放宽到满
+ALLIN_RELAX_FREQ_MIN_N = 10    # 频率维度按样本量折算置信度（10 手为满）
+
 # ---- 钓鱼下注（对跟注型对手缩小价值注，钓更宽跟注范围）----
 # 【优化思路】对「爱跟注的对手」（跟注站/低弃牌率），0.65~0.75 池的大注
 # 会把他们吓跑，损失价值。这类对手的特点是不看赔率跟注，小注反而能让
@@ -111,12 +124,13 @@ RISK_HANDS_LEFT = 20         # 落后场景的剩余局数上限
 # 「领先但未锁胜时的全下保护」。
 ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总盈利 + 此值
 
-# ---- 优势锁定（LEAD_LOCK）：领先较大时硬性保守 ----
-# 【规则】优势（累计盈利差）> LEAD_NO_ALLIN 时：①无论如何不 allin；
-# ②单次下注/加注的注码 ≤ LEAD_MAX_BET。领先时只用小注慢慢积累，
-# 避免大注送筹码（用户规则，优先级最高——decide 入口即生效）。
-LEAD_NO_ALLIN = 2000         # 优势阈值：超过则进入锁定模式
-LEAD_MAX_BET = 1000          # 锁定模式下单次注码上限（10BB）
+# ---- 优势锁定（LEAD_LOCK）已于 2026-09-14 移除 ----
+# 【用户决定】原规则「领先 > LEAD_NO_ALLIN 时一律不 allin + 单次注码 ≤1000」
+# 与牌型注额分级（_bet_limit / _bet_cap_guard，<三条 ≤3000）职责重叠，
+# 而且它是一刀切：**即使手握三条/坚果，面对对手全下也被强制弃牌**。
+# 用户明确：「有规则 3000 以上谨慎下注了，这里是面对 allin 的特殊情况」
+# —— 注额上限继续约束主动下注，面对全下则交由跟全下门槛（规则16）判定。
+# 故本规则整体删除，不再有 LEAD_NO_ALLIN / LEAD_MAX_BET / _LEAD_LOCK。
 
 # ---- 总注额上限（用户规则 2026-08-25/26，翻后分级）----
 # 【用户规则】牌型注额分级（翻后，总注额/跟注/allin 统一口径）：
@@ -170,8 +184,8 @@ STEAL_FOLD_MIN_CAT = 4        # 被加注/全下时唯一例外：顺子及以�
 # ---- 规则2：盈利锁胜全下（第二优先级）----
 # 【规则】当前累计总盈亏 > 0 且 本局已累计下注（含当前轮）> 总盈亏 + 2000
 # 且 手牌对抗随机牌胜率 > 30% → 立即全下锁胜，防止利润回吐。
-# 与 LEAD_LOCK 关系（用户确认）：LEAD_LOCK 优先——领先>2000 时注码受限，
-# 不可能出现「已投 > 盈利+2000」的深投入场景，本规则自然不触发。
+# （原 LEAD_LOCK 优势锁定已于 2026-09-14 移除；本规则现在只看
+#  「本局投入过大 → 输掉后对手能锁赢」这一个确定性条件。）
 
 # ---- 规则3：下注额限制（第三优先级）----
 # 【规则】手牌不属于超强牌（AA/KK/QQ/JJ/AKs）时，主动下注/加注的总注额
@@ -189,12 +203,11 @@ BET_CAP_POT = 2000            # 底池超过此值时完全放弃主动下注（
 #   位置轮换公式 _blind_line(own=False)（原 1.5×大盲×(剩余手数-1) 极值估算）
 #   ⇒ 当 2×投入后 > 我方领先 + 盲注线 时，本手即生死局。
 # → 无条件全下：输了反正对手锁胜，赢面大就该全力搏——allin 兼具弃牌权益
-#   与最大价值（若对手弃牌则直接赢下底池）。优先级高于规则2 与 LEAD_LOCK
-#   的注码限制（这些场景下保守小注与全下面对同样的失败后果）；
+#   与最大价值（若对手弃牌则直接赢下底池）。优先级高于规则2 与注额上限
+#   （这些场景下保守小注与全下面对同样的失败后果）；
 # ---------------- 对外入口 ----------------
 _CTX = None  # 当前请求的赛制上下文（MatchContext，由 decide 入口设置）
 _OPP_JUMPED = False  # 当前手牌对手是否「突袭大注」（decide 入口设置）
-_LEAD_LOCK = False    # 优势锁定模式：领先>LEAD_NO_ALLIN 时不 allin、注码≤LEAD_MAX_BET
 _MODEL_REF = None  # 当前请求的对手模型（decide 入口设置，供防read尺度使用）
 _OPP_BETS_PER_HAND = 0.9  # 对手每局下注数量（decide 入口从 model 读取，
                           # 2026-08-25：驱动跟注门槛微调——高侵略收紧/被动放宽）
@@ -276,11 +289,6 @@ def _allin_floor_guard(state, action):
     """
     if action.get("act") != "allin":
         return action
-    # 【优势锁定】领先>LEAD_NO_ALLIN：无论如何不 allin（最高优先级硬规则）
-    if _LEAD_LOCK:
-        if state.to_call <= 0:
-            return {"act": "check"}
-        return {"act": "fold"}
     try:
         from game_state import INIT_CHIPS
         floor = state.total_win_chips[state.my_id] + ALLIN_FLOOR_CONST
@@ -313,21 +321,6 @@ def _is_super_hand(hole):
     return hi == 14 and lo == 13 and suited   # AKs（同花 AK）
 
 
-def _is_lead_lock(state):
-    """优势锁定：领先 > LEAD_NO_ALLIN → 不 allin、注码受限。
-
-    【P0·2026-09-11】原实现把结果存进模块级 _LEAD_LOCK，而 decide() 入口
-    拦截在 _decide_impl 之前调用 _lock_win_unified → 读到的是**上一手的旧值**
-    （过期）→ 可能在本应「不 allin」的领先局面走进 profit_lock 全下，
-    违反 LEAD_LOCK 硬规则。改为任何地方都按当前 state 现算。
-    """
-    try:
-        return (int(state.total_win_chips[state.my_id])
-                - int(state.total_win_chips[state.opp_id])) > LEAD_NO_ALLIN
-    except Exception:
-        return False
-
-
 def _lock_line(state):
     """锁赢线 = 2 ×（本手已投 + 本手之后剩余盲注线）。
 
@@ -354,9 +347,8 @@ def _lock_win_unified(state):
          盈利时才触发」。
       B. 锁胜弃牌（fold_out）：我方领先到绝对安全（lead > 我方全程弃牌的
          盲注线 + 本局已投）→ 即使全程弃牌也稳赢 → 直接 fold 锁胜。
-      C. 盈利锁胜全下（profit_lock）：已锁定的收益下，本局已投 > 盈利+1000
-         且牌力≥30% → allin 把利润锁死（防止对手靠一手大底池翻盘）；
-         LEAD_LOCK 优势锁定模式时不做（用户规则：领先>LEAD_NO_ALLIN 不 allin）。
+      C. 盈利锁胜全下（profit_lock）：本局投入过大（输掉后对手反而锁赢）
+         → allin 把局面锁死（与 A 同式，只是覆盖盈利侧）。
     返回 action dict 或 None（不触发）。
     """
     try:
@@ -375,8 +367,7 @@ def _lock_win_unified(state):
         if _match_adjust(state) == "doomed":
             return {"act": "allin"}
         # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
-        # 【P0】用现算值而非模块级 _LEAD_LOCK（后者在入口拦截时是过期值）
-        if not _is_lead_lock(state) and _profit_lock_allin(state):
+        if _profit_lock_allin(state):
             return {"act": "allin"}
     except Exception:
         pass
@@ -391,9 +382,8 @@ def _profit_lock_allin(state):
     lead - 2×invested ≤ -2×追回线）→ 强制 allin（不弃牌，弃牌=把锁赢
     拱手让人）。用户明确：「不只是盈利时才触发」，故与 doom 合并为
     同一判定，放在规则2 统一处理。
-    与 LEAD_LOCK 关系（用户确认）：LEAD_LOCK 优先——领先>2000 时注码
-    受限（≤1000），不可能出现「已投 > 盈利+2000」的深投入场景，
-    故本函数只在 LEAD_LOCK 未触发时被调用。
+    【2026-09-14】原 LEAD_LOCK 优势锁定已删除，本函数不再受影响——
+    只看「本局失败是否会把锁赢送给对手」这一确定性条件。
     """
     try:
         from game_state import INIT_CHIPS
@@ -551,8 +541,6 @@ def _doom_call_upgrade(state, action):
             return action
         if int(state.my_left) <= 0:
             return action
-        if _LEAD_LOCK:                 # 优势锁定：领先>2000 不 allin（硬规则）
-            return action
         if not _doom_risk(state, include_to_call=True):
             return action
         return {"act": "allin"}
@@ -610,7 +598,7 @@ def _prepare_globals(state, model, ctx, reset_clock=True):
       · _DECISION_STARTED_AT 未复位 → 超时判断基于上一手的起点。
     统一在这里刷新，decide 入口与 _decide_impl 共用同一份实现（口径一致）。
     """
-    global _CTX, _OPP_JUMPED, _LEAD_LOCK, _OPP_BETS_PER_HAND, \
+    global _CTX, _OPP_JUMPED, _OPP_BETS_PER_HAND, \
         _DECISION_STARTED_AT, _MODEL_REF
     if reset_clock:
         _DECISION_STARTED_AT = time.perf_counter()
@@ -624,8 +612,6 @@ def _prepare_globals(state, model, ctx, reset_clock=True):
             if model is not None else 0.9
     except Exception:
         _OPP_BETS_PER_HAND = 0.9
-    # 【优势锁定】领先 > LEAD_NO_ALLIN → 不 allin + 注码受限
-    _LEAD_LOCK = _is_lead_lock(state)
 
 
 _LW_UNSET = object()      # 哨兵：区分「外层已算出 None」与「未计算」
@@ -652,8 +638,7 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 【优先级 2·规则2（2026-09-10 合并）】锁胜 / 防锁赢统一决策——
     # 原来分散的三条（doom 防锁赢 / fold_out 锁胜弃牌 / 盈利锁胜全下）
     # 本质是同一件事：本局胜败对「最终锁赢」的影响，合并为 _lock_win_unified。
-    #   优先级 1 = _LEAD_LOCK 优势锁定标志（领先 >LEAD_NO_ALLIN 时不 allin）
-    #   优先级 2 = 本规则（含 doom，故 doom 不再是独立第 1 条）
+    # （原「优先级 1 = _LEAD_LOCK 优势锁定」已于 2026-09-14 删除）
     # 【M2】外层 decide() 入口已算过 → 直接复用，避免重复调用（也可能不一致）
     _lw = _lock_win_unified(state) if _lw is _LW_UNSET else _lw
     if _lw is not None:
@@ -1230,6 +1215,48 @@ def _match_adjust(state):
 # ================================================================
 #  翻牌前：百分位范围决策
 # ================================================================
+def _call_allin_relax(state, model):
+    """【规则16·2026-09-14 用户规则】跟 all-in 门槛的放宽量（0 ~ CAP）。
+
+    用户规则：当对手 allin 时，根据**剩余局数**和**对手 allin 习惯**决定
+    是否跟；剩余局数越少、对手 allin 次数越多，条件越宽。
+      · 局数维度：剩余 ≤ALLIN_RELAX_HANDS_FULL 手 → 放宽到满；
+        ≥ALLIN_RELAX_HANDS_ZERO 手 → 不放宽；中间线性过渡。
+      · 频率维度：freq = allin_count / hands_seen，达 ALLIN_RELAX_FREQ_FULL
+        即放宽到满；并乘样本置信度 min(1, hands_seen/10)，避免三五手就
+        把阈值压到底。
+    返回「所需胜率的降低量」，由调用方从门槛里减去。
+
+    优先级：本函数只在「本来可以自己选」的区间生效——**防锁赢（doom）与
+    末手禁弃都由 decide 入口的规则2 先处理**（弃牌即送掉比赛 → 无条件
+    allin），不会被本门槛拦住。
+    """
+    try:
+        # ---- ① 剩余局数维度 ----
+        hl = _hands_left(state)
+        if hl <= ALLIN_RELAX_HANDS_FULL:
+            h_part = 1.0
+        elif hl >= ALLIN_RELAX_HANDS_ZERO:
+            h_part = 0.0
+        else:
+            h_part = ((ALLIN_RELAX_HANDS_ZERO - hl)
+                      / float(ALLIN_RELAX_HANDS_ZERO - ALLIN_RELAX_HANDS_FULL))
+        # ---- ② 对手 allin 习惯维度 ----
+        f_part = 0.0
+        try:
+            n = int(getattr(model, "hands_seen", 0) or 0)
+            freq = float(getattr(model, "allin_count", 0) or 0) / max(n, 1)
+            conf = _clamp(n / float(ALLIN_RELAX_FREQ_MIN_N), 0.0, 1.0)
+            f_part = _clamp(freq / ALLIN_RELAX_FREQ_FULL, 0.0, 1.0) * conf
+        except Exception:
+            f_part = 0.0
+        relax = (ALLIN_RELAX_HANDS_MAX * h_part
+                 + ALLIN_RELAX_FREQ_MAX * f_part)
+        return _clamp(relax, 0.0, ALLIN_RELAX_CAP)
+    except Exception:
+        return 0.0
+
+
 def _preflop_allin_decide(state, model):
     """翻前对手全下（或需跟注额 ≥ 我方筹码，跟注即全下）时的独立决策。
 
@@ -1292,6 +1319,10 @@ def _preflop_allin_decide(state, model):
     # 跟全下阈值抬高（与翻后 jumped 同款保护）
     if _OPP_JUMPED:
         thr = min(0.90, thr + OPP_JUMP_FAC_MARGIN)
+
+    # 【规则16·2026-09-14 用户规则】剩余局数越少 / 对手 allin 越频繁 →
+    # 跟全下条件越宽（降低所需胜率）。
+    thr -= _call_allin_relax(state, model)
 
     # 领先者至少要过赔率底线（防止 -EV 的接注）；落后者允许 -EV 搏翻盘
     if lead > 0:
@@ -3006,6 +3037,9 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             # 常规档跟全下需要胜率 > 赔率要求的边际（margin≥0.02），
             # 避免「小优势就接全下」的高方差打法
             thr = eff_req + margin
+        # 【规则16·2026-09-14 用户规则】剩余局数越少 / 对手 allin 越频繁 →
+        # 跟全下条件越宽。防锁赢(doom)/末手禁弃已由入口规则2 先处理。
+        thr -= _call_allin_relax(state, model)
         return {"act": "allin"} if eq >= thr else {"act": "fold"}
         return {"act": "fold"}
 
@@ -3078,7 +3112,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         # 偷盲档不在此列：关闭反诈唬（对手弃牌率已高，反诈唬无收益）
         # 【用户规则 2026-08-30】弱牌不可主动 raise 到 allin（弱牌空气若被跟注无
         # 胜率；推 allin 被反超则白送）→ 仅在留空间时小注诈唬，否则 fold
-        # （LEAD_LOCK/doom 已在 decide 入口处理主动 allin，此处仅限制诈唬推 allin）
+        # （doom 已在 decide 入口处理主动 allin，此处仅限制诈唬推 allin）
         bluff = _raise_pot(state, None, adj)
         if bluff.get("act") == "raise" and bluff.get("num", 0) >= state.my_left \
                 and not _has_nuts_or_strong_draw(state) \
@@ -3235,7 +3269,7 @@ def decide(state, model, ctx=None, debug=False):
     action = None
     _lw0 = _LW_UNSET
     # 【M4·2026-09-11】入口一次性刷新**全部**模块级全局（_CTX/_OPP_JUMPED/
-    # _OPP_BETS_PER_HAND/_LEAD_LOCK/_DECISION_STARTED_AT）——
+    # _OPP_BETS_PER_HAND/_DECISION_STARTED_AT）——
     # 否则下面的锁赢拦截会读到上一手旧值（doomed 偏移差 2×LEVEL_SHIFT_BB）。
     try:
         _prepare_globals(state, model, ctx, reset_clock=True)
@@ -3297,8 +3331,6 @@ def _normalize(state, action):
 
     # 规则5：本局有人全押 → 只允许弃牌(-1)/全押(-2)
     if state.any_allin:
-        if _LEAD_LOCK:
-            return {"act": "fold"}   # LEAD_LOCK 时对手全下也弃（不 allin）
         # 【doomed 禁弃】本局失败后对手即可锁胜 → 弃牌=直接认输，全下搏翻盘
         # （doomed 已在 decide 入口无条件 allin，此处为兜底——决策层若漏判）
         if act == "fold" and _match_adjust(state) == "doomed":
@@ -3320,8 +3352,8 @@ def _normalize(state, action):
     if act == "fold":
         # 【doomed 禁弃】本局失败后对手即可锁胜（_match_adjust==doomed）→
         # 弃牌=直接认输，任何弃牌一律升级为全下搏翻盘（doomed 已在 decide
-        # 入口无条件 allin，此处为兜底）。LEAD_LOCK 领先锁定优先（不可能 doomed）。
-        if not _LEAD_LOCK and _match_adjust(state) == "doomed":
+        # 入口无条件 allin，此处为兜底）。
+        if _match_adjust(state) == "doomed":
             return {"act": "allin"} if my_left > 0 else {"act": "fold"}
         return {"act": "fold"}
 
@@ -3337,8 +3369,6 @@ def _normalize(state, action):
                     return {"act": "fold"}
                 num = PREFLOP_MAX_BET
                 min_r = state.min_raise()
-                if _LEAD_LOCK:
-                    num = min(num, LEAD_MAX_BET)
                 if num < min_r:
                     return {"act": "check"}
                 return {"act": "raise", "num": num}
@@ -3349,8 +3379,6 @@ def _normalize(state, action):
                 # 主动全下超限 → 降级为该牌型上限的普通加注（保持游戏进行）
                 num = _bet_limit(state)
                 min_r = state.min_raise()
-                if _LEAD_LOCK:
-                    num = min(num, LEAD_MAX_BET)
                 if num < min_r:
                     return {"act": "check"}
                 return {"act": "raise", "num": num}
@@ -3388,12 +3416,6 @@ def _normalize(state, action):
         max_r = state.max_raise()
         # 【用户规则 2026-08-23】原「加注增量≤1000」已删除，统一由
         # 下方 HIGH_BET_LIMIT(2000) 总注额封顶管控（无独立增量限制）。
-        if _LEAD_LOCK:
-            # 优势锁定：单次注码 ≤ LEAD_MAX_BET；若最小加注已超上限
-            # （对手注已很大），则无法合法加注 → 降级 call/check
-            num = min(num, LEAD_MAX_BET)
-            if num < min_r:
-                return {"act": "call"} if to_call > 0 else {"act": "check"}
         # 【用户规则 2026-08-24】翻牌前总注额 ≤ PREFLOP_MAX_BET(1000)：
         #   所有手牌一律 1000 封顶（超强牌/次强牌不再豁免——翻前手牌最多
         #   一对，任何牌都无法支撑「投入 > 1000」；doomed 防锁赢第一优先级

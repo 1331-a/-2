@@ -24,7 +24,8 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from game_state import parse_request, INIT_CHIPS          # noqa: E402
-from strategy import (_fold_out_active, _blind_line, _match_adjust,   # noqa: E402
+from strategy import (_effective_category, THREE_OF_A_KIND,
+                      _fold_out_active, _blind_line, _match_adjust,   # noqa: E402
                       decide)
 from opponent import OpponentModel                        # noqa: E402
 
@@ -77,11 +78,13 @@ def main():
             odd.append(("免费却弃牌", tag, st.to_call, lead, is_lock))
         if act == "fold" and 0 < st.to_call < 100 and not is_lock:
             odd.append(("极小注弃牌", tag, st.to_call, lead, is_lock))
-        # 领先 allin：需有 doom/foldout 依据才合理
+        # 领先 allin：有 doom/foldout 依据、或手牌强(≥三条/顺子)面对全下均可
+        # 【2026-09-14】LEAD_LOCK 优势锁定已移除 —— 强牌跟注不再视为异常
         if act == "allin" and lead > 0:
             adj = _match_adjust(st)
-            _ok = (adj == "doomed") or is_lock
-            odd.append(("领先allin%s" % ("(防锁赢OK)" if _ok else "(⚠无依据)"),
+            _strong = _effective_category(st) >= THREE_OF_A_KIND
+            _ok = (adj == "doomed") or is_lock or _strong
+            odd.append(("领先allin%s" % ("(OK)" if _ok else "(⚠需复核)"),
                         tag, st.to_call, lead, is_lock))
 
     _lines = []

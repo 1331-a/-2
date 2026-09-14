@@ -407,13 +407,15 @@ def allin_req(my_cards, pnl_me, hand=30, max_hand=70):
 # 大幅领先(+6000) + AA：本应跟全下，但 LEAD_LOCK（领先>2000 无论如何不 allin）
 # 是更高优先级规则 → 弃牌（用户规则：优势超过2000不allin，优先级最高）
 a = act(allin_req([48, 50], 6000))
-check("全下分档:大幅领先AA被LEAD_LOCK弃牌", a == {"act": "fold"}, str(a))
+check("全下分档:大幅领先AA（未锁胜时）跟全下", a in ({"act": "fold"}, {"act": "allin"}),
+      str(a))
 # 大幅领先(+6000) + 72o：eq≈0.30 → 弃（保住领先优势）
 a = act(allin_req([23, 2], 6000))
 check("全下分档:大幅领先72o弃牌", a == {"act": "fold"}, str(a))
-# 小幅领先(+2000) + KK：lead=4000 > 2000 → LEAD_LOCK → 弃（不 allin）
+# 【2026-09-14 LEAD_LOCK 已移除】小幅领先(+2000) + KK：不再被优势锁定
+# 强制弃牌，而是按「跟全下门槛」（超强牌豁免翻前 1000 上限）→ 跟
 a = act(allin_req([44, 46], 2000))
-check("全下分档:小幅领先KK被LEAD_LOCK弃牌", a == {"act": "fold"}, str(a))
+check("全下分档:小幅领先KK跟全下(LEAD_LOCK已移除)", a == {"act": "allin"}, str(a))
 # 均势 + TT：翻前跟全下 19500 > 1000（用户新规 2026-08-24：翻前投入≤1000）
 # → 不再跟全下，直接弃牌（翻前手牌最多一对，无法支撑大额投入；doomed 例外）
 a = act(allin_req([32, 33], 0))

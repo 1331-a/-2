@@ -118,8 +118,11 @@ st8 = parse_request(req(my_chips=17000, my_cards=[48, 44],
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st8, OpponentModel())
-check("规则2:领先2500深投入受LEAD_LOCK限(≤1000非allin)",
-      a.get("act") != "allin" and (a.get("act") != "raise" or a["num"] <= 1000), str(a))
+# 【2026-09-14 LEAD_LOCK 已移除】领先不再一刀切禁止 allin：
+# 本场景改由牌型注额上限节制（两对 ≤3000），断言改为「不超上限」
+check("规则2:领先2500深投入受注额上限节制(≤3000非allin)",
+      a.get("act") != "allin" and (a.get("act") != "raise" or a["num"] <= 3000),
+      str(a))
 
 # 9) 盈利≤0 → 规则2 本身不触发；浅投入（invested 1000）→ 非 doomed → 正常决策
 st9 = parse_request(req(my_chips=19000, my_cards=[48, 44],

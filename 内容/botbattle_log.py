@@ -43,7 +43,12 @@ def _action_to_history(ev, street):
     if act == "fold":
         a, at = -1, "fold"
     elif act == "allin":
-        a, at = -2, "allin"
+        # 【2026-09-14 修复】原实现固定写 -2（丢失全下金额）→ game_state
+        # 的翻后重放把 opp_round_bet 夹到当前最大注，to_call 塌缩成占位 1，
+        # 「面对全下」的所有决策（跟注门槛/_allin_floor_guard）全部失真。
+        # 原始事件里 amount 是本轮总注额 → 与 raise 同一口径写入。
+        # 仅在金额确实缺失时才退回 -2（由 game_state 按未知处理）。
+        a, at = (amount if amount > 0 else -2), "allin"
     elif act in ("call", "check"):
         a, at = 0, ("call" if act == "call" else "check")
     else:  # raise / bet
