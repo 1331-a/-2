@@ -293,13 +293,6 @@ check("M4:_OPP_BETS_PER_HAND 已刷新(数值)",
       str(_S2._OPP_BETS_PER_HAND))
 
 
-print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
-if _FAIL:
-    print("\u5931\u8d25:")
-    for f in _FAIL:
-        print("  FAIL:", f)
-    sys.exit(1)
-print("\u5168\u90e8\u901a\u8fc7")
 
 
 # ============ 2026-09-11 修复专项 ============
@@ -359,4 +352,100 @@ check("0911:_decide_impl 异常 → 合法兜底动作",
 # E. BOT_VERSION 存在
 from strategy import BOT_VERSION as _BV
 check("0911:BOT_VERSION 存在", isinstance(_BV, str) and len(_BV) > 0, str(_BV))
+
+
+# ============ 2026-09-14 修复专项：禁止「只投入不搏」（双口径 doom） ============
+# 用户截图第35手河牌：对手加注至 300，我方只跟注 300 → 输掉后对手锁赢。
+# 根因：doom 只按「已投入」估损失，没算尚未跟注的 to_call → 跟注后失败
+#       才导致的锁赢被判成「不 doomed」→ 只跟注（慢性死亡）。
+# 修法：两个口径分开——
+#   · 弃牌口径（ie. _match_adjust）：敞口 = 已投入  → 「弃牌是否送掉比赛」
+#   · 跟注口径（_doom_call_upgrade）：敞口 = 已投入 + to_call → 「跟注是否送掉」
+# 只有后者成立且我方本要跟注时，才升级为 all-in（弃牌很安全的牌不受影响）。
+from strategy import (_exposure, _invested, _doom_risk,            # noqa: E402
+                      _doom_call_upgrade, _fold_out_active,
+                      _profit_lock_allin)
+
+# A. 截图场景精确复现（本场结算后 -2881 → 决策时单边 -481 → lead -962）
+pic = parse_request(req(
+    my_chips=17900, hand=34, max_hand=70, dealer_id=1, my_id=0,
+    my_cards=[10, 44], public_cards=[24, 0, 49, 33, 46],
+    history=[{"round": 0, "player_id": 0, "action": 100, "action_type": "raise"},
+             {"round": 0, "player_id": 1, "action": 200, "action_type": "raise"},
+             {"round": 0, "player_id": 0, "action": 200, "action_type": "call"},
+             {"round": 1, "player_id": 0, "action": 300, "action_type": "raise"},
+             {"round": 1, "player_id": 1, "action": 300, "action_type": "call"},
+             {"round": 2, "player_id": 0, "action": 600, "action_type": "raise"},
+             {"round": 2, "player_id": 1, "action": 600, "action_type": "call"},
+             {"round": 3, "player_id": 1, "action": 300, "action_type": "raise"}],
+    total_win_chips=[-481, 481]))
+check("0914:已投入 = 2100", _invested(pic) == 2100, str(_invested(pic)))
+check("0914:敞口 = 已投入 + to_call = 2400", _exposure(pic) == 2400,
+      str(_exposure(pic)))
+check("0914:弃牌口径不 doom（弃牌尚可翻身 → 保持 normal）",
+      _doom_risk(pic) is False and _match_adjust(pic) == "normal",
+      "doom=%s adj=%s" % (_doom_risk(pic), _match_adjust(pic)))
+check("0914:跟注口径 doom 成立（跟注即送掉比赛）",
+      _doom_risk(pic, include_to_call=True) is True, "应 True")
+check("0914:决策 = allin（不再只是跟注）",
+      decide(pic, OpponentModel()).get("act") == "allin",
+      str(decide(pic, OpponentModel())))
+
+# B. 升级只作用于 call/raise；fold/check 不动
+check("0914:fold 不被升级",
+      _doom_call_upgrade(pic, {"act": "fold"}) == {"act": "fold"})
+check("0914:check 不被升级",
+      _doom_call_upgrade(pic, {"act": "check"}) == {"act": "check"})
+check("0914:call 被升级为 allin",
+      _doom_call_upgrade(pic, {"act": "call"}) == {"act": "allin"})
+check("0914:raise 被升级为 allin",
+      _doom_call_upgrade(pic, {"act": "raise", "num": 900})
+      == {"act": "allin"})
+
+# C. to_call=0 时敞口 = 已投入（与修复前一致，不回归）
+zero = parse_request(req(my_chips=17900, hand=34, max_hand=70,
+                         total_win_chips=[-481, 481]))
+check("0914:to_call=0 时敞口 = 已投入 2100",
+      _exposure(zero) == 2100, str(_exposure(zero)))
+
+# D. 不会误触发：早期手数 + 小额跟注 + lead 很小
+early = parse_request(req(my_chips=19800, hand=8, max_hand=70,
+                          total_win_chips=[-50, 50],
+                          history=[{"round": 0, "player_id": 1, "action": 100,
+                                    "action_type": "raise"}]))
+check("0914:早期小额跟注不误判 doomed",
+      _match_adjust(early) == "normal" and _doom_risk(early) is False,
+      _match_adjust(early))
+
+# E. 弃牌本来就安全的场景（均势翻前面对大额全下）→ 不应被升级
+# 均势翻前：只投了大盲 100，对手加注到 5300（to_call=5200）。
+# 弃牌只损失 100 → 完全安全；若跟注 5200 输了才锁定败局。
+safe_fold = parse_request(req(
+    my_chips=19900, hand=20, max_hand=70, dealer_id=1, my_id=0,
+    my_cards=[40, 43], public_cards=[],
+    history=[{"round": 0, "player_id": 1, "action": 5300,
+              "action_type": "raise"}],
+    total_win_chips=[0, 0]))
+check("0914:均势弃大注：弃牌口径不 doom（弃牌只亏 100，安全）",
+      _doom_risk(safe_fold) is False, "应 False")
+check("0914:均势弃大注：跟注口径 doom（跟 5200 输了才送掉）",
+      _doom_risk(safe_fold, include_to_call=True) is True, "应 True")
+check("0914:该类场景若本要弃牌 → 维持 fold（不被升级）",
+      _doom_call_upgrade(safe_fold, {"act": "fold"}) == {"act": "fold"})
+
+# F. 两口径可由同一不等式开关切换（公式单点，避免各自演化）
+check("0914:include_to_call 开关生效（True 比 False 更易触发）",
+      (_doom_risk(pic, include_to_call=True)
+       and not _doom_risk(pic, include_to_call=False)))
+check("0914:盈利锁胜复用 _doom_risk（公式单点）",
+      "_doom_risk" in __import__("inspect").getsource(_profit_lock_allin))
+
+
+print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
+if _FAIL:
+    print("\u5931\u8d25:")
+    for f in _FAIL:
+        print("  FAIL:", f)
+    sys.exit(1)
+print("\u5168\u90e8\u901a\u8fc7")
 

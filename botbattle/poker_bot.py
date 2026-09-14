@@ -1842,9 +1842,6 @@ def _lock_win_unified(state):
     返回 action dict 或 None（不触发）。
     """
     try:
-        # A. 防锁赢（最高确定性：弃牌就锁给对手 → allin）
-        if _match_adjust(state) == "doomed":
-            return {"act": "allin"}
         # B. 锁胜弃牌（领先到绝对安全 → fold 保胜）
         if _fold_out_active(state):
             # 【P0·2026-09-11】to_call==0 时 **fold 非法**（能过牌就必须过牌），
@@ -1856,6 +1853,9 @@ def _lock_win_unified(state):
             except Exception:
                 pass
             return {"act": "fold"}
+        # A. 防锁赢（弃牌就锁给对手 → allin）
+        if _match_adjust(state) == "doomed":
+            return {"act": "allin"}
         # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
         # 【P0】用现算值而非模块级 _LEAD_LOCK（后者在入口拦截时是过期值）
         if not _is_lead_lock(state) and _profit_lock_allin(state):
@@ -1885,11 +1885,9 @@ def _profit_lock_allin(state):
         #     lead - 2×invested ≤ -2×_blind_line(hands_left, own=False)
         # 即「本局失败 → 对手锁赢」。此式不含盈利前提（落后侧由 doom 覆盖，
         # 盈利侧由本函数覆盖，两者本质相同）。
-        hands_left = _hands_left(state)
-        lead = (state.total_win_chips[state.my_id]
-                - state.total_win_chips[state.opp_id])
-        invested = INIT_CHIPS - state.my_chips
-        return lead - 2 * invested <= -2 * _blind_line(state, hands_left, own=False)
+        # 【2026-09-14】与 doom 共用 _doom_risk（同一不等式，含 to_call 敞口），
+        # 避免两份实现各自演化再次分叉。
+        return _doom_risk(state)
     except Exception:
         return False
 
@@ -2011,6 +2009,36 @@ def _lock_win_tail_guard(state, action):
     action = _allin_floor_guard(state, action)
     action = _last_hand_no_fold(state, action)
     return action
+
+
+def _doom_call_upgrade(state, action):
+    """【规则2 扩展·2026-09-14 用户规则（截图第35手）】禁止「只投入不搏」。
+
+    若「跟注后失败 → 对手锁赢」（_doom_risk include_to_call=True），则跟注/
+    加注都是慢性死亡：赢了只赢一个小池，输了直接把比赛送掉。此时当手
+    无条件 all-in，把「必须赢」变成「赢就翻倍」。
+
+    只升级 call / raise（两者都是「投入筹码但不求最大收益」）；
+    fold / check 不动——弃牌不投入、不产生该风险（那是 _match_adjust 的
+    弃牌口径负责判断）。
+    合法性：调用方在 _normalize **之后**执行本函数，此处再确认 my_left>0。
+    放在最后的原因：_normalize / _bet_limit 会按牌型上限把 allin 降级
+    （非 ≥三条 且非 doomed 时），所以必须在其后覆盖。
+    """
+    try:
+        if action.get("act") not in ("call", "raise"):
+            return action
+        if int(state.to_call) <= 0:
+            return action
+        if int(state.my_left) <= 0:
+            return action
+        if _LEAD_LOCK:                 # 优势锁定：领先>2000 不 allin（硬规则）
+            return action
+        if not _doom_risk(state, include_to_call=True):
+            return action
+        return {"act": "allin"}
+    except Exception:
+        return action
 
 
 def _aggressive_strong_bet(state, action):
@@ -2154,7 +2182,10 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     action = _aggressive_strong_bet(state, action)
     # 【2026-09-10】禁弃兜底已上移并入「规则2·尾段守卫」_lock_win_tail_guard，
     # 此处不再重复调用（避免同一规则两处执行）。
-    return _normalize(state, action)
+    action = _normalize(state, action)
+    # 【规则2 扩展·2026-09-14】放最后：敞口式 doom 下禁止只跟注/加注 →
+    # 当手无条件 all-in（须在 _normalize 之后，否则会被牌型注额上限降级）。
+    return _doom_call_upgrade(state, action)
 
 
 # ================================================================
@@ -2520,6 +2551,61 @@ def _blind_line(state, hands, own=True):
         return int(0.75 * 100 * hands)  # 兜底：平均每局 1.5BB/2
 
 
+def _invested(state):
+    """本局**已投入**的筹码（含盲注/跟注/加注）——这是沉没成本：
+    弃牌也拿不回来，所以它是「弃牌视角」的损失。"""
+    try:
+        return INIT_CHIPS - int(state.my_chips)
+    except Exception:
+        return 0
+
+
+def _exposure(state):
+    """本手**继续打下去的敞口** = 已投入 + 尚需跟注额（to_call）。
+
+    【规则2 扩展·2026-09-14 用户规则（截图第35手）】两个口径必须分开：
+      · `_invested`（弃牌视角）：弃牌丢掉的只有已投入那部分——
+        用于 _match_adjust / 盈利锁胜，回答「**弃牌**是否等于把比赛送掉」；
+      · `_exposure`（跟注视角）：只有继续跟注，to_call 才会被投进去——
+        回答「**跟注后失败**是否等于把比赛送掉」→ 见 _doom_call_upgrade。
+    截图第35手河牌：本场我方 -481（单边）、已投 2100、对手加注 300。
+      · 弃牌口径：−962 − 2×2100 = −5162 > −5200 → 不 doom（弃牌尚可翻身）✓
+      · 跟注口径：−962 − 2×2400 = −5762 ≤ −5200 → 跟注即死 → 改 all-in ✓
+    保守取值：只加 max(0, to_call)（至少会跟注）；若继续加注损失更大，取该
+    下界即可。对手全下时 to_call 为占位值（金额未知）→ 影响极小。
+    """
+    try:
+        return _invested(state) + max(0, int(state.to_call))
+    except Exception:
+        return 0
+
+
+def _doom_risk(state, lead=None, hands_left=None, include_to_call=False):
+    """规则2 确定性 doom 不等式（doom / 盈利锁胜 共用同一份实现）。
+
+        lead − 2×敞口 ≤ −2×_blind_line(hands_left, own=False)
+        （含义：本手失败损失 2×敞口 → 对手即锁赢）
+
+    include_to_call=False（默认）：敞口 = 已投入 → 「弃牌即锁给对手」，
+        用于 _match_adjust / _profit_lock_allin（保住原语义，避免把
+        「弃牌其实很安全」的牌也判成 doomed）。
+    include_to_call=True：敞口 = 已投入 + to_call → 「跟注即锁给对手」，
+        用于 _doom_call_upgrade（禁止只跟注）。
+    lead 可由调用方传入（_match_adjust 需先叠加 match_ctx 阈值偏移）。
+    """
+    try:
+        if lead is None:
+            lead = (state.total_win_chips[state.my_id]
+                    - state.total_win_chips[state.opp_id])
+        if hands_left is None:
+            hands_left = _hands_left(state)
+        exposure = _exposure(state) if include_to_call else _invested(state)
+        return (lead - 2 * exposure
+                <= -2 * _blind_line(state, hands_left, own=False))
+    except Exception:
+        return False
+
+
 def _fold_out_active(state):
     """
     锁胜弃牌（fold-out）判定：领先优势能否靠全程弃牌保证最终获胜。
@@ -2599,8 +2685,10 @@ def _match_adjust(state):
         #   对手弃牌我方收盲 → lead +2×筹码，故追回线必须 ×2：
         #   锁定条件：lead - 2×invested ≤ -2×追平线
         #       即   lead + 2×追平线 ≤ 2×invested（invested 越大越早 doomed）。
-        invested = INIT_CHIPS - state.my_chips
-        if lead - 2 * invested <= -2 * _blind_line(state, hands_left, own=False):
+        # 【2026-09-14 用户规则】敞口 = 已投入 + to_call（见 _exposure）——
+        # 「跟注后失败 → 对手锁赢」同样属于 doomed，必须当手 allin，
+        # 不能只跟注。lead 已叠加过 match_ctx 偏移，故传入复用。
+        if _doom_risk(state, lead, hands_left):
             return "doomed"
 
         if hands_left <= 15:
@@ -3367,6 +3455,7 @@ def explain(state, model, ctx=None, with_eq=True):
             "position": "\u5c0f\u76f2" if state.my_id == state.dealer_id else "\u5927\u76f2",
             "my_total": my_total, "opp_total": opp_total,
             "lead": lead, "line": line, "invested": invested,
+            "exposure": _exposure(state), "to_call": int(state.to_call),
             "hands_left": hands_left, "status": status,
             "progress": (max(0.0, min(1.0, float(lead) / line))
                           if line > 0 else (1.0 if lead > 0 else 0.0)),

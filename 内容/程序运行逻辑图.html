@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>德扑双人机器人 · 程序运行逻辑图</title>
+<style>
+  body{margin:0;padding:32px 20px;background:#F7F6F3;color:#2C2C2A;
+       font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+       font-size:14px;line-height:1.7;}
+  .wrap{max-width:760px;margin:0 auto;}
+  h1{font-size:20px;font-weight:500;margin:0 0 6px;}
+  h2{font-size:15px;font-weight:500;margin:36px 0 12px;padding-bottom:6px;
+     border-bottom:1px solid #D3D1C7;}
+  p{color:#5F5E5A;margin:6px 0 14px;}
+  .card{background:#FFFFFF;border:1px solid #E3E1DA;border-radius:12px;
+        padding:18px 14px;margin:0 0 8px;}
+  .note{color:#888780;font-size:12px;margin:0 0 18px;}
+  code{background:#F1EFE8;border-radius:4px;padding:1px 5px;
+       font-family:Consolas,"Courier New",monospace;font-size:13px;}
+  pre{background:#FFFFFF;border:1px solid #E3E1DA;border-radius:10px;
+      padding:14px 16px;overflow:auto;font-size:12.5px;line-height:1.65;
+      font-family:Consolas,"Courier New",monospace;color:#2C2C2A;}
+  table{border-collapse:collapse;width:100%;background:#FFFFFF;
+        border:1px solid #E3E1DA;border-radius:10px;overflow:hidden;font-size:13px;}
+  th,td{border-bottom:1px solid #EFEDE7;padding:8px 10px;text-align:left;
+        vertical-align:top;}
+  th{background:#F1EFE8;font-weight:500;}
+  tr:last-child td{border-bottom:none;}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>德扑双人机器人 · 程序运行逻辑图</h1>
+<p>从平台输入到返回的完整调用链，精确到每个函数及其调用方式。生成于 2026-09-12，对应 commit 8676713 之后的代码。</p>
+
+<h2>一、主流程：平台 → 机器人 → 平台</h2>
+<p>平台每发一行 request，机器人回一行 response。进程不重启，全部记忆靠 <code>globaldata</code> 往返携带。</p>
+<div class="card">
+<svg width="100%" viewBox="0 0 680 570" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>机器人从平台输入到输出的完整调用流程</title>
+<desc>平台通过 stdin 发一行 JSON，bot.py 逐行读取、解析协议、建模并交给 strategy.decide 决策，最后转成整数写回 stdout。</desc>
+<defs>
+<marker id="ar1" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+<text x="100" y="30" font-size="12" fill="#888780">循环：平台每发一行 request，机器人回一行 response（进程不重启，记忆靠 globaldata 往返）</text>
+
+<rect x="100" y="46" width="500" height="52" rx="10" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="350" y="66" font-size="14" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">平台（BotArena / BotBattle）</text>
+<text x="350" y="84" font-size="12" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central">stdin 一行：{"requests":[…], "data":"…", "globaldata":"…"}</text>
+
+<path d="M350 98 L350 116" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+<rect x="100" y="118" width="500" height="56" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="350" y="138" font-size="14" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">bot.py · run()</text>
+<text x="350" y="156" font-size="12" fill="#185FA5" text-anchor="middle" dominant-baseline="central">for raw in sys.stdin → json.loads(raw) → _handle_line(obj)</text>
+
+<path d="M350 174 L350 192" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+<rect x="100" y="194" width="500" height="56" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="350" y="214" font-size="14" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">bot.py · _handle_line(obj)</text>
+<text x="350" y="232" font-size="12" fill="#185FA5" text-anchor="middle" dominant-baseline="central">_extract_request(obj) → parse_request(request)</text>
+
+<path d="M350 250 L350 268" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+<rect x="100" y="270" width="500" height="56" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="350" y="290" font-size="14" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">建模与环境准备（对手模型 + 赛制上下文）</text>
+<text x="350" y="308" font-size="12" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">build_model_from_history(m, req, st) → MatchContext.update / sync_baseline</text>
+
+<path d="M350 326 L350 344" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+<rect x="100" y="346" width="500" height="56" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="350" y="366" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">strategy.py · decide(state, model, ctx)</text>
+<text x="350" y="384" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">返回动作字典，如 {"act": "raise", "num": 600}</text>
+
+<path d="M350 402 L350 420" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+<rect x="100" y="422" width="500" height="56" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="350" y="442" font-size="14" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">bot.py · _to_response → _final_guard</text>
+<text x="350" y="460" font-size="12" fill="#185FA5" text-anchor="middle" dominant-baseline="central">{"act":"raise","num":600} → 600（平台只认整数）</text>
+
+<path d="M350 478 L350 496" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar1)"/>
+
+<rect x="100" y="498" width="500" height="52" rx="10" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="350" y="518" font-size="14" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">平台（stdout）</text>
+<text x="350" y="536" font-size="12" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central">{"response": 600, "data": "…", "globaldata": "…"}</text>
+
+<path d="M100 524 H64 V72 H96" fill="none" stroke="#B4B2A9" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#ar1)"/>
+</svg>
+</div>
+
+<h2>二、准备阶段：_handle_line 的调用树</h2>
+<p>决策之前的全部准备工作。三列分别是「解包 / 状态重建 / 建模与环境」，任一步异常都会落到 <code>_fallback_resp</code>。</p>
+<div class="card">
+<svg width="100%" viewBox="0 0 680 390" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>_handle_line 的函数调用树</title>
+<desc>_handle_line 依次调用解包、协议解析、状态重建、对手建模与赛制上下文，然后才进入 decide。</desc>
+<defs>
+<marker id="ar2" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<rect x="180" y="40" width="320" height="46" rx="10" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="340" y="58" font-size="14" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">bot.py · _handle_line(obj)</text>
+<text x="340" y="76" font-size="12" fill="#185FA5" text-anchor="middle" dominant-baseline="central">run() 对每一行输入调用一次</text>
+
+<path d="M340 86 V104 H133 V110" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar2)"/>
+<path d="M340 86 V110" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar2)"/>
+<path d="M340 86 V104 H547 V110" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar2)"/>
+
+<text x="133" y="129" font-size="13" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">① 输入与解包</text>
+<text x="340" y="129" font-size="13" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">② 状态重建（game_state）</text>
+<text x="547" y="129" font-size="13" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">③ 建模与环境</text>
+
+<rect x="40" y="152" width="186" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="133" y="170" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">_extract_request(obj)</text>
+<text x="133" y="188" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">取 requests 最后一条</text>
+
+<rect x="40" y="208" width="186" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="133" y="226" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">_persisted_str(v)</text>
+<text x="133" y="244" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">取 data / globaldata 字符串</text>
+
+<rect x="40" y="264" width="186" height="50" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="133" y="282" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">parse_request(request)</text>
+<text x="133" y="300" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">→ GameState 对象</text>
+
+<rect x="40" y="320" width="186" height="50" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="133" y="338" font-size="13" font-weight="500" fill="#791F1F" text-anchor="middle" dominant-baseline="central">_fallback_resp(state)</text>
+<text x="133" y="356" font-size="11" fill="#A32D2D" text-anchor="middle" dominant-baseline="central">异常分支 → 输出 0</text>
+
+<rect x="247" y="152" width="186" height="50" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="170" font-size="13" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_analyze()</text>
+<text x="340" y="188" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">重放 history 重建状态</text>
+
+<rect x="247" y="208" width="186" height="50" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="226" font-size="13" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">座位归一化</text>
+<text x="340" y="244" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">my_id 1-based → 0-based</text>
+
+<rect x="247" y="264" width="186" height="50" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="282" font-size="13" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">to_call / pot / stage</text>
+<text x="340" y="300" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">派生属性（@property）</text>
+
+<rect x="247" y="320" width="186" height="50" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="338" font-size="13" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">my_left / any_allin</text>
+<text x="340" y="356" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">本手剩余与对手全押标志</text>
+
+<rect x="454" y="152" width="186" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="547" y="170" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">OpponentModel.from_json</text>
+<text x="547" y="188" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central">从 globaldata 恢复模型</text>
+
+<rect x="454" y="208" width="186" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="547" y="226" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">build_model_from_history</text>
+<text x="547" y="244" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central">按历史增量 update 统计</text>
+
+<rect x="454" y="264" width="186" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="547" y="282" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">MatchContext.from_dict</text>
+<text x="547" y="300" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central">恢复赛制上下文</text>
+
+<rect x="454" y="320" width="186" height="50" rx="8" fill="#E6F1FB" stroke="#185FA5" stroke-width="0.5"/>
+<text x="547" y="338" font-size="13" font-weight="500" fill="#0C447C" text-anchor="middle" dominant-baseline="central">ctx.update / sync_baseline</text>
+<text x="547" y="356" font-size="11" fill="#185FA5" text-anchor="middle" dominant-baseline="central">结算上一手 + 同步激进档</text>
+</svg>
+</div>
+
+<h2>三、决策主链：decide 的优先级</h2>
+<p>自上而下判断，命中即返回；未命中才继续往下。左侧两个虚线框是旁路分支（命中锁赢立即返回 / 任何异常兜底）。</p>
+<div class="card">
+<svg width="100%" viewBox="0 0 680 582" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>strategy.decide 的决策主链与优先级</title>
+<desc>decide 先刷新全局，再做锁赢拦截；未命中则进入 _decide_impl 常规决策，最后经三道守卫与 _normalize 返回。</desc>
+<defs>
+<marker id="ar3" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<text x="40" y="28" font-size="12" fill="#888780">strategy.py · decide() 主链：自上而下判断，命中即返回；未命中才继续往下</text>
+
+<rect x="210" y="40" width="420" height="48" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="420" y="58" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">decide(state, model, ctx, debug=False)</text>
+<text x="420" y="76" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">bot.py · _handle_line 调用</text>
+
+<path d="M420 88 L420 100" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="210" y="102" width="420" height="56" rx="10" fill="#FAEEDA" stroke="#854F0B" stroke-width="0.5"/>
+<text x="420" y="122" font-size="14" font-weight="500" fill="#633806" text-anchor="middle" dominant-baseline="central">_prepare_globals(state, model, ctx, reset_clock=True)</text>
+<text x="420" y="140" font-size="12" fill="#854F0B" text-anchor="middle" dominant-baseline="central">① 先刷新全部模块级全局（_CTX / _LEAD_LOCK / _OPP_JUMPED …）</text>
+
+<path d="M420 158 L420 170" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="210" y="172" width="420" height="64" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="420" y="192" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_lock_win_unified(state)　← 规则2 锁赢 / 防锁赢</text>
+<text x="420" y="210" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">A _match_adjust(state) == "doomed" → allin</text>
+<text x="420" y="228" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">B _fold_out_active → check/fold ｜ C _profit_lock_allin → allin</text>
+
+<path d="M210 204 L196 204" fill="none" stroke="#0F6E56" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="40" y="172" width="150" height="64" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="115" y="196" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">命中 → 立即返回</text>
+<text x="115" y="218" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">跳过下方全部常规决策</text>
+
+<path d="M420 236 L420 248" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="210" y="250" width="420" height="56" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="420" y="270" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_decide_impl(state, model, ctx, _lw, _prepared)</text>
+<text x="420" y="288" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">should_avoid_risk ｜ _preflop_decide ｜ _postflop_decide</text>
+
+<path d="M420 306 L420 318" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="210" y="320" width="420" height="56" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="420" y="340" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_lock_win_tail_guard(state, action)</text>
+<text x="420" y="358" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">① _allin_floor_guard　② _last_hand_no_fold</text>
+
+<path d="M420 376 L420 388" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="210" y="390" width="420" height="48" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="420" y="408" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_bet_cap_guard(state, action)</text>
+<text x="420" y="426" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">规则3 注额上限（_dynamic_cap）</text>
+
+<path d="M420 438 L420 450" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="210" y="452" width="420" height="48" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="420" y="470" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_aggressive_strong_bet(state, action)</text>
+<text x="420" y="488" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">规则13 好牌主动下注 ≥ 2000</text>
+
+<path d="M420 500 L420 512" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar3)"/>
+
+<rect x="210" y="514" width="420" height="48" rx="10" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+<text x="420" y="532" font-size="14" font-weight="500" fill="#27500A" text-anchor="middle" dominant-baseline="central">_normalize(state, action)</text>
+<text x="420" y="550" font-size="12" fill="#3B6D11" text-anchor="middle" dominant-baseline="central">合法性兜底 → return action</text>
+
+<path d="M210 538 L196 538" fill="none" stroke="#A32D2D" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#ar3)"/>
+
+<rect x="40" y="514" width="150" height="48" rx="8" fill="#FCEBEB" stroke="#A32D2D" stroke-width="0.5" stroke-dasharray="4 3"/>
+<text x="115" y="532" font-size="13" font-weight="500" fill="#791F1F" text-anchor="middle" dominant-baseline="central">任何异常</text>
+<text x="115" y="550" font-size="11" fill="#A32D2D" text-anchor="middle" dominant-baseline="central">_safe_fallback_action</text>
+</svg>
+</div>
+
+<h2>四、锁赢判定的公式链</h2>
+<p>每个中间量只由一个函数负责，改公式只需改那一处。这也是历史上 bug 最集中的区域，因此单独画出。</p>
+<div class="card">
+<svg width="100%" viewBox="0 0 680 488" role="img" xmlns="http://www.w3.org/2000/svg">
+<title>锁赢判定的公式链与负责函数</title>
+<desc>从 GameState 出发，_hands_left 与 _blind_line 算出锁赢线 _lock_line，三个判定函数据此决定动作，最终汇入 _lock_win_unified。</desc>
+<defs>
+<marker id="ar4" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="context-stroke" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+</defs>
+
+<text x="40" y="28" font-size="12" fill="#888780">锁赢判定数据流：每个中间量只由一个函数负责，改公式只需改那一处</text>
+
+<rect x="140" y="40" width="400" height="52" rx="10" fill="#F1EFE8" stroke="#5F5E5A" stroke-width="0.5"/>
+<text x="340" y="60" font-size="14" font-weight="500" fill="#2C2C2A" text-anchor="middle" dominant-baseline="central">GameState（parse_request 生成）</text>
+<text x="340" y="78" font-size="12" fill="#5F5E5A" text-anchor="middle" dominant-baseline="central">hand_num · max_hand · my_chips · total_win_chips</text>
+
+<path d="M340 92 V104 H133 V108" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+<path d="M340 92 V108" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+<path d="M340 92 V104 H547 V108" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+
+<rect x="40" y="110" width="186" height="52" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="133" y="128" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">_hands_left(state)</text>
+<text x="133" y="146" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">本手之后还剩几手</text>
+
+<rect x="247" y="110" width="186" height="52" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="340" y="128" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">_blind_line(state, h, own)</text>
+<text x="340" y="146" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">own 决定弃牌损失 / 追回线</text>
+
+<rect x="454" y="110" width="186" height="52" rx="8" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="547" y="128" font-size="13" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">lead = twc[my] − twc[opp]</text>
+<text x="547" y="146" font-size="11" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">领先差 = 筹码差的 2 倍</text>
+
+<path d="M340 162 L340 180" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+
+<rect x="180" y="182" width="320" height="56" rx="10" fill="#E1F5EE" stroke="#0F6E56" stroke-width="0.5"/>
+<text x="340" y="202" font-size="14" font-weight="500" fill="#085041" text-anchor="middle" dominant-baseline="central">_lock_line(state)</text>
+<text x="340" y="220" font-size="12" fill="#0F6E56" text-anchor="middle" dominant-baseline="central">= 2 ×（_blind_line(own=True) + 本局已投入）</text>
+
+<path d="M340 238 L340 256" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+
+<rect x="40" y="258" width="186" height="68" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="133" y="276" font-size="13" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_fold_out_active(state)</text>
+<text x="133" y="296" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">lead &gt; _lock_line(state)</text>
+<text x="133" y="314" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">→ check / fold 锁胜</text>
+
+<rect x="247" y="258" width="186" height="68" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="276" font-size="13" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_profit_lock_allin(state)</text>
+<text x="340" y="296" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">lead − 2×invested ≤ −2×追回线</text>
+<text x="340" y="314" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">→ allin 锁利润</text>
+
+<rect x="454" y="258" width="186" height="68" rx="8" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="547" y="276" font-size="13" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_match_adjust(state)</text>
+<text x="547" y="296" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">doomed：同一不等式 + _CTX</text>
+<text x="547" y="314" font-size="11" fill="#534AB7" text-anchor="middle" dominant-baseline="central">→ allin 防锁赢</text>
+
+<path d="M133 326 V340 H340 V344" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+<path d="M340 326 V344" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+<path d="M547 326 V340 H340 V344" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+
+<rect x="140" y="346" width="400" height="56" rx="10" fill="#EEEDFE" stroke="#534AB7" stroke-width="0.5"/>
+<text x="340" y="366" font-size="14" font-weight="500" fill="#3C3489" text-anchor="middle" dominant-baseline="central">_lock_win_unified(state)</text>
+<text x="340" y="384" font-size="12" fill="#534AB7" text-anchor="middle" dominant-baseline="central">A doomed→allin ｜ B fold_out→check/fold ｜ C profit→allin</text>
+
+<path d="M340 402 L340 418" fill="none" stroke="#888780" stroke-width="1.5" marker-end="url(#ar4)"/>
+
+<rect x="140" y="420" width="400" height="48" rx="10" fill="#EAF3DE" stroke="#3B6D11" stroke-width="0.5"/>
+<text x="340" y="438" font-size="14" font-weight="500" fill="#27500A" text-anchor="middle" dominant-baseline="central">_lock_win_legal → _normalize → 动作 dict</text>
+<text x="340" y="456" font-size="12" fill="#3B6D11" text-anchor="middle" dominant-baseline="central">→ bot.py _to_response → 平台</text>
+</svg>
+</div>
+
+<h2>五、文字版调用清单（可直接对照源码）</h2>
+<p>缩进表示「被调用」，括号内是实际调用方式。</p>
+<pre>run()                                  # bot.py:209 逐行读 stdin
+└─ _handle_line(obj)                    # bot.py:139
+   ├─ _persisted_str(obj["data"])        # bot.py:128 取出记忆字符串
+   ├─ _extract_request(obj)              # bot.py:113 从 requests 取最后一条
+   ├─ parse_request(request)             # game_state.py  → GameState
+   │  ├─ 座位归一化（my_id≥2 → 全部 −1）
+   │  └─ GameState._analyze()            # 重放 history 重建 to_call / pot / stage
+   ├─ OpponentModel.from_json(gdata)     # opponent.py  从 globaldata 恢复
+   ├─ build_model_from_history(m, req, st)  # opponent.py 按增量游标 update
+   ├─ MatchContext.from_dict(m.ctx_dict)    # match_ctx.py
+   ├─ ctx.update(state)                  # 结算上一手、推断对手弃牌
+   ├─ ctx.sync_baseline(state)           # 同步激进档
+   ├─ decide(state, model, ctx, debug)   # strategy.py   ← 见下
+   │  ├─ DecisionLogger.note_state(state)
+   │  ├─ _prepare_globals(state, model, ctx)   # 刷新 _CTX/_LEAD_LOCK/…
+   │  ├─ _lock_win_unified(state)              # 规则2
+   │  │  ├─ _match_adjust(state)               # → "doomed"？
+   │  │  ├─ _fold_out_active(state) → _lock_line(state) → _blind_line/_hands_left
+   │  │  ├─ _is_lead_lock(state)
+   │  │  └─ _profit_lock_allin(state)
+   │  ├─ _lock_win_legal(state, _lw)           # to_call=0 → check
+   │  └─ _decide_impl(state, model, ctx, _lw, _prepared=True)
+   │     ├─ should_avoid_risk(state) → _risk_avoid_route(...)
+   │     ├─ _preflop_decide(state, model)
+   │     ├─ _postflop_decide(state, model)
+   │     │  ├─ monte_carlo_equity(...)         # equity.py
+   │     │  ├─ _effective_category(state)      # evaluator.py
+   │     │  ├─ _stability_mode(state, model) → _check_side_stable(...)
+   │     │  └─ _check_side(...) 或 _face_bet(...)
+   │     │     ├─ _opp_checked_this_round(state) → _check_bet_weight(...) → _opp_check_bet(...)
+   │     │     ├─ _blocking_bet_proxy / _probe_bet_proxy / _lead_bet_proxy
+   │     │     ├─ _flush_threat(state) / _my_flush_top_rank(state)
+   │     │     └─ _bet_fraction / _raise_to
+   │     ├─ _lock_win_tail_guard(state, action)
+   │     │  ├─ _allin_floor_guard(state, action)
+   │     │  └─ _last_hand_no_fold(state, action)
+   │     ├─ _bet_cap_guard(state, action) → _dynamic_cap(state)
+   │     ├─ _aggressive_strong_bet(state, action)
+   │     └─ _normalize(state, action)          # 合法性兜底
+   │        except → _safe_fallback_action(state)
+   ├─ _to_response(action)                # bot.py:45  dict → 整数
+   ├─ _final_guard(state, resp)           # bot.py:57  整数级最后校验
+   │  └─ except → _fallback_resp(state)   # bot.py:99  → 0
+   ├─ ctx.to_dict() → model.ctx_dict
+   └─ model.to_json()                     # 写入 data / globaldata
+</pre>
+
+<h2>六、函数速查（按调用时机）</h2>
+<table>
+<tr><th>阶段</th><th>函数</th><th>作用</th></tr>
+<tr><td rowspan="4">输入</td><td><code>run()</code></td><td>逐行读 stdin，两种平台模式都兼容</td></tr>
+<tr><td><code>_handle_line(obj)</code></td><td>单行输入的总调度</td></tr>
+<tr><td><code>_extract_request(obj)</code></td><td>从 <code>requests</code> 里取本轮 request</td></tr>
+<tr><td><code>_persisted_str(v)</code></td><td>安全取出 data / globaldata 字符串</td></tr>
+<tr><td rowspan="4">状态</td><td><code>parse_request(request)</code></td><td>request → GameState</td></tr>
+<tr><td><code>GameState._analyze()</code></td><td>重放 history，算出街级与下注额</td></tr>
+<tr><td><code>state.to_call</code></td><td>还需跟多少（0 = 可免费过牌）</td></tr>
+<tr><td><code>state.my_left / any_allin</code></td><td>本手剩余筹码 / 对手是否全押</td></tr>
+<tr><td rowspan="3">建模</td><td><code>OpponentModel.from_json</code></td><td>从 globaldata 恢复对手画像</td></tr>
+<tr><td><code>build_model_from_history</code></td><td>按增量游标补录历史动作</td></tr>
+<tr><td><code>MatchContext.update / sync_baseline</code></td><td>结算上一手、同步激进档</td></tr>
+<tr><td rowspan="3">决策</td><td><code>_prepare_globals</code></td><td>刷新全部模块级全局（必须最先）</td></tr>
+<tr><td><code>_lock_win_unified</code></td><td>规则2：锁赢 / 防锁赢统一决策</td></tr>
+<tr><td><code>_decide_impl</code></td><td>常规决策主体</td></tr>
+<tr><td rowspan="3">输出</td><td><code>_to_response(action)</code></td><td>字典 → 整数（−1/−2/0/加注量）</td></tr>
+<tr><td><code>_final_guard(state, resp)</code></td><td>整数级校验（<code>to_call=0</code> 不 fold）</td></tr>
+<tr><td><code>model.to_json()</code></td><td>把画像 + 赛制上下文写回</td></tr>
+</table>
+
+<p class="note">配套文档：<code>代码流程说明.md</code>（整体流程）、<code>代码逐行详解.md</code>（逐行代码）。</p>
+
+</div>
+</body>
+</html>
