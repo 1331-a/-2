@@ -23,6 +23,13 @@
 - 核心策略文件：strategy.py（决策+安全网）、opponent.py（对手画像）、equity.py（MC）、ranges.py（169组合百分位）、match_ctx.py（赛制三模块）、game_state.py（协议解析+合法性推导）。
 - 已实现：锁胜弃牌（fold-out）、劣势极限激进、诱敌深入 check-raise、公对风险规避（弱两对）、防输光（加注克制化+全下分层）、逐行读取（防预检超时）。
 
+## 2026-09-14 面对对手 all-in 的定向决策优先级（commit ccaf8ae，用户规则）
+- **核心原则**：凡是「面对对手 all-in」的定向决策（规则2 锁赢/防锁赢、规则16+`_preflop_allin_decide` 跟全下、翻后全下分支）→ **替换此前所有针对 allin 的限制**（翻前 1000 上限、翻后 `_bet_limit` 牌型上限），`_normalize` 不再二次降级。
+- **锁赢 allin 免检标记 lk**：`_lock_win_legal` 给锁赢 allin 打 `lk=1`，`_normalize` 见标记直接放行——修「ctx 保守偏移 → `_match_adjust` 非 doomed → doom 的 allin 被降级成 fold」。
+- **仍保留限制的是我方主动 shove**（无人全押、to_call < my_left → 仍按 1000/牌型上限降级）。
+- **盈利锁胜 C 分支真相**：`_profit_lock_allin(state)` 就是 `_doom_risk(state)`；与 A 分支（`_match_adjust=='doomed'`）唯一差别是 lead 是否叠加 `_CTX` 偏移 → C 仅在 ctx 正偏移（保守档）窗口生效。
+- 【测试陷阱】history 里 allin 必须写**真实金额**（写 -2 会让 to_call 塌缩为 1，赔率失真 → 弱牌也判跟注）。
+
 ## 2026-08-28 2倍系数修复（commit 232592a，用户反馈驱动）
 - **重大 bug**：lead（我-对手累计净赢差）变化是筹码损失的 **2 倍**（每局弃牌我-X/对手+X→差-2X）；
   `_blind_line` 只返回筹码损失（SB/BB），c6ddf01 精确公式化时直接当 lead 阈值用，少算 2 倍
@@ -61,8 +68,8 @@
 0. **牌型净化（贯穿所有翻后牌型判定）** `_effective_category`：≥三条的牌型不能仅由公共牌组成——board 拼的三条/顺子/同花/葫芦/四条/同花顺（未用手牌）降级 HIGH_CARD（对手必有同款+一张升级牌即败）；应用在强度分层/公对豁免/注额豁免（5处）
 1. **doomed 无条件 allin**（确定性 doom 公式 + 我方被动，最高，decide 入口最前）
 2. **steal 强制施压防锁赢**（确定性 doom 公式 + 我方主动，>2000 豁免；优先于 fold_out）
-3. **>2000 投入限制**（4466168）：仅有效牌型≥三条可投入>2000；例外 = doomed / steal
-4. **翻前投入 ≤1000**（8124067）：翻前 raise/call/allin 一律 ≤1000（含超强牌；raise-to 总注额口径），doomed 例外
+3. **>2000 投入限制**（4466168）：仅有效牌型≥三条可投入>2000；例外 = doomed / steal。（**2026-09-14 起仅约束「主动下注/shove」**——跟注或应对对手 all-in 已豁免，见上节）
+4. **翻前投入 ≤1000**（8124067）：翻前 raise/call 一律 ≤1000（含超强牌；raise-to 总注额口径），doomed 例外。（**2026-09-14 起不再约束「跟对手全下」**）
 5. **锁胜弃牌 fold_out**（FOLD_OUT_FACTOR=1.5）
 6. **规则2**（盈利锁胜全下）
 7. **规则1**（弃牌亏损线 fold 升级 allin 兜底）
