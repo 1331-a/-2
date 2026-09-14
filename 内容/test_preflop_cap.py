@@ -193,11 +193,11 @@ check("despair删除:翻后弱牌面对全下不再allin", a.get("act") != "alli
 
 # ============ F. allin 金额 ≤2000（仅翻后，用户反馈修复） ============
 # F1) 翻后两对 + 对手全下 + 深筹码：弃牌由决策层按赔率判定
-# 【2026-09-14】不再是「跟全下超金额上限 → 弃」——该限制已废止
+# 【2026-09-14】不再是「跟全下超金额上限 → 弃」；对手全下金额写真实值
 r = req(my_cards=[42, 13], my_chips=19500, public_cards=[43, 22, 29, 20],
         history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
-                 {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}])
+                 {"round": 1, "player_id": 1, "action": 19000, "action_type": "allin"}])
 a = decide(parse_request(r), OpponentModel())
 check("全下:两对面对全下按赔率弃牌(注额上限已废止)", a == {"act": "fold"}, str(a))
 

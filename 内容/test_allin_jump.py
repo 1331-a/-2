@@ -47,15 +47,15 @@ stg_h19 = req(my_id=1, my_chips=14829, my_cards=[40, 41],
 check("第19手:累计已投跟全下放行",
       _allin_floor_guard(parse_request(stg_h19), {"act": "allin"}) == {"act": "allin"}, "")
 
-# 对照：领先极大(30000)+短筹码(6000)+跟全下 6000
-# → 累计 invest=20000 < 门槛 31000 → 拦截弃牌（极高领先时仍保护）
+# 【2026-09-14 用户规则】「跟对手全下」= 面对对手 all-in 的定向决策 →
+# 全下下限豁免（旧行为：invest 20000 < 门槛 31000 → 拦截弃牌）
 stg_heavy = req(my_id=1, my_chips=6000, my_cards=[40, 41],
                 total_win_chips=[-15000, 15000],  # lead=30000
                 history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                          {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                          {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}])
-check("累计拦截:领先极大+已投不足仍弃牌",
-      _allin_floor_guard(parse_request(stg_heavy), {"act": "allin"}) == {"act": "fold"}, "")
+check("累计拦截:跟对手全下时下限豁免(不再降级弃牌)",
+      _allin_floor_guard(parse_request(stg_heavy), {"act": "allin"}) == {"act": "allin"}, "")
 
 # ---------- 2. _opp_bet_jumped 检测 ----------
 stj1 = req(my_id=0, my_cards=[48, 50], public_cards=[46, 6, 1],

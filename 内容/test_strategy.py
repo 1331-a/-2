@@ -317,6 +317,18 @@ top_pair = parse_request(req(my_id=0, my_chips=19500, my_cards=[40, 22],
                              public_cards=[42, 26, 1, 24],
                              history=turn_history()))
 check("公对规则:顶两对不触发", should_avoid_risk(top_pair) is False, str(state_board(top_pair)))
+# 【2026-09-14 修复】手牌 2♠2♥ + 公面 J♣J♦2♠ = 葫芦(222JJ)：
+# 旧逻辑按「手牌对(2) < 公对(J) 且踢脚被压制」判成弱两对 → 走保守路线弃牌。
+# 有效牌型 ≥ 三条 一律豁免。
+flush_house = parse_request(req(my_id=0, my_chips=19500, my_cards=[0, 1],
+                                public_cards=[39, 38, 0],
+                                history=[{"round": 0, "player_id": 0, "action": 100,
+                                          "action_type": "call"},
+                                         {"round": 0, "player_id": 1, "action": 0,
+                                          "action_type": "check"}]))
+check("公对规则:葫芦(222JJ)不触发弱两对规避",
+      should_avoid_risk(flush_house) is False,
+      "cat=%s" % _effective_category(flush_house))
 # 无公对：不触发
 no_pair = parse_request(req(my_id=0, my_chips=19500, my_cards=[3, 22],
                             public_cards=[51, 36, 13, 7],
@@ -525,14 +537,17 @@ check("公对陷阱:顶两对不触发", _river_paired_trap(stw) is False, "")
 # ---------- 6f. 全下下限（投入须超过 当前总盈利+1000 才允许 allin）----------
 from strategy import _allin_floor_guard   # noqa: E402
 
-# 单元：领先 15000（门槛 16000）+ 筹码 6000 面对全下 → 跟全下被锁 → 弃牌
+# 单元：领先 15000（门槛 16000）+ 筹码 6000 面对全下
+# 【2026-09-14 用户规则】「跟对手全下」= 面对对手 all-in 的定向决策 →
+# 全下下限豁免（旧行为：投入 6000 < 门槛 16000 → 被降级成弃牌，
+# 连四条/葫芦这类必胜牌也会被丢）
 stg1 = parse_request(req(my_id=0, my_chips=6000, my_cards=[48, 50],
                          public_cards=[46, 6, 1], total_win_chips=[15000, -15000],
                          history=[{"round": 0, "player_id": 0, "action": 500, "action_type": "raise"},
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                   {"round": 1, "player_id": 1, "action": -2, "action_type": "allin"}]))
-check("全下下限:领先大+浅筹码跟全下→弃牌",
-      _allin_floor_guard(stg1, {"act": "allin"}) == {"act": "fold"}, "")
+check("全下下限:跟对手全下已豁免(不再因投入不足降级)",
+      _allin_floor_guard(stg1, {"act": "allin"}) == {"act": "allin"}, "")
 # 单元：领先 15000 + 无人下注 → 主动全下被锁 → 过牌
 stg2 = parse_request(req(my_id=0, my_chips=15000, my_cards=[48, 50],
                          public_cards=[46, 6, 1], total_win_chips=[15000, -15000],
@@ -554,9 +569,10 @@ check("全下下限:均势正常筹码允许",
 # 单元：非 allin 动作不拦截
 check("全下下限:非allin动作不动",
       _allin_floor_guard(stg1, {"act": "call"}) == {"act": "call"}, "")
-# 端到端：领先 15000 + 短筹码 AA 面对对手全下 → 整体决策弃牌
+# 端到端：领先 15000 + 短筹码 AA 面对对手全下 → 全下下限已豁免（跟不跟
+# 由全下分支按胜率/盈亏分档判定，不再被「投入不足」二次拦截）
 a = decide(stg1, OpponentModel())
-check("全下下限:端到端领先短筹码弃全下", a == {"act": "fold"}, str(a))
+check("全下下限:端到端跟对手全下不受下限拦截", a == {"act": "allin"}, str(a))
 # 端到端对照组：落后 -8000 + 短筹码 AA 面对全下 → 仍可全下搏翻盘
 stg5 = parse_request(req(my_id=0, my_chips=6000, my_cards=[48, 50],
                          public_cards=[46, 6, 1], total_win_chips=[-8000, 8000],

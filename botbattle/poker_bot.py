@@ -1783,6 +1783,18 @@ def _allin_floor_guard(state, action):
     """
     if action.get("act") != "allin":
         return action
+    # 【2026-09-14 用户规则·替换旧限制】「跟对手 all-in」（本局有人全押，
+    # 或跟注额 ≥ 剩余筹码）属于**面对对手 all-in 的定向决策**——胜率已由
+    # 规则2（锁赢硬规则）/ 规则16 / 翻前分档 / 翻后全下分支判定，不再受本
+    # 下限约束。否则四条 / 葫芦这类必胜牌也会因「累计投入 ≤ 盈利 + 1000」
+    # 被降级成弃牌（实测：手牌 JJ + 公面 2♠J♣J♦ = 四条，对手下注 3000 时
+    # 原本 fold）。本下限只保留对「我方主动 shove」（无人全押、to_call <
+    # my_left）的约束。
+    try:
+        if state.any_allin or int(state.to_call) >= int(state.my_left):
+            return action
+    except Exception:
+        pass
     try:
         floor = state.total_win_chips[state.my_id] + ALLIN_FLOOR_CONST
         if state.to_call > 0:
@@ -2225,6 +2237,17 @@ def should_avoid_risk(state):
     board = state.board
     if len(board) < 3 or len(board) >= 5:
         return False                      # 只有翻牌/转牌（3~4 张）才可能判定公对
+    # 【2026-09-14 修复】弱两对保护只适用于「有效牌型恰好是两对」。
+    # 旧逻辑只看「手牌对 < 公对 且 踢脚被压制」两个条件，会把
+    #   手牌 22 + 公面 J J 2（= 葫芦 222JJ，必胜）也判成「底部两对」
+    #   → 走 `_risk_avoid_route` 保守路线 → 直接弃牌。
+    # 而它是「公对 + 手牌三条」结构，对手只有拿 J（四条）或更高葫芦才赢。
+    # 故：有效牌型 ≥ 三条（三条/顺子/同花/葫芦/四条）一律豁免。
+    try:
+        if _effective_category(state) >= THREE_OF_A_KIND:
+            return False
+    except Exception:
+        pass
     pair_rank = _find_board_pair(board)   # 规则1：公对点数
     if pair_rank == 0:
         return False
