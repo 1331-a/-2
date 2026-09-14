@@ -1589,6 +1589,108 @@ CHECK_BET_EARLY_FREQ = 1.0    # 前期频率
 CHECK_BET_MIN_FREQ = 0.55     # 后期频率下限（被针对时保留一定偷池能力）
 
 
+# ── 规则14（2026-09-14 用户规则）：我过牌后对手小注 → 假定诈唬 ──
+BLUFF_READ_BET = 300          # "小注"默认阈值：对手下注 ≤300
+BLUFF_READ_BET_AGGRO = 500    # 激进型对手放宽到 ≤500（具体值受风格影响）
+BLUFF_READ_AGGRO_AF = 0.52    # 激进判定：原型 maniac 或 bet_freq ≥ 0.52
+BLUFF_READ_RAISE_FREQ = 0.35  # 反加小注的比例（其余跟注；两者都不弃牌）
+BLUFF_READ_RAISE_MULT = 3.0   # 反加尺度：对手本轮注额的倍数
+
+
+def _my_checked_this_round(state):
+    """我方本轮（当前街）是否 check 过——与 _opp_checked_this_round 对称。
+
+    用于规则14：**我方过牌 = 示弱** → 对手随后的下注更容易是诈唬。
+    兼容 botzone 三种 check 编码（见 _opp_checked_this_round），并兼容
+    1-based 座位号（id_base=1 时同时接受 my_id+1，与 opp_id 不会混淆）。
+    """
+    request = getattr(state, "request", None) or {}
+    hist = request.get("history") or []
+    cur_round = state.current_round
+    my_ids = {state.my_id}
+    try:
+        base = int(getattr(state, "id_base", 0) or 0)
+        if base:
+            my_ids.add(state.my_id + base)
+    except Exception:
+        pass
+    for r in hist:
+        try:
+            if int(r.get("round", 0)) != cur_round:
+                continue
+            if int(r.get("player_id", -99)) not in my_ids:
+                continue
+        except Exception:
+            continue
+        at = r.get("action_type", "")
+        a = r.get("action", 0)
+        if at == "check" or (at in ("call", "") and a == 0):
+            return True
+    return False
+
+
+def _bluff_read_threshold(model):
+    """规则14 的「小注」阈值：默认 300；激进型对手放宽到 500。
+
+    「激进」= 原型 maniac，或原始下注频率 bet_freq ≥ 0.52
+    （用原始频率而非 eff_bet_freq——后者向先验 0.40 收缩，小样本到不了阈值；
+     与规则8 BBP 的取值口径一致）。
+    """
+    try:
+        if model is not None:
+            if model.archetype() == "maniac":
+                return BLUFF_READ_BET_AGGRO
+            if float(model.bet_freq) >= BLUFF_READ_AGGRO_AF:
+                return BLUFF_READ_BET_AGGRO
+    except Exception:
+        pass
+    return BLUFF_READ_BET
+
+
+def _small_bet_bluff_read(state, model, category, strong):
+    """【规则14·2026-09-14 用户规则】我过牌后对手小注 → 假定诈唬。
+
+    触发（需全部满足）：
+      1. 翻后（翻前的小额是常规加注，没有「小额诈唬」的含义）；
+      2. 本轮我方**已过牌**（示弱，_my_checked_this_round）；
+      3. 对手随即下注且数额小：默认 ≤300；对手激进（maniac /
+         bet_freq ≥ 0.52）放宽到 ≤500（_bluff_read_threshold）；
+      4. 对手不是全押（全押无「小额」含义）。
+    动作（都不弃牌）：
+      · 以 BLUFF_READ_RAISE_FREQ 的概率**反加小注**——到对手本轮注额的
+        BLUFF_READ_RAISE_MULT 倍（与项目既有 3.0× 加注口径一致），
+        合法性/牌型注额上限由 _raise_to → _normalize 兜底；
+      · 其余情况**跟注**（成本低，留到下一街再评估）。
+    例外：我方已是强牌（strong = 两对+/坚果）→ 交回常规价值路线，
+    不被本规则接管（强牌该按价值尺度加注，而不是固定 3 倍）。
+    返回 None = 不触发。
+    """
+    try:
+        if state.stage == "preflop":
+            return None
+        if strong:
+            return None
+        if state.any_allin:
+            return None
+        to_call = int(state.to_call)
+        if to_call <= 0:
+            return None
+        if int(state.my_left) <= 0:
+            return None
+        if not _my_checked_this_round(state):
+            return None
+        if to_call > _bluff_read_threshold(model):
+            return None
+        import random
+        if random.random() < BLUFF_READ_RAISE_FREQ:
+            target = BLUFF_READ_RAISE_MULT * state.curbet[state.opp_id]
+            if target > state.curbet[state.my_id]:
+                return _raise_to(state, target)
+        return {"act": "call"}
+    except Exception:
+        return None
+
+
 def _check_bet_weight(state, model):
     """【规则12·2026-09-10 用户规则】对手过牌→加注 的执行权重。
 
@@ -2704,6 +2806,13 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         my_best = max(my_same) if my_same else -1
         if my_best < 11:      # 无同花色手牌 或 手牌同花牌 < K
             return {"act": "fold"}
+    # 【规则14·2026-09-14 用户规则】我过牌后对手小注 → 假定诈唬 → 跟注/反加小注。
+    # 必须排在下面「大注(>0.6 池)弃牌」之前：否则小底池里的小注会被那条
+    # 规则当大注丢掉（用户反馈的核心场景）。本规则不弃牌。
+    _br = _small_bet_bluff_read(state, model, category, strong)
+    if _br is not None:
+        return _br
+
     pot = state.pot
     to_call = state.to_call
     required = to_call / (pot + to_call) if (pot + to_call) > 0 else 1.0

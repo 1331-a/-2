@@ -441,6 +441,100 @@ check("0914:盈利锁胜复用 _doom_risk（公式单点）",
       "_doom_risk" in __import__("inspect").getsource(_profit_lock_allin))
 
 
+
+# ============ 2026-09-14 规则14：我过牌后对手小注 → 假定诈唬 ============
+# 用户规则：自己过牌后对手立刻（小额）加注，默认 <300 视作诈唬；
+# 激进派（maniac / bet_freq≥0.52）阈值放宽到 <500。此时可跟注或反加小注，
+# 而不是弃牌。
+from strategy import (_small_bet_bluff_read, _my_checked_this_round,  # noqa: E402
+                      _bluff_read_threshold, _effective_category,
+                      BLUFF_READ_BET, BLUFF_READ_BET_AGGRO,
+                      BLUFF_READ_RAISE_MULT)
+
+_PRE14 = [{"round": 0, "player_id": 0, "action": 100, "action_type": "raise"},
+          {"round": 0, "player_id": 1, "action": 200, "action_type": "raise"},
+          {"round": 0, "player_id": 0, "action": 200, "action_type": "call"}]
+_CHK14 = {"round": 3, "player_id": 0, "action": 0, "action_type": "check"}
+
+
+def _st14(hist, **kw):
+    base = {"num_players": 2, "dealer_id": 1, "my_id": 0, "my_chips": 19900,
+            "my_cards": [10, 44], "public_cards": [24, 0, 49, 33, 46],
+            "history": hist, "hand": 34, "max_hand": 70,
+            "total_win_chips": [0, 0], "total_win_games": [0, 0]}
+    base.update(kw)
+    return parse_request(base)
+
+
+_m14 = OpponentModel()
+
+# A. 过牌／跟注识别（action=0 + call 是 check 的等价编码）
+_st_chk = _st14(_PRE14 + [_CHK14])
+check("0914规则14:我方 check 被识别",
+      _my_checked_this_round(_st_chk) is True)
+_st_call = _st14(_PRE14 + [
+    {"round": 3, "player_id": 1, "action": 200, "action_type": "raise"},
+    {"round": 3, "player_id": 0, "action": 200, "action_type": "call"},
+    {"round": 3, "player_id": 1, "action": 300, "action_type": "raise"}])
+check("0914规则14:真·跟注(action>0)不算过牌",
+      _my_checked_this_round(_st_call) is False)
+
+# B. 阈值随对手风格变化
+check("0914规则14:默认对手阈值 = 300",
+      _bluff_read_threshold(_m14) == BLUFF_READ_BET)
+_agg14 = OpponentModel()
+_agg14.postflop_bet = 8; _agg14.postflop_call = 1
+_agg14.postflop_fold = 1; _agg14.postflop_check = 1
+check("0914规则14:激进对手(bet_freq≥0.52)阈值放宽到 500",
+      _bluff_read_threshold(_agg14) == BLUFF_READ_BET_AGGRO,
+      "bet_freq=%.2f thr=%d" % (_agg14.bet_freq, _bluff_read_threshold(_agg14)))
+
+# C. 触发：我过牌 + 对手下注 300（默认对手）
+_small = _st14(_PRE14 + [_CHK14, {"round": 3, "player_id": 1, "action": 300,
+                                 "action_type": "raise"}])
+_a14 = _small_bet_bluff_read(_small, _m14, _effective_category(_small), False)
+check("0914规则14:过牌后对手下注300 → 触发(不弃牌)",
+      _a14 is not None and _a14.get("act") in ("call", "raise"), str(_a14))
+check("0914规则14:触发时反加尺度 = 3× 对手注额",
+      _a14.get("act") == "call" or _a14.get("num") == int(
+          BLUFF_READ_RAISE_MULT * 300), str(_a14))
+
+# D. 不触发：超过阈值（400 > 300，非激进对手）
+_over = _st14(_PRE14 + [_CHK14, {"round": 3, "player_id": 1, "action": 400,
+                                "action_type": "raise"}])
+check("0914规则14:非激进对手下注400 → 不触发",
+      _small_bet_bluff_read(_over, _m14, _effective_category(_over), False) is None)
+check("0914规则14:同一 400 对激进对手 → 触发",
+      _small_bet_bluff_read(_over, _agg14, _effective_category(_over), False)
+      is not None)
+
+# E. 不触发：翻前 / 对手全押 / 我方未过牌 / 强牌
+_pre14s = _st14([{"round": 0, "player_id": 1, "action": 300,
+                  "action_type": "raise"}], public_cards=[])
+check("0914规则14:翻前小额不触发",
+      _small_bet_bluff_read(_pre14s, _m14, _effective_category(_pre14s), False)
+      is None)
+_allin14 = _st14([_CHK14, {"round": 3, "player_id": 1, "action": -2,
+                          "action_type": "allin"}])
+check("0914规则14:对手全押不触发",
+      _small_bet_bluff_read(_allin14, _m14, _effective_category(_allin14), False)
+      is None)
+check("0914规则14:我方未过牌(对手先下注)不触发",
+      _small_bet_bluff_read(_st_call, _m14, _effective_category(_st_call), False)
+      is None)
+check("0914规则14:强牌(strong)不被接管",
+      _small_bet_bluff_read(_small, _m14, _effective_category(_small), True)
+      is None)
+
+# F. 决策层：过牌后对手下 300 永不弃牌（跨随机化采样）
+_acts14 = set()
+for _ in range(120):
+    _acts14.add(decide(_small, _m14).get("act"))
+check("0914规则14:决策层对 300 小注从不弃牌",
+      _acts14.issubset({"call", "raise"}), str(_acts14))
+check("0914规则14:决策层两种动作都出现(跟注/反加都试)",
+      len(_acts14) >= 2, str(_acts14))
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")
