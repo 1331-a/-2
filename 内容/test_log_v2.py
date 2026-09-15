@@ -775,6 +775,50 @@ check("0914规则10:求稳时强牌(三条)仍可加注",
                        {"act": "raise", "num": 900}).get("act") == "raise",
       str(_stability_guard(_st10c, _m16_quiet, {"act": "raise", "num": 900})))
 
+# ============ 2026-09-15 规则17：当前盈利越多，跟 all-in 条件越严格 ============
+from strategy import _lead_allin_shift, LEAD_ALLIN_SHIFT   # noqa: E402
+
+
+def _st17(lead, cards=(27, 49)):
+    """截图第23手：翻前各100 → 翻牌 8♠Q♠8♥ 双方check → 转牌 J♦ 对手全押。"""
+    return parse_request(dict(
+        num_players=2, dealer_id=0, my_id=0, my_chips=19900,
+        my_cards=list(cards), public_cards=[24, 40, 25, 38],
+        hand=22, max_hand=70, total_win_chips=[lead, -lead],
+        total_win_games=[0, 0],
+        history=[{"round": 0, "player_id": 0, "action": 50, "action_type": "call"},
+                 {"round": 0, "player_id": 1, "action": 0, "action_type": "check"},
+                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+                 {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                 {"round": 2, "player_id": 1, "action": 19900, "action_type": "allin"}]))
+
+
+check("0915规则17:大领先(>+50BB) → +0.12",
+      _lead_allin_shift(_st17(7084)) == LEAD_ALLIN_SHIFT["big_lead"],
+      str(_lead_allin_shift(_st17(7084))))
+check("0915规则17:小领先(>+10BB) → +0.07",
+      _lead_allin_shift(_st17(1200)) == LEAD_ALLIN_SHIFT["lead"],
+      str(_lead_allin_shift(_st17(1200))))
+check("0915规则17:均势(±10BB) → +0.02",
+      _lead_allin_shift(_st17(0)) == LEAD_ALLIN_SHIFT["even"],
+      str(_lead_allin_shift(_st17(0))))
+check("0915规则17:小落后(<-10BB) → -0.03",
+      _lead_allin_shift(_st17(-1200)) == LEAD_ALLIN_SHIFT["behind"],
+      str(_lead_allin_shift(_st17(-1200))))
+check("0915规则17:大落后(<-50BB) → -0.08",
+      _lead_allin_shift(_st17(-8000)) == LEAD_ALLIN_SHIFT["big_behind"],
+      str(_lead_allin_shift(_st17(-8000))))
+# 端到端：同一手三条8（对手突袭全押 → eq 打折）——大领先收紧则弃，均势/落后跟
+check("0915规则17:大领先时三条8弃(条件更严格)",
+      decide(_st17(7084), _m16_quiet).get("act") == "fold",
+      str(decide(_st17(7084), _m16_quiet)))
+check("0915规则17:均势时三条8跟(不被过度收紧)",
+      decide(_st17(0), _m16_quiet).get("act") == "allin",
+      str(decide(_st17(0), _m16_quiet)))
+check("0915规则17:大落后时三条8跟(搏翻盘)",
+      decide(_st17(-8000), _m16_quiet).get("act") == "allin",
+      str(decide(_st17(-8000), _m16_quiet)))
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")

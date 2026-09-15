@@ -91,6 +91,22 @@ ALLIN_RELAX_HANDS_ZERO = 45    # 剩余 ≥ 此手数 → 局数维度不放宽
 ALLIN_RELAX_FREQ_FULL = 0.25   # 对手 allin 频率 ≥ 此值 → 频率维度放宽到满
 ALLIN_RELAX_FREQ_MIN_N = 10    # 频率维度按样本量折算置信度（10 手为满）
 
+# ── 规则17（2026-09-14 用户规则）：当前盈利越多，跟 all-in 条件越严格 ──
+# 与翻前 ALLIN_THR 用同一套分档边界（大盲倍数：50 / 10）——翻前是「绝对门槛」，
+# 翻后是「在底池赔率要求之上叠加的胜率增量」（翻后门槛随牌面/赔率浮动）。
+#   · lead > +50BB（大赢）→ +0.12：只跟坚果级，不拿领先优势去赌
+#   · lead > +10BB（小赢）→ +0.07
+#   · |lead| ≤ 10BB（均势）→ +0.02（常规边际，保留防「小优势接全下」）
+#   · lead < −10BB（小败）→ −0.03
+#   · lead < −50BB（大败）→ −0.08（放宽搏翻盘）
+LEAD_ALLIN_SHIFT = {
+    "big_lead": 0.12,
+    "lead": 0.07,
+    "even": 0.02,
+    "behind": -0.03,
+    "big_behind": -0.08,
+}
+
 # ── 规则10（2026-09-14 用户规则·强化）：靠近锁赢线 / 终局领先 → 不主动加注 ──
 # 用户规则：「靠近锁赢线时不要主动加注，尽量跟注和过牌」。
 #   ① 触发线由硬编码 0.8 下调到 0.6 —— 更早进入求稳；
@@ -1302,6 +1318,42 @@ def _call_allin_relax(state, model):
         relax = (ALLIN_RELAX_HANDS_MAX * h_part
                  + ALLIN_RELAX_FREQ_MAX * f_part)
         return _clamp(relax, 0.0, ALLIN_RELAX_CAP)
+    except Exception:
+        return 0.0
+
+
+def _lead_allin_shift(state):
+    """【规则17·2026-09-14 用户规则】当前盈利越多 → 跟 all-in 门槛越高。
+
+    用户规则：「当前盈利越多，allin 条件越严格」——盈利是已到手的优势，
+    不应拿它去和对手拼运气；而落后时反过来要放宽（不搏必输）。
+
+    返回「胜率门槛的增量」（正 = 更严格，负 = 更宽），档位与翻前 ALLIN_THR
+    同一套边界（ALLIN_LEAD_BB=50BB / ALLIN_SMALL_BB=10BB）：
+      lead > +50BB  → +0.12    只跟坚果级
+      lead > +10BB  → +0.07
+      |lead| ≤ 10BB → +0.02    常规边际
+      lead < −10BB  → −0.03
+      lead < −50BB  → −0.08    搏翻盘
+
+    应用点：翻后「跟 all-in」分支（_face_bet），与门槛叠加：
+        thr = 底池要求(eff_req) ± 档位修正 + 本增量 − 规则16放宽
+    翻前不叠加（翻前已用 ALLIN_THR 绝对分档实现同一思想）。
+    """
+    try:
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        bb = state.big_blind
+        big, small = ALLIN_LEAD_BB * bb, ALLIN_SMALL_BB * bb
+        if lead > big:
+            return LEAD_ALLIN_SHIFT["big_lead"]
+        if lead > small:
+            return LEAD_ALLIN_SHIFT["lead"]
+        if lead > -small:
+            return LEAD_ALLIN_SHIFT["even"]
+        if lead > -big:
+            return LEAD_ALLIN_SHIFT["behind"]
+        return LEAD_ALLIN_SHIFT["big_behind"]
     except Exception:
         return 0.0
 
@@ -3128,8 +3180,13 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             # 常规档跟全下需要胜率 > 赔率要求的边际（margin≥0.02），
             # 避免「小优势就接全下」的高方差打法
             thr = eff_req + margin
+        # 【规则17·2026-09-14 用户规则】当前盈利越多 → 跟 all-in 门槛越高
+        # （正数=更严格；落后为负=放宽搏翻盘）。与规则16 的放宽独立叠加：
+        # 终局时两者部分抵消（时间不够必须赌 vs 已有盈利要保住），残余量即为
+        # 实际门槛偏移。防锁赢(doom)/末手禁弃已由入口规则2 先处理。
+        thr += _lead_allin_shift(state)
         # 【规则16·2026-09-14 用户规则】剩余局数越少 / 对手 allin 越频繁 →
-        # 跟全下条件越宽。防锁赢(doom)/末手禁弃已由入口规则2 先处理。
+        # 跟全下条件越宽。
         thr -= _call_allin_relax(state, model)
         return {"act": "allin"} if eq >= thr else {"act": "fold"}
         return {"act": "fold"}
