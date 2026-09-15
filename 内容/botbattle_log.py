@@ -94,7 +94,12 @@ def load_botbattle(path, my_seat=0, use_hand=None):
     dealer = 0
     street = "preflop"
     actions = []          # [(event, street)]
-    my_invested = 0       # 本手我方累计投入（含盲注）
+    # 【2026-09-15 修复】本手投入必须**按街累加**：日志 action.amount 是
+    # 「本街累计总注额」，跨街不累加。原实现用 `max(my_invested, amt-blind)`
+    # 只取本街最大值当本手总投入 → 第 9 手报 328（真实 906），使所有复盘的
+    # invested / doom 判定失真。
+    street_bet = [0, 0]   # 本街各玩家累计总注额
+    hand_invested = 0     # 已结束各街的累计投入（含盲注）
 
     for ev in events:
         t = ev.get("type")
@@ -109,20 +114,29 @@ def load_botbattle(path, my_seat=0, use_hand=None):
             # 【2026-09-10 修正】hand_start.chips 是「盲注已扣」后的筹码，
             # 因此本手后续投入从 0 起算（若再计盲注会双重扣减，导致
             # invested 偏大、锁赢门槛虚高、判定失真）。
-            my_invested = 0
+            street_bet = [0, 0]
+            hand_invested = 0
         elif t == "deal_hole":
             holes = ev.get("holes")
         elif t == "deal_board":
+            # 换街：把刚结束那一街的投入并入本手累计，再重置本街计数
+            hand_invested += street_bet[my_seat]
+            street_bet = [0, 0]
             board = list(ev.get("board") or [])
             street = str(ev.get("street", "flop"))
         elif t == "action":
             if int(ev.get("player", -1)) == my_seat:
                 if use_hand is None or (hand_idx + 1) == use_hand:
+                    # 初始盲注（hand_start.chips 里已扣）→ 用于换算「我的筹码」
+                    _blind0 = 50 if dealer == my_seat else 100
                     req = {
                         "num_players": 2,
                         "dealer_id": dealer,
                         "my_id": my_seat,
-                        "my_chips": chips[my_seat] - my_invested,
+                        # 盲注已从 hand_start.chips 扣除 → 这里只减「盲注之外
+                        # 的投入」= 本手总投入（含盲注）− 初始盲注
+                        "my_chips": chips[my_seat] - max(
+                            0, hand_invested + street_bet[my_seat] - _blind0),
                         "my_cards": [card_to_platform(c)
                                      for c in (holes or [[], []])[my_seat]],
                         "public_cards": [card_to_platform(c) for c in board],
@@ -146,10 +160,12 @@ def load_botbattle(path, my_seat=0, use_hand=None):
                                       "actual": _actual,
                                       "hole": list((holes or [[], []])[my_seat]),
                                       "board": list(board)}))
+                # amount = **本街**累计总注额（raise-to / 跟到）→ 记到本街该玩家
+                # 名下；换街时才由 deal_board 并入 hand_invested。
                 amt = int(ev.get("amount", 0) or 0)
-                # amount = 本轮累计总注额（含盲注）→ 减掉盲注才是「后续投入」
-                _blind = 50 if dealer == my_seat else 100
-                my_invested = max(my_invested, amt - _blind)
+                _p = int(ev.get("player", -1))
+                if _p in (0, 1):
+                    street_bet[_p] = amt
             actions.append((ev, street))
         elif t == "settle":
             # 【2026-09-10 修正】必须用 deltas（本手筹码变化）累加——

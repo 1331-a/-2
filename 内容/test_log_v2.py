@@ -819,6 +819,92 @@ check("0915规则17:大落后时三条8跟(搏翻盘)",
       decide(_st17(-8000), _m16_quiet).get("act") == "allin",
       str(decide(_st17(-8000), _m16_quiet)))
 
+# ============ 2026-09-15 方案B：主动下注若「投进去就锁赢」→ 过牌 ============
+from strategy import _doom_risk, _doom_bet_downgrade   # noqa: E402
+
+# 真实日志（botbattle-...2f10d6cf 第9手）：我方(座位1)落后 3418、河牌已投 906、
+# 剩 61 手（追平线 9100）。再投 815 → 输掉即锁赢（-10278 ≤ -9100）。
+_H9 = [{"round": 0, "player_id": 0, "action": 300, "action_type": "raise"},
+       {"round": 0, "player_id": 1, "action": 200, "action_type": "call"},
+       {"round": 1, "player_id": 0, "action": 228, "action_type": "raise"},
+       {"round": 1, "player_id": 1, "action": 228, "action_type": "call"},
+       {"round": 2, "player_id": 0, "action": 378, "action_type": "raise"},
+       {"round": 2, "player_id": 1, "action": 378, "action_type": "call"}]
+_st9 = parse_request(dict(
+    num_players=2, dealer_id=0, my_id=0, my_chips=19094,
+    my_cards=[25, 40], public_cards=[19, 24, 39, 50, 4],
+    hand=8, max_hand=70, total_win_chips=[-3418, 3418], total_win_games=[0, 0],
+    history=list(_H9)))
+check("0915方案B:已投口径不 doom(不投入是安全的)",
+      _doom_risk(_st9) is False, str(_doom_risk(_st9)))
+check("0915方案B:extra 参数生效(再投815即锁赢)",
+      _doom_risk(_st9, extra=815) is True, str(_doom_risk(_st9, extra=815)))
+check("0915方案B:主动下注会让投入后锁赢 → 过牌",
+      _doom_bet_downgrade(_st9, {"act": "raise", "num": 815}) == {"act": "check"},
+      str(_doom_bet_downgrade(_st9, {"act": "raise", "num": 815})))
+check("0915方案B:小额下注(不会越线)不动",
+      _doom_bet_downgrade(_st9, {"act": "raise", "num": 20}).get("act") == "raise",
+      str(_doom_bet_downgrade(_st9, {"act": "raise", "num": 20})))
+check("0915方案B:端到端=过牌(截图第9手)",
+      decide(_st9, _m16_quiet).get("act") == "check",
+      str(decide(_st9, _m16_quiet)))
+# 对手先加注（过不了牌）→ 本函数不动，交给 _doom_call_upgrade → allin
+_st9b = parse_request(dict(
+    num_players=2, dealer_id=0, my_id=0, my_chips=19094,
+    my_cards=[25, 40], public_cards=[19, 24, 39, 50, 4],
+    hand=8, max_hand=70, total_win_chips=[-3418, 3418], total_win_games=[0, 0],
+    history=list(_H9) + [{"round": 3, "player_id": 1, "action": 815,
+                          "action_type": "raise"}]))
+check("0915方案B:对手已加注时不降级(交给allin分支)",
+      _doom_bet_downgrade(_st9b, {"act": "call"}).get("act") == "call",
+      str(_doom_bet_downgrade(_st9b, {"act": "call"})))
+# 决策层若想「跟注」→ 升级 all-in（禁止只跟：跟注即锁赢）
+from strategy import _doom_call_upgrade   # noqa: E402
+check("0915方案B:跟注即锁赢 → 升级 allin(单元)",
+      _doom_call_upgrade(_st9b, {"act": "call"}) == {"act": "allin"},
+      str(_doom_call_upgrade(_st9b, {"act": "call"})))
+# 决策层若判「弃牌」→ 保持弃牌：弃牌只损失已投 906（lead −8648 未越线）✓
+check("0915方案B:对手加注时决策层判弃 → 保持弃牌",
+      decide(_st9b, _m16_quiet).get("act") == "fold",
+      str(decide(_st9b, _m16_quiet)))
+
+# ---- 转换器：本手投入必须按街累加（旧实现只用本街最大值）----
+import json as _json      # noqa: E402
+import os as _os          # noqa: E402
+import tempfile           # noqa: E402
+from botbattle_log import load_botbattle   # noqa: E402
+
+_log = {"format": "botbattle.match.log", "format_version": 1,
+        "match": {"num_hands": 70},
+        "replay": {"events": [
+            {"type": "hand_start", "hand": 0, "chips": [19950, 19900],
+             "sb": 0, "bb": 1},
+            {"type": "deal_hole", "hand": 0,
+             "holes": [["8h", "Qs"], ["Jh", "4h"]]},
+            {"type": "action", "hand": 0, "player": 0, "action": "raise",
+             "amount": 300},
+            {"type": "deal_board", "hand": 0, "street": "flop",
+             "board": ["6c", "8s", "Jc"], "dealt": ["6c", "8s", "Jc"]},
+            {"type": "action", "hand": 0, "player": 0, "action": "raise",
+             "amount": 228},
+            {"type": "deal_board", "hand": 0, "street": "turn",
+             "board": ["6c", "8s", "Jc", "Ad"], "dealt": ["Ad"]},
+            {"type": "action", "hand": 0, "player": 0, "action": "raise",
+             "amount": 378},
+            {"type": "deal_board", "hand": 0, "street": "river",
+             "board": ["6c", "8s", "Jc", "Ad", "3s"], "dealt": ["3s"]},
+            {"type": "action", "hand": 0, "player": 0, "action": "raise",
+             "amount": 815}]}}
+_tf = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False,
+                                  encoding="utf-8")
+_json.dump(_log, _tf)
+_tf.close()
+_rows = load_botbattle(_tf.name, my_seat=0)
+_os.unlink(_tf.name)
+_inv = [20000 - _r["my_chips"] for _r, _meta in _rows]
+check("0915转换器:投入按街累加(应为 50/300/528/906)",
+      _inv == [50, 300, 528, 906], str(_inv))
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")

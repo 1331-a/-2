@@ -586,6 +586,47 @@ def _doom_call_upgrade(state, action):
         return action
 
 
+def _doom_bet_downgrade(state, action):
+    """【规则2 扩展·2026-09-15 用户规则·方案B】主动下注若「投进去就锁赢」→ 过牌。
+
+    用户规则：「能过牌就过牌（不投入）；对手先加注了、过不了牌 → all in」。
+    本函数负责**前半句**（能过牌的那半）：
+      · 条件：to_call == 0（本轮有免费过牌选项）+ 决策层要给 raise / allin +
+        「投入本次下注额后失败」即锁赢（`_doom_risk(state, extra=本次投入)`）；
+      · 动作：check —— 不投入就不会把 lead 推过锁赢线，保住剩余手数的追赶机会。
+    后半句（to_call > 0 → allin）由 _doom_call_upgrade 处理。
+
+    背景（截图第 9 手）：落后 3418、本手已投 906、剩 61 手（追平线 9100）。
+      · 不投入（check）→ 输掉 lead = −8648 > −9100 → 安全 ✓
+      · 再投 815 → 输掉 lead = −10278 ≤ −9100 → 锁赢 ✗
+    此时正确动作是过牌，而不是把 815 丢进一个会让自己越线的底池。
+    注：若连「不投入」都已锁赢（doomed），decide 入口的规则2 早已无条件 allin。
+    """
+    if action.get("act") not in ("raise", "allin"):
+        return action
+    try:
+        if int(state.to_call) > 0:
+            return action                 # 对手已下注 → 交给 _doom_call_upgrade
+        if int(state.my_left) <= 0:
+            return action
+        if action.get("act") == "raise":
+            amt = int(action.get("num", 0) or 0)
+            try:
+                cur = int((state.curbet or [0, 0])[state.my_id])
+            except Exception:
+                cur = 0
+            add = max(0, amt - cur)       # 本次额外投入 = raise-to 总额 − 本街已投
+        else:
+            add = int(state.my_left)      # 主动全下
+        if add <= 0:
+            return action
+        if _doom_risk(state, extra=add):
+            return {"act": "check"}
+    except Exception:
+        return action
+    return action
+
+
 def _aggressive_strong_bet(state, action):
     """【规则13·2026-09-10 用户规则】好牌（≥两对）主动下注 ≥ GOOD_BET_MIN(2000)。
 
@@ -734,9 +775,13 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 主动加注与主动全下（降级为跟注 / 过牌；强牌例外，见函数注释）。
     action = _stability_guard(state, model, action)
     action = _normalize(state, action)
-    # 【规则2 扩展·2026-09-14】放最后：敞口式 doom 下禁止只跟注/加注 →
-    # 当手无条件 all-in（须在 _normalize 之后，否则会被牌型注额上限降级）。
-    # 注意优先级：doom 是确定性硬规则，会覆盖上面的诈唬上限。
+    # 【规则2 扩展·2026-09-15 用户规则·方案B】能过牌时：若「投入本次下注后
+    # 失败即锁赢」→ 索性不投入（过牌）。放在 _normalize 之后，确保它看到的是
+    # 最终注额（会被牌型上限裁剪过）。
+    action = _doom_bet_downgrade(state, action)
+    # 【规则2 扩展·2026-09-14】过不了牌（对手已加注）时：敞口式 doom 下禁止只
+    # 跟注/加注 → 当手无条件 all-in（须在 _normalize 之后，否则会被牌型注额
+    # 上限降级）。注意优先级：doom 是确定性硬规则，会覆盖上面的诈唬上限。
     return _doom_call_upgrade(state, action)
 
 
@@ -1144,7 +1189,8 @@ def _exposure(state):
         return 0
 
 
-def _doom_risk(state, lead=None, hands_left=None, include_to_call=False):
+def _doom_risk(state, lead=None, hands_left=None, include_to_call=False,
+               extra=0):
     """规则2 确定性 doom 不等式（doom / 盈利锁胜 共用同一份实现）。
 
         lead − 2×敞口 ≤ −2×_blind_line(hands_left, own=False)
@@ -1155,6 +1201,9 @@ def _doom_risk(state, lead=None, hands_left=None, include_to_call=False):
         「弃牌其实很安全」的牌也判成 doomed）。
     include_to_call=True：敞口 = 已投入 + to_call → 「跟注即锁给对手」，
         用于 _doom_call_upgrade（禁止只跟注）。
+    extra：额外假设的投入额 ——【2026-09-15 用户规则·方案B】用于回答
+        「主动下注/加注 X 之后失败是否即锁赢」→ 见 _doom_bet_downgrade
+        （能过牌时该条件成立 → 索性不投入，过牌）。
     lead 可由调用方传入（_match_adjust 需先叠加 match_ctx 阈值偏移）。
     """
     try:
@@ -1164,6 +1213,7 @@ def _doom_risk(state, lead=None, hands_left=None, include_to_call=False):
         if hands_left is None:
             hands_left = _hands_left(state)
         exposure = _exposure(state) if include_to_call else _invested(state)
+        exposure += max(0, int(extra or 0))
         return (lead - 2 * exposure
                 <= -2 * _blind_line(state, hands_left, own=False))
     except Exception:

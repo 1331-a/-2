@@ -773,10 +773,12 @@ turn_chk_a0 = parse_request(req(dealer_id=1, my_id=0, my_chips=19900,
                                         {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
                                         {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
                                         {"round": 2, "player_id": 1, "action": 0, "action_type": "check"}]))
-_av = [decide(turn_chk_a0, OpponentModel()).get("act") for _ in range(20)]
-check("规则6兼容:action=0编码多数加注(>=10/20)",
-      _av.count("raise") >= 10,
-      "raise=%d/20" % _av.count("raise"))
+# 【2026-09-15】样本 20→40：该断言是按权重概率下注（实测期望 ~13/20），
+# 20 次时偶发掉到 9 次（约 5% 概率）导致假失败；翻倍后阈值保持 50%。
+_av = [decide(turn_chk_a0, OpponentModel()).get("act") for _ in range(40)]
+check("规则6兼容:action=0编码多数加注(>=20/40)",
+      _av.count("raise") >= 20,
+      "raise=%d/40" % _av.count("raise"))
 
 
 # ============ 2026-09-07 用户规则（截图：第2手河牌公面4同花跟注allin） ============
