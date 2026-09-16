@@ -127,6 +127,24 @@ GAMBLE_LINE_FACTOR = 0.95
 # 翻前「牌好」阈值 = 起手牌百分位 top GAMBLE_GOOD_PCT（越小越强，见 ranges.py）。
 GAMBLE_GOOD_PCT = 0.20
 
+# ── 规则19（2026-09-16 用户规则）：对手「吓不走」→ 不再下小注 ──
+# 用户规则：「遇到下小注吓不走的对手（指运用这种策略时对手很少弃牌），
+#   不要再下小注了」。
+# 理由：小注（≤40% 池，与 opponent 的 sf_s 尺寸桶同口径）的收益来自**弃牌
+#   权益**；对手几乎不弃，小注就只剩「被跟/被加注」的代价（底池做不大、
+#   还被反打），不如过牌或直接上价值注。
+# 判定：对手面对我方小注的反应样本 ≥SMALL_BET_MIN_N 且弃牌率 <SMALL_BET_FOLD_MIN。
+SMALL_BET_FOLD_MIN = 0.35      # 小注弃牌率低于此值 → 判定「吓不走」
+SMALL_BET_MIN_N = 4            # 至少这么多次小注样本才判（数据不足不改行为）
+
+# ── 规则学习（2026-09-16 用户规则）：赢的规则尽量重复、输的规则尽量避免 ──
+# 记账在 match_ctx（rule_stats，随 globaldata 持久化）；此处只做「用账」：
+# 采纳的规则若被判定为「输的规则」（胜率 < RULE_BAD_WR，样本足够）→ 把主动
+# 进攻动作降级为跟注/过牌（**只降 raise**；fold/check/call/allin 不动，硬规则
+# 不参与）。降级时优先选候选里记录最好的保守规则（即「尽量重复赢的规则」）。
+RULE_LEARN_ON = True
+# 不参与规避的动作/规则：全下（几乎都来自硬规则）、锁赢/搏命类
+
 # ── 规则10（2026-09-14 用户规则·强化）：靠近锁赢线 / 终局领先 → 不主动加注 ──
 # 用户规则：「靠近锁赢线时不要主动加注，尽量跟注和过牌」。
 #   ① 触发线由硬编码 0.8 下调到 0.6 —— 更早进入求稳；
@@ -1005,6 +1023,10 @@ def _blocking_bet_proxy(state, model, category):
     例外：super_hand（AA/KK/QQ/JJ/AKs）→ 仍走 check（保留 check-raise 陷阱）。
     返回 None 表示不触发（继续原 _opp_check_bet 路径）。
     """
+    # 【规则19·2026-09-16 用户规则】对手对我们的小注几乎不弃牌 → 阻隔注
+    # （1/3 池小注）没有弃牌权益，纯属送钱 → 作废。
+    if _small_bet_futile(state, model):
+        return None
     # 1. 位置 + 街级：翻后 + 非庄位
     if state.is_button:
         return None
@@ -1043,6 +1065,9 @@ def _lead_bet_proxy(state, model, category):
     尺寸：底池 1/3（BLOCKER_BET）。
     返回 None 表示不触发（继续后续分支）。
     """
+    # 【规则19·2026-09-16 用户规则】对手吓不走 → 先手 1/3 池 lead 作废
+    if _small_bet_futile(state, model):
+        return None
     try:
         if state.stage not in ("flop", "turn", "river"):
             return None
@@ -1069,6 +1094,9 @@ def _probe_bet_proxy(state):
     翻后对手已下注不触发（探测不适用被动对手）。
     返回 None 表示不触发。
     """
+    # 【规则19·2026-09-16 用户规则】对手吓不走 → 探测注（靠对手弃牌吃饭）作废
+    if _small_bet_futile(state, _MODEL_REF):
+        return None
     # 翻后街
     if state.stage not in ("flop", "turn"):
         return None
@@ -2061,6 +2089,30 @@ def _check_bet_weight(state, model):
         return 0.85
 
 
+def _small_bet_futile(state, model):
+    """【规则19·2026-09-16 用户规则】对手「吓不走」→ 小注作废（改过牌）。
+
+    用户规则：「遇到下小注吓不走的对手（指运用这种策略时对手很少弃牌），
+    不要再下小注了」。
+      · 统计来源：opponent.bet_resp_stats(sf_s 尺寸桶) —— 我方每次下注
+        （≤40% 池，与 opponent 的 sf_s 桶同口径）后对手的反应（弃/跟/加）；
+      · 判定：窗口内样本 ≥ SMALL_BET_MIN_N 且弃牌率 < SMALL_BET_FOLD_MIN；
+      · 样本不足 / 翻前 → False（不改行为，避免前期误伤）。
+    命中后：规则8 阻隔注、规则12 先手 lead、规则12 过牌后小注 一律不下；
+    真价值牌仍走价值注分支（那里按对手类型选大尺寸，不受本规则影响）。
+    """
+    try:
+        if model is None or state.stage == "preflop":
+            return False
+        st = model.bet_resp_stats(model._BUCKET_SF_SMALL, state.hand_num,
+                                  SMALL_BET_MIN_N)
+        if not st:
+            return False
+        return st.get("fold_rate", 0.0) < SMALL_BET_FOLD_MIN
+    except Exception:
+        return False
+
+
 def _opp_check_bet(state, opp_checked):
     """【规则12·独立模块】对手 check → 加注。
 
@@ -2068,8 +2120,13 @@ def _opp_check_bet(state, opp_checked):
     尺寸 30%~45% 池随机 + ±10% 抖动；受动态上限约束。
     与 _check_side 其他分支解耦：本模块只负责「对手过牌后的攻击」，
     由 _check_side 在合适优先级调用。
+
+    【规则19·2026-09-16】对手对我们的**小注**几乎不弃牌 → 小注没有弃牌权益，
+    只会被跟/被加 → 直接过牌（不下小注）。
     """
     if not opp_checked:
+        return {"act": "check"}
+    if _small_bet_futile(state, _MODEL_REF):
         return {"act": "check"}
     try:
         import random
@@ -2618,6 +2675,61 @@ def _candidate_rules(state, model, cat=None):
     except Exception:
         pass
     return out
+
+
+def _rule_learn_adjust(state, model, ctx, action, cands):
+    """【规则学习·2026-09-16 用户规则】赢的规则尽量重复、输的规则尽量避免。
+
+    用户规则：「记录每局获胜时调用的规则，尽量重复」「失败时的规则尽量避免」。
+
+    记账（match_ctx.rule_stats，随 globaldata 持久化）：每手结算时把该手
+    **实际采纳过**的规则按本手胜负 +1 胜 / +1 负（见 MatchContext._record_hand）。
+
+    用账（本函数，只做「少犯错」，不放大下注）：
+      · 本手采纳的规则若被判为「输的规则」（样本 ≥4 且胜率 <35%）→ 把
+        **主动进攻**动作降级：to_call>0 → 跟注，否则 → 过牌；
+      · 降级时优先选候选规则里记录最好的那条保守规则（「尽量重复赢的规则」）；
+      · 只降 raise：fold / check / call / allin 一律不动 —— 全下几乎都来自
+        硬规则（规则2 锁赢·防锁赢、规则18 搏命），学习不得干预；
+      · 兜底：候选里没有带记录的保守规则时，按「能过就过、否则跟」降级。
+
+    返回 (action, label)：label 为需要记入战绩的规则名（None = 不记账）。
+    """
+    label = _winning_rule(cands, action)
+    try:
+        if ctx is None or not RULE_LEARN_ON:
+            return action, label
+        if action.get("act") != "raise":
+            return action, label                 # 只降主动进攻
+        try:
+            if int(state.my_left) <= 0:
+                return action, label             # 筹码已尽 → 动不了
+        except Exception:
+            pass
+        if ctx.rule_score(label) >= 0:
+            return action, label                 # 不是「输的规则」→ 保持不变
+        best_name, best_score = None, -2
+        for c in (cands or []):
+            if c.get("act") not in ("check", "call", "fold"):
+                continue
+            s = ctx.rule_score(c.get("name"))
+            if s > best_score:
+                best_name, best_score = c.get("name"), s
+        try:
+            to_call = int(state.to_call)
+        except Exception:
+            to_call = 0
+        new = {"act": "call"} if to_call > 0 else {"act": "check"}
+        try:
+            DecisionLogger.log(state.hand_num, state.stage, state.pot,
+                               "规则学习", str(new.get("act")),
+                               "避开输的规则[%s] → %s" % (label, new.get("act")),
+                               block=False, record=True)
+        except Exception:
+            pass
+        return new, (best_name or None)
+    except Exception:
+        return action, label
 
 
 def _winning_rule(cands, action):
@@ -3640,27 +3752,34 @@ def decide(state, model, ctx=None, debug=False):
                                   _prepared=True)
         except Exception:
             action = _safe_fallback_action(state)
+    # 【规则学习·2026-09-16 用户规则】先算「本手采纳的规则」（**无论是否开日志**）：
+    #   ① 用账：输的规则 → 把主动进攻降级为跟注/过牌（_rule_learn_adjust）；
+    #   ② 记账：把最终采纳的规则登记到 ctx，结算时按本手胜负累加战绩；
+    #   ③ 归因日志复用同一份候选与标签（不再重复计算）。
+    _cat_l, _cands_l, _rule_l = None, None, None
+    try:
+        _cat_l = _effective_category(state)
+    except Exception:
+        pass
+    _ctx_l = ctx if ctx is not None else _CTX
+    try:
+        _cands_l = _candidate_rules(state, model, _cat_l)
+        action, _rule_l = _rule_learn_adjust(state, model, _ctx_l, action, _cands_l)
+        if _ctx_l is not None and _rule_l:
+            _ctx_l.note_rule(_rule_l)
+    except Exception:
+        pass
     try:
         if DecisionLogger._enabled:
-            _cat = None
-            _eq = None
-            try:
-                _cat = _effective_category(state)
-            except Exception:
-                pass
             _info = explain(state, model, ctx)
-            try:
-                _eq = (_info.get("hand") or {}).get("eq")
-            except Exception:
-                pass
-            _cands = _candidate_rules(state, model, _cat)
-            _rule = _winning_rule(_cands, action)
+            if _rule_l is None:
+                _rule_l = _winning_rule(_cands_l, action)
             DecisionLogger.log(
-                state.hand_num, state.stage, state.pot, _rule,
+                state.hand_num, state.stage, state.pot, _rule_l,
                 str(action.get("act")),
                 "num=%s adj=%s" % (action.get("num"),
                                    _safe_adjust(state)),
-                info=_info, cands=_cands)
+                info=_info, cands=_cands_l)
             DecisionLogger.maybe_health(state)
     except Exception:
         pass

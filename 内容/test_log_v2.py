@@ -1014,6 +1014,88 @@ check("0916解析:一对9面对(未知金额)全下 → 弃牌（与有金额时
       decide(_allin_neg, _m16_quiet) == {"act": "fold"},
       str(decide(_allin_neg, _m16_quiet)))
 
+# ====== 2026-09-16 规则19（对手吓不走→停用小注）+ 规则学习（赢的重复/输的避开） ======
+import strategy as _S19                                     # noqa: E402
+from match_ctx import MatchContext                           # noqa: E402
+from strategy import (_small_bet_futile, _opp_check_bet,      # noqa: E402
+                      _blocking_bet_proxy, _lead_bet_proxy,
+                      _rule_learn_adjust)
+
+
+def _m19(resps, hand=10):
+    """构造对手「面对我方小注（sf_s 桶）」的反应样本。"""
+    m = OpponentModel()
+    m.hands_seen = 20
+    for i, r in enumerate(resps):
+        m.bet_resp_events.append([hand - 5 + i, False, m._BUCKET_SF_SMALL, r])
+    return m
+
+
+_st19 = parse_request(dict(
+    num_players=2, dealer_id=0, my_id=1, my_chips=19800,
+    my_cards=[46, 25], public_cards=[29, 36, 8],
+    history=[{"round": 0, "player_id": 0, "action": 50, "action_type": "call"},
+             {"round": 0, "player_id": 1, "action": 100, "action_type": "raise"},
+             {"round": 0, "player_id": 0, "action": 50, "action_type": "call"},
+             {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+             {"round": 1, "player_id": 0, "action": 0, "action_type": "check"}],
+    hand=10, max_hand=70, total_win_chips=[0, 0], total_win_games=[0, 0]))
+_m_stop = _m19(["fold", "call", "call", "call", "call"])   # 小注弃牌率 0.20
+_m_fold = _m19(["fold", "fold", "fold", "call", "call"])   # 小注弃牌率 0.60
+
+check("0916规则19:小注样本不足 → 不判「吓不走」",
+      _small_bet_futile(_st19, _m19(["call", "call"])) is False)
+check("0916规则19:小注弃牌率 0.20 → 判「吓不走」",
+      _small_bet_futile(_st19, _m_stop) is True)
+check("0916规则19:小注弃牌率 0.60 → 不判「吓不走」",
+      _small_bet_futile(_st19, _m_fold) is False)
+_S19._prepare_globals(_st19, _m_stop, None)
+check("0916规则19:吓不走 → 对手过牌后不再强制小注（改过牌）",
+      _opp_check_bet(_st19, True) == {"act": "check"},
+      str(_opp_check_bet(_st19, True)))
+check("0916规则19:吓不走 → 阻隔注(1/3池)作废",
+      _blocking_bet_proxy(_st19, _m_stop, 1) is None)
+check("0916规则19:吓不走 → 先手 lead(1/3池)作废",
+      _lead_bet_proxy(_st19, _m_stop, 1) is None)
+_S19._prepare_globals(_st19, _m_fold, None)
+check("0916规则19:对手会弃(0.60) → 小注保留（raise）",
+      _opp_check_bet(_st19, True).get("act") == "raise",
+      str(_opp_check_bet(_st19, True)))
+
+_ctx19 = MatchContext()
+_ctx19.note_rule("规则12 过牌后小注")
+_ctx19.note_rule("规则1/4 大注弃牌")        # 归因兜底标签 → 排除
+_ctx19.note_rule("规则12 过牌后小注")       # 同手重复 → 只记一次
+check("0916规则学习:登记本手规则（去重 + 排除兜底标签）",
+      _ctx19.cur_hand_rules == ["规则12 过牌后小注"], str(_ctx19.cur_hand_rules))
+_ctx19._record_hand(_st19, net=-100, opp_allin=False)
+check("0916规则学习:输掉本手 → 该规则记 1 负",
+      _ctx19.rule_stats.get("规则12 过牌后小注") == {"w": 0, "l": 1},
+      str(_ctx19.rule_stats))
+for _ in range(4):
+    _ctx19.note_rule("规则12 过牌后小注")
+    _ctx19._record_hand(_st19, net=-100, opp_allin=False)
+check("0916规则学习:5 负 0 胜 → 判「输的规则」(-1)",
+      _ctx19.rule_score("规则12 过牌后小注") == -1, str(_ctx19.rule_stats))
+check("0916规则学习:样本不足 → 不判（0）",
+      _ctx19.rule_score("规则13 强牌激进") == 0)
+_ctx19.rule_stats["规则10 求稳"] = {"w": 4, "l": 1}
+check("0916规则学习:4 胜 1 负 → 判「赢的规则」(+1)",
+      _ctx19.rule_score("规则10 求稳") == 1)
+_c19 = [{"name": "规则12 过牌后小注", "act": "raise", "suggest": ""},
+        {"name": "规则10 求稳", "act": "check", "suggest": ""}]
+_a19, _l19 = _rule_learn_adjust(_st19, _m_fold, _ctx19,
+                                {"act": "raise", "num": 500}, _c19)
+check("0916规则学习:采纳输的规则+加注 → 降级过牌，改记赢的规则",
+      _a19 == {"act": "check"} and _l19 == "规则10 求稳",
+      "%s / %s" % (_a19, _l19))
+_a19b, _ = _rule_learn_adjust(_st19, _m_fold, _ctx19, {"act": "allin"}, _c19)
+check("0916规则学习:全下动作不受学习干预", _a19b == {"act": "allin"}, str(_a19b))
+_a19c, _ = _rule_learn_adjust(_st19, _m_fold, _ctx19,
+                              {"act": "raise", "num": 500},
+                              [{"name": "规则13 强牌激进", "act": "raise"}])
+check("0916规则学习:记录未知 → 保持加注", _a19c.get("act") == "raise", str(_a19c))
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")

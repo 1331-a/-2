@@ -46,6 +46,22 @@ STRAT_MIN_SAMPLES = 5           # 某策略至少 5 手样本才参与重心调�
 STRAT_WIN_RATE = 0.62           # 胜率超过此值 → 强化该策略（偏移 1 大盲）
 STRAT_SHIFT_BB = 1              # 策略重心偏移强度（大盲单位）
 
+# ---- 规则级胜负学习（2026-09-16 用户规则）----
+# 用户规则：「记录每局获胜时调用的规则，尽量重复」「失败时的规则尽量避免」。
+# 记账：每手结算时，把这一手**实际采纳过**的规则按本手胜负 +1 胜 / +1 负。
+# 用账：采纳的规则若样本 ≥RULE_MIN_SAMPLES 且胜率 <RULE_BAD_WR → 视为「输的
+#   规则」→ 把主动进攻动作降级为跟注/过牌；胜率 >RULE_GOOD_WR → 「赢的规则」，
+#   降级时优先选它（即「尽量重复」）。
+RULE_MIN_SAMPLES = 4            # 某规则至少 4 次结算样本才参与
+RULE_BAD_WR = 0.35              # 胜率 < 35% → 输的规则（尽量避免）
+RULE_GOOD_WR = 0.60             # 胜率 > 60% → 赢的规则（尽量重复）
+RULE_MAX_PER_HAND = 12          # 单手最多登记几条规则（防 memory 膨胀）
+# 不参与学习的规则名：硬规则 / 外部限制 / 归因兜底标签（会混指多种情况）
+RULE_LEARN_EXCLUDE = (
+    "规则2 锁赢/防锁赢", "规则5", "规则1", "规则16", "规则17", "规则18",
+    "规则1/4 大注弃牌", "常规策略(过/跟)", "常规策略",
+)
+
 BRACKET_PCT = 0.20              # 激进等级分档：累计盈亏 ±20% 初始筹码
 DRAWDOWN_PCT = 0.15             # 单局亏损阈值 → 大败降档
 UP_CONSEC_CONSERVATIVE = 3      # 保守档连续盈利升档局数
@@ -71,6 +87,9 @@ class MatchContext:
         # ---- 赢牌策略学习（2026-08-25）----
         self.strat_stats = {}        # tag(aggro/cbet/passive) -> {"w":赢局,"l":输局}
         self.cur_hand_tag = None     # 当前手牌我方策略标签（每回合从 history 重算）
+        # ---- 规则级胜负学习（2026-09-16 用户规则）----
+        self.rule_stats = {}         # 规则名 -> {"w": 赢局, "l": 输局}
+        self.cur_hand_rules = []     # 本手采纳过的规则（结算时统一记账）
 
     # ---------------- 序列化 ----------------
     def to_dict(self):
@@ -121,6 +140,16 @@ class MatchContext:
                 s["w"] += 1
             else:
                 s["l"] += 1
+        # 规则级胜负学习（2026-09-16）：本手用过的每条规则按本手胜负记账。
+        # 赢的规则 → 以后尽量重复；输的规则 → 以后尽量避免（见 rule_score）。
+        if net != 0:
+            for label in self.cur_hand_rules:
+                s = self.rule_stats.setdefault(label, {"w": 0, "l": 0})
+                if net > 0:
+                    s["w"] += 1
+                else:
+                    s["l"] += 1
+        self.cur_hand_rules = []
         q = self.recent_hands
         q.append([net, opp_allin])
         if len(q) > WINDOW:
@@ -211,6 +240,63 @@ class MatchContext:
                 if s["w"] / (s["w"] + s["l"]) > STRAT_WIN_RATE:
                     return sign
         return 0
+
+    # ---------------- 规则级胜负学习（2026-09-16 用户规则）----------------
+    def note_rule(self, label):
+        """登记「本手采纳过的一条规则」（结算时按本手胜负统一记账）。
+
+        · 硬规则 / 归因兜底标签（RULE_LEARN_EXCLUDE）不登记——它们要么是
+          确定性硬约束（规则2/18），要么一个标签混指多种情况（"规则1/4 大注
+          弃牌"），学了会把噪音当经验。
+        · 同一手内同名规则只登记一次（一手最多 RULE_MAX_PER_HAND 条）。
+        """
+        try:
+            if not label:
+                return
+            lab = str(label)
+            if lab in RULE_LEARN_EXCLUDE:
+                return
+            if lab in self.cur_hand_rules:
+                return
+            self.cur_hand_rules.append(lab)
+            if len(self.cur_hand_rules) > RULE_MAX_PER_HAND:
+                del self.cur_hand_rules[0]
+        except Exception:
+            pass
+
+    def rule_record(self, label):
+        """某规则的战绩 (wins, losses, win_rate)；无样本返回 (0, 0, None)。"""
+        s = self.rule_stats.get(label)
+        if not s:
+            return 0, 0, None
+        w, l = int(s.get("w", 0)), int(s.get("l", 0))
+        n = w + l
+        return w, l, (w / n if n else None)
+
+    def rule_score(self, label):
+        """规则记录评分：+1=赢的规则（尽量重复） / -1=输的规则（尽量避免） / 0=未知。
+
+        样本 < RULE_MIN_SAMPLES 一律 0（不拿 1~2 手的运气当经验）。
+        """
+        w, l, wr = self.rule_record(label)
+        if wr is None or w + l < RULE_MIN_SAMPLES:
+            return 0
+        if wr > RULE_GOOD_WR:
+            return 1
+        if wr < RULE_BAD_WR:
+            return -1
+        return 0
+
+    def rule_table(self, limit=6):
+        """按样本量排序的规则战绩（日志/复盘用）：[(规则, 胜, 负, 胜率), ...]"""
+        rows = []
+        for lab, s in self.rule_stats.items():
+            w, l = int(s.get("w", 0)), int(s.get("l", 0))
+            n = w + l
+            if n:
+                rows.append((lab, w, l, w / n))
+        rows.sort(key=lambda r: -(r[1] + r[2]))
+        return rows[:limit]
 
 
 def _tag_from_history(state):
