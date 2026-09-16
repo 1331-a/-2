@@ -55,6 +55,20 @@
 - 【测试陷阱】日志 `action.amount` 是**本街**累计总额；`hand_start.chips` 已扣盲注。
 - 实测（截图第23手三条8，对手突袭全押，eq 打折 0.15）：大领先 → fold；均势/落后 → allin。
 
+## 2026-09-16 规则18/18b：搏命区按牌力分流（commit d3226e2，用户规则）
+- **触发 `_gamble_zone`**：`lead < 0 且 lead ≤ −0.95 × 2×_blind_line(剩余手数, own=False)`（「追赶余地只剩 5%」灰区）。
+  越线（≥1.0）由规则2 doom 接管；lead 与追平线在一手内不变 → **进区即整手在区内**（各街都可搏）。
+- **用户规则演进**：「对方快锁赢时应该是开局就 allin」→「牌好就多过牌再 allin，不好就开局 allin」。
+- **分流 `_gamble_plan`**：
+  · 牌烂 → all-in（任何街；开局梭哈逼对手用整副筹码接 50/50 —— 河牌才梭弃牌权益≈0）
+  · 牌好 → 能过牌(to_call==0) → check；翻前只需补大盲 → call(溜入)；对手加注/下注、或河牌免费 → all-in 收网
+- **`_gamble_hand_good`**（确定性，不用 MC 防抽样抖动）：翻前 = `hand_percentile ≤ GAMBLE_GOOD_PCT(0.20)`（77+/AK/AQ 档）；
+  翻后 = 有效牌型≥两对 / `_has_nuts_or_strong_draw` / 一对且 `_pair_is_top`（顶对·超对）。
+- allin 带 `lk` 标记 → 免检，不被翻前 1000 / 翻后牌型上限降级。
+- 调参入口：`GAMBLE_LINE_FACTOR`（进区门槛）、`GAMBLE_GOOD_PCT`（翻前牌好阈值，调小=更多牌当烂牌梭）。
+- 【测试陷阱】翻后场景必须给对**公牌张数**（3=flop / 4=turn / 5=river），否则 stage 不符、规则不触发。
+- 【工具事实】`hand_percentile` 表：AA 0.015 / 77 0.151 / 66 0.210 / KQs 0.275 / AKo 0.121。
+
 ## 2026-08-28 2倍系数修复（commit 232592a，用户反馈驱动）
 - **重大 bug**：lead（我-对手累计净赢差）变化是筹码损失的 **2 倍**（每局弃牌我-X/对手+X→差-2X）；
   `_blind_line` 只返回筹码损失（SB/BB），c6ddf01 精确公式化时直接当 lead 阈值用，少算 2 倍
