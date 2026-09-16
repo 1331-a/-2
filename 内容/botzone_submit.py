@@ -1591,6 +1591,26 @@ LEAD_ALLIN_SHIFT = {
     "big_behind": -0.08,
 }
 
+# ── 规则18（2026-09-16 用户规则）：落后到「几乎追不回」→ 本手开局就 all-in ──
+# 用户规则：「对方快锁赢时应该是开局就 allin」。
+# 理由（截图第17手实测）：河牌才 all-in 的弃牌权益≈0 —— 对手只投了 100，
+#   随手弃牌，我们只能赢个小池；而**翻前 all-in 能逼对手用整副筹码跟我们
+#   50/50** —— 那才是真正的翻盘机会。等到「追平线已越线」（doom）才动手，
+#   通常已经太晚（投入累积、对手已下注）。
+# 触发：lead < 0 且 |lead| ≥ 该比例 × 2×追平线（接近、但还没越过 doom 线）。
+#   · 0.95 ≈ 「只剩 5% 的追赶余地」——要靠对手全程弃牌才追回，实战几乎不可能；
+#   · 与规则2 的关系：越线（≥1.0）由 doom 接管（无条件 allin），本规则管
+#     「接近越线」这段灰区。
+GAMBLE_LINE_FACTOR = 0.95
+
+# 【规则18b·2026-09-16 用户规则】搏命打法按牌力分流：
+#   用户规则：「牌好就多过牌再 allin，不好就开局 allin」。
+#   · 牌好（有摊牌价值）→ 慢打：多过牌诱敌，对手下注 / 河牌才 all-in ——
+#     一上来梭哈会把对手的弱牌全吓跑，只能吃到盲注；
+#   · 牌烂（无摊牌价值）→ 开局 all-in：只能靠弃牌权益，越早越有效。
+# 翻前「牌好」阈值 = 起手牌百分位 top GAMBLE_GOOD_PCT（越小越强，见 ranges.py）。
+GAMBLE_GOOD_PCT = 0.20
+
 # ── 规则10（2026-09-14 用户规则·强化）：靠近锁赢线 / 终局领先 → 不主动加注 ──
 # 用户规则：「靠近锁赢线时不要主动加注，尽量跟注和过牌」。
 #   ① 触发线由硬编码 0.8 下调到 0.6 —— 更早进入求稳；
@@ -1920,6 +1940,107 @@ def _profit_lock_allin(state):
         return False
 
 
+def _gamble_zone(state):
+    """【规则18·2026-09-16 用户规则】搏命区：落后到「几乎追不回」。
+
+    用户规则：「对方快锁赢时应该是开局就 allin」。
+    背景（截图第17手）：我方落后 3822、剩 53 手、追平线 8000、已投 100。
+    原实现要等对手在河牌下注 100 后，才由 `_doom_call_upgrade`（跟注即锁赢）
+    升级成 all-in —— 此时对手只投了 100，随手一弃我们只能赢个小池，
+    **弃牌权益几乎为零**。而开局 all-in 能逼对手用整副筹码接 50/50，
+    这才是真正的翻盘机会。
+
+    判定：lead < 0 且 lead ≤ −GAMBLE_LINE_FACTOR(0.95) × 2×追平线
+          （接近被锁、但还没越过 doom 线的那段灰区）。
+    越过线（≥1.0）由规则2 doom 接管（无条件 allin），本函数只管这段灰区。
+    注：lead 与追平线在一手之内不变 → 一旦进入搏命区，**整手都在区内**
+    （每一条街都可搏），这正是「牌好可以慢慢过牌、最后再 all-in」的前提。
+    """
+    try:
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        if lead >= 0:
+            return False
+        line = 2 * _blind_line(state, _hands_left(state), own=False)
+        if line <= 0:
+            return False
+        return lead <= -GAMBLE_LINE_FACTOR * line
+    except Exception:
+        return False
+
+
+def _pair_is_top(state):
+    """一对牌力是否「顶对 / 超对」（规则18b「牌好」判定用）。"""
+    try:
+        board = [c // 4 for c in state.board]
+        if not board:
+            return False
+        top = max(board)
+        hole = [c // 4 for c in state.hole]
+        if hole[0] == hole[1]:
+            return hole[0] >= top            # 口袋对 → 超对（或顶对）
+        return top in hole                   # 手里有公面最大点数的那张 → 顶对
+    except Exception:
+        return False
+
+
+def _gamble_hand_good(state):
+    """【规则18b·2026-09-16 用户规则】搏命区里「牌好」判定。
+
+    用户规则：「牌好就多过牌再 allin，不好就开局 allin」。
+      · 牌好 → 有摊牌价值：慢打（多过牌诱敌），对手下注 / 河牌才 all-in；
+      · 牌烂 → 没有摊牌价值：只能靠弃牌权益，本手第一个决策点直接梭哈。
+
+    判定（确定性，不用 MC 以免抽样抖动导致行为不稳定）：
+      翻前：起手牌百分位 ≤ GAMBLE_GOOD_PCT（默认 top 20%）
+      翻后：有效牌型 ≥ 两对 / 坚果级或强听牌（_has_nuts_or_strong_draw）
+            / 一对且为顶对·超对
+    """
+    try:
+        if state.stage == "preflop":
+            return hand_percentile(state.hole) <= GAMBLE_GOOD_PCT
+        cat = _effective_category(state)
+        if cat >= TWO_PAIR:
+            return True
+        if _has_nuts_or_strong_draw(state):
+            return True
+        return cat == ONE_PAIR and _pair_is_top(state)
+    except Exception:
+        return False
+
+
+def _gamble_plan(state):
+    """【规则18·2026-09-16 用户规则】搏命路线（返回动作；None = 不在搏命区）。
+
+      牌烂 → 立刻 all-in（"开局 allin"：逼对手用整副筹码接 50/50）
+      牌好 → 多过牌再 allin（慢打诱敌）：
+        · 能过牌（to_call == 0）→ check（过牌诱敌）；
+          河牌是最后一条街，不能再等 → all-in
+        · 翻前只需补大盲 → call（溜入看翻牌，翻前版的「过牌」）
+        · 对手已加注 / 已下注（过不了牌）→ all-in（收网）
+    带 lk 标记：免检，否则会被翻前 1000 / 翻后牌型上限降级成加注。
+    """
+    if not _gamble_zone(state):
+        return None
+    if not _gamble_hand_good(state):
+        return {"act": "allin", "lk": 1}
+    try:
+        to_call = int(state.to_call)
+        if state.stage == "preflop":
+            if to_call <= 0:
+                return {"act": "check"}                  # 大盲免费看牌
+            if to_call <= int(state.big_blind):
+                return {"act": "call"}                   # 补大盲 → 溜入
+            return {"act": "allin", "lk": 1}             # 对手加注 → 收网
+        if to_call <= 0:
+            if state.stage == "river":
+                return {"act": "allin", "lk": 1}         # 最后一街，不再等
+            return {"act": "check"}                      # 过牌诱敌
+        return {"act": "allin", "lk": 1}                 # 对手下注 → 收网
+    except Exception:
+        return {"act": "allin", "lk": 1}
+
+
 def _is_small_two_pair(state):
     """小两对（小 2 对）：有效牌型 = 两对，且属于易被统治的弱两对。
 
@@ -2227,6 +2348,21 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
         # 标记（lk），避免被牌型/金额上限降级（ctx 保守偏移使 _match_adjust
         # 不是 doomed 时，原实现会把 doom/盈利锁胜的 allin 降级成 fold）。
         return _normalize(state, _lock_win_legal(state, _lw))
+
+    # 【规则18·2026-09-16 用户规则】落后到「几乎追不回」→ 搏命（按牌力分流）：
+    #   · 牌烂 → 开局 all-in：河牌才 all-in 时对手只投了一点点、随手弃牌我们
+    #     只赢个小池（弃牌权益≈0）；开局 all-in 才能逼他用整副筹码接 50/50；
+    #   · 牌好 → 多过牌再 all-in：慢打诱敌（见 _gamble_plan）。
+    # allin 带 lk 标记 → 免检（否则会被翻前 1000 / 翻后牌型上限降级）。
+    _gp = _gamble_plan(state)
+    if _gp is not None:
+        _g_act = str(_gp.get("act"))
+        DecisionLogger.log(state.hand_num, state.stage, state.pot,
+                           "gamble_plan(规则18)", _g_act,
+                           ("牌好慢打诱敌" if _g_act != "allin"
+                            else "牌烂开局搏命"),
+                           block=False, record=True)
+        return _normalize(state, _gp)
 
     # 公对风险规避：弱两对走保守路线（规则3 与累计盈亏联动）
     if should_avoid_risk(state):

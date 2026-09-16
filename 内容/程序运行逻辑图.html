@@ -330,6 +330,10 @@
    │  │  └─ _profit_lock_allin(state)
    │  ├─ _lock_win_legal(state, _lw)           # to_call=0 → check
    │  └─ _decide_impl(state, model, ctx, _lw, _prepared=True)
+   │     ├─ _gamble_plan(state)                # 规则18 搏命区（按牌力分流）
+   │     │  ├─ _gamble_zone(state)             # 落后 ≤ −0.95×追平线（灰区）
+   │     │  ├─ _gamble_hand_good(state)        # 牌好？（百分位/牌型/顶对）
+   │     │  └─ 牌烂→allin ｜ 牌好→check·call，收网(对手下注/河牌)才 allin
    │     ├─ should_avoid_risk(state) → _risk_avoid_route(...)
    │     ├─ _preflop_decide(state, model)
    │     ├─ _postflop_decide(state, model)

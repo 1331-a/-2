@@ -905,6 +905,93 @@ _inv = [20000 - _r["my_chips"] for _r, _meta in _rows]
 check("0915转换器:投入按街累加(应为 50/300/528/906)",
       _inv == [50, 300, 528, 906], str(_inv))
 
+# ====== 2026-09-16 规则18：搏命区（牌烂开局梭哈 / 牌好慢打再 allin） ======
+from strategy import _gamble_zone, _gamble_hand_good, _gamble_plan   # noqa: E402
+
+_A18 = [48, 49]        # 口袋 A（牌好）
+_W18 = [25, 11]        # 9♥4♦（烂牌）
+_B18 = [44, 25, 6]     # 翻牌 K♠ 9♥ 3♣（彩虹面）
+_B18R = [44, 25, 6, 41, 3]   # 河牌（K♠ 9♥ 3♣ + J♦ + 4♠）
+_H_LIMP = [{"round": 0, "player_id": 0, "action": 50, "action_type": "call"}]
+_H_RAISE = [{"round": 0, "player_id": 0, "action": 300, "action_type": "raise"}]
+_H_FCHK = _H_LIMP + [{"round": 1, "player_id": 0, "action": 0,
+                      "action_type": "check"}]
+_H_FBET = _H_LIMP + [{"round": 1, "player_id": 1, "action": 0,
+                      "action_type": "check"},
+                     {"round": 1, "player_id": 0, "action": 500,
+                      "action_type": "raise"}]
+_H_RCHK = _H_LIMP + [{"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+                     {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
+                     {"round": 3, "player_id": 0, "action": 0, "action_type": "check"}]
+
+
+def _st18(mine, cards=_W18, board=(), hist=None, my_id=1, my_chips=19900,
+          hand=16):
+    """截图第17手：我方(座位2/player1)本场 mine；翻前双方各 100。"""
+    h = _H_LIMP if hist is None else hist
+    twc = [-mine, mine] if my_id == 1 else [mine, -mine]
+    return parse_request(dict(
+        num_players=2, dealer_id=0, my_id=my_id, my_chips=my_chips,
+        my_cards=list(cards), public_cards=list(board), history=list(h),
+        hand=hand, max_hand=70, total_win_chips=twc,
+        total_win_games=[0, 0]))
+
+
+# ---- 1. 搏命区触发面 ----
+check("0916规则18:落后 3822(≈0.96 追平线) → 进搏命区",
+      _gamble_zone(_st18(-3822)) is True)
+check("0916规则18:中等落后(0.5) → 不进区",
+      _gamble_zone(_st18(-2000)) is False
+      and decide(_st18(-2000), _m16_quiet).get("act") != "allin",
+      str(decide(_st18(-2000), _m16_quiet)))
+check("0916规则18:均势 → 不进区", _gamble_zone(_st18(0)) is False)
+check("0916规则18:领先 → 不进区", _gamble_zone(_st18(3000)) is False)
+check("0916规则18:已越线(追不回) → 仍 allin",
+      decide(_st18(-4000), _m16_quiet).get("act") == "allin",
+      str(decide(_st18(-4000), _m16_quiet)))
+
+# ---- 2. 牌烂 → 开局 all-in（区内任何街都梭） ----
+check("0916规则18b:烂牌(9♥4♦)翻前 → 开局 allin",
+      _gamble_hand_good(_st18(-3822)) is False
+      and decide(_st18(-3822), _m16_quiet).get("act") == "allin",
+      str(decide(_st18(-3822), _m16_quiet)))
+check("0916规则18b:烂牌翻后仍 allin（区内每街可搏）",
+      _gamble_plan(_st18(-3822, board=_B18, hist=_H_FCHK)) == {"act": "allin", "lk": 1}
+      and decide(_st18(-3822, board=_B18, hist=_H_FCHK),
+                 _m16_quiet).get("act") == "allin")
+
+# ---- 3. 牌好 → 多过牌再 all-in ----
+check("0916规则18b:AA 翻前大盲免费 → 过牌慢打",
+      _gamble_hand_good(_st18(-3822, cards=_A18)) is True
+      and decide(_st18(-3822, cards=_A18), _m16_quiet) == {"act": "check"},
+      str(decide(_st18(-3822, cards=_A18), _m16_quiet)))
+check("0916规则18b:AA 翻前需补大盲 → 溜入 call",
+      _gamble_plan(_st18(-3822, cards=_A18, my_id=0, my_chips=19950,
+                         hist=[])) == {"act": "call"})
+check("0916规则18b:AA 翻前遇对手加注 → 收网 allin",
+      decide(_st18(-3822, cards=_A18, hist=_H_RAISE),
+             _m16_quiet).get("act") == "allin")
+check("0916规则18b:AA 翻牌免费(超对) → 过牌",
+      _gamble_plan(_st18(-3822, cards=_A18, board=_B18, hist=_H_FCHK))
+      == {"act": "check"}
+      and decide(_st18(-3822, cards=_A18, board=_B18, hist=_H_FCHK),
+                 _m16_quiet) == {"act": "check"})
+check("0916规则18b:AA 翻牌面对下注 500 → 收网 allin",
+      _gamble_plan(_st18(-3822, cards=_A18, board=_B18, hist=_H_FBET))
+      == {"act": "allin", "lk": 1}
+      and decide(_st18(-3822, cards=_A18, board=_B18, hist=_H_FBET),
+                 _m16_quiet).get("act") == "allin")
+check("0916规则18b:AA 一路免费到河牌 → allin（最后一条街不再等）",
+      _gamble_plan(_st18(-3822, cards=_A18, board=_B18R, hist=_H_RCHK))
+      == {"act": "allin", "lk": 1}
+      and decide(_st18(-3822, cards=_A18, board=_B18R, hist=_H_RCHK),
+                 _m16_quiet).get("act") == "allin")
+
+# ---- 4. 不在搏命区 → 本规则不接管（交回常规策略） ----
+check("0916规则18:均势/领先 → 本规则不接管",
+      _gamble_plan(_st18(0, cards=_A18)) is None
+      and _gamble_plan(_st18(3000, cards=_A18)) is None)
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")
