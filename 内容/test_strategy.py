@@ -569,10 +569,15 @@ check("全下下限:均势正常筹码允许",
 # 单元：非 allin 动作不拦截
 check("全下下限:非allin动作不动",
       _allin_floor_guard(stg1, {"act": "call"}) == {"act": "call"}, "")
-# 端到端：领先 15000 + 短筹码 AA 面对对手全下 → 全下下限已豁免（跟不跟
-# 由全下分支按胜率/盈亏分档判定，不再被「投入不足」二次拦截）
+# 端到端：领先 15000 + 短筹码 AA 面对对手全下。
+# 【2026-09-16 修复】对手全下在 history 里写成 -2（金额未知）→ 现在按
+# 「需跟全部筹码」保守处理（原实现夹到本轮最大注，to_call 塌缩成 1 →
+# 任何两张牌都「跟注」→ 全押）。本场景 AA（<三条）走「突袭大注 + 非坚果」
+# 弃牌路径，与全下下限无关（下限豁免已在上面单测验证）。
 a = decide(stg1, OpponentModel())
-check("全下下限:端到端跟对手全下不受下限拦截", a == {"act": "allin"}, str(a))
+check("全下下限:端到端不再被下限降级(改由大注/牌力规则判定)",
+      _allin_floor_guard(stg1, {"act": "allin"}) == {"act": "allin"}
+      and a == {"act": "fold"}, str(a))
 # 端到端对照组：落后 -8000 + 短筹码 AA 面对全下 → 仍可全下搏翻盘
 stg5 = parse_request(req(my_id=0, my_chips=6000, my_cards=[48, 50],
                          public_cards=[46, 6, 1], total_win_chips=[-8000, 8000],

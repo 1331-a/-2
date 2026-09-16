@@ -992,6 +992,28 @@ check("0916规则18:均势/领先 → 本规则不接管",
       _gamble_plan(_st18(0, cards=_A18)) is None
       and _gamble_plan(_st18(3000, cards=_A18)) is None)
 
+# ====== 2026-09-16 修复：全下金额未知（协议 -2）不再让 to_call 塌缩 ======
+# 背景（截图第1手）：一对 9 跟了 19,160 全下。复现发现只要对手全下在
+# history 里没带金额，翻后重放会把它夹到「本轮最大注」→ to_call=1 →
+# bot 以为只要跟 1 个筹码 → 任何牌都跟 → _normalize 变成全押。
+_allin_neg = parse_request(dict(
+    num_players=2, dealer_id=0, my_id=1, my_chips=18606,
+    my_cards=[46, 25], public_cards=[29, 36, 8, 30],
+    history=[{"round": 0, "player_id": 0, "action": 300, "action_type": "raise"},
+             {"round": 0, "player_id": 1, "action": 200, "action_type": "call"},
+             {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
+             {"round": 1, "player_id": 0, "action": 540, "action_type": "raise"},
+             {"round": 1, "player_id": 1, "action": 540, "action_type": "call"},
+             {"round": 2, "player_id": 1, "action": 554, "action_type": "raise"},
+             {"round": 2, "player_id": 0, "action": -2, "action_type": "allin"}],
+    hand=0, max_hand=70, total_win_chips=[0, 0], total_win_games=[0, 0]))
+check("0916解析:全下金额未知(-2)→to_call 按我方剩余筹码(不再塌缩成1)",
+      _allin_neg.to_call == 18606 and _allin_neg.pot == 21394,
+      "to_call=%s pot=%s" % (_allin_neg.to_call, _allin_neg.pot))
+check("0916解析:一对9面对(未知金额)全下 → 弃牌（与有金额时一致）",
+      decide(_allin_neg, _m16_quiet) == {"act": "fold"},
+      str(decide(_allin_neg, _m16_quiet)))
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")

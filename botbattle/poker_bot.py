@@ -373,6 +373,7 @@ class GameState:
         else:
             # ---------- 翻后：本轮从 0 重放（不涉及盲注） ----------
             rb = [0, 0]
+            unknown_allin = False        # 对手全下、但协议里没带金额（写成 -2）
             for r in cur:
                 p = int(r.get("player_id", 0))
                 if p != 0 and p != 1:
@@ -382,14 +383,23 @@ class GameState:
                 if at == "raise" or (isinstance(a, int) and not isinstance(a, bool) and a > 0):
                     rb[p] = max(rb[p], int(a))       # raise-to 语义
                 elif at == "allin" or a == -2:
-                    rb[p] = max(rb[p], max(rb))      # 金额未知，仅估上界
+                    # 【2026-09-16 修复】金额未知的全下：原实现只把它夹到「本轮
+                    # 最大注」→ 对手全下却算出 to_call = 占位 1（bot 以为只要跟
+                    # 1 个筹码）→ 任何两张牌都「跟注」→ _normalize 变成全押。
+                    # 改为与**翻前分支同口径**（对手全押金额未知 → 按需全押应对）：
+                    # 按剩余筹码估上界，并标记金额未知（→ to_call = 我方剩余筹码）。
+                    if p == self.opp_id:
+                        rb[p] = max(rb[p], max(rb) + self.my_chips)
+                        unknown_allin = True
+                    else:
+                        rb[p] = max(rb[p], max(rb))
                 elif at == "fold" or a == -1:
                     pass
                 else:                                # call / check：跟平当前最大注
                     rb[p] = max(rb)
             self.my_round_bet = rb[self.my_id]
             self.opp_round_bet = rb[self.opp_id]
-            self._opp_round_known = True
+            self._opp_round_known = not unknown_allin
 
         # to_call：还需跟注的筹码（0 表示可过牌）
         if self._opp_round_known:
