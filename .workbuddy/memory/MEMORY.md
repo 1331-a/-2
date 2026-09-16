@@ -69,6 +69,26 @@
 - 【测试陷阱】翻后场景必须给对**公牌张数**（3=flop / 4=turn / 5=river），否则 stage 不符、规则不触发。
 - 【工具事实】`hand_percentile` 表：AA 0.015 / 77 0.151 / 66 0.210 / KQs 0.275 / AKo 0.121。
 
+## 2026-09-16 规则19 + 规则学习（commit dfa8433，用户规则）
+- **规则19 对手「吓不走」→ 停用小注**：`_small_bet_futile` 读
+  `opponent.bet_resp_stats(_BUCKET_SF_SMALL)`（我方 ≤40% 池小注后对手的弃/跟/加）；
+  样本 ≥4 且弃牌率 <**0.35** → 作废四条小注路线：`_opp_check_bet`（改过牌）、
+  `_blocking_bet_proxy`、`_lead_bet_proxy`、`_probe_bet_proxy`（返 None）。
+  样本不足/翻前不改行为；**价值注不受影响**（按对手类型选大尺寸）。
+- **规则学习（赢的重复 / 输的避开）**：MatchContext 新增 `rule_stats{规则名:{w,l}}` +
+  `cur_hand_rules` —— 每次 decide 登记**最终采纳的规则**，下一手结算按本手胜负累加
+  （随 globaldata 持久化 ✓ 跨手累积）。`rule_score`：样本 ≥4 且胜率 >60% → +1；
+  <35% → −1。`_rule_learn_adjust`（decide 出口，**无论是否开日志都跑**）：采纳到
+  「输的规则」→ 把**主动进攻**降级（只降 raise → 跟注/过牌），并优先改记候选里记录
+  最好的保守规则（= 尽量重复赢的规则）；fold/check/call/allin 不动（全下来自硬规则）。
+- 排除项：硬规则与归因兜底标签（规则2/5/16/17/18、「规则1/4 大注弃牌」、
+  「常规策略(过/跟)」）不参与学习。
+- 调参：`RULE_MIN_SAMPLES(4)` / `RULE_BAD_WR(0.35)` / `RULE_GOOD_WR(0.60)` /
+  `RULE_LEARN_ON`；规则19：`SMALL_BET_FOLD_MIN(0.35)` / `SMALL_BET_MIN_N(4)`。
+- 【工具事实】opponent 早有「尺寸分桶 × 对手反应」统计：`_BUCKET_SF_SMALL`(≤40%池) /
+  `SF_MED`(≤75%) / `SF_LARGE`；`bet_resp_stats` / `learned_fold_rate` /
+  `learned_value_bucket` / `bucket_to_frac`。
+
 ## 2026-09-16 解析修复：全下金额未知时 to_call 塌缩成 1（commit d4b469d）
 - **症状**：截图第1手「一对 9 跟掉 19160 全下」。用当前代码 + 210 种牌面分工穷举 +
   23 个历史 commit 回放 → **一对永远 fold**，只有 ≥三条 才 all-in → 不是规则问题。
