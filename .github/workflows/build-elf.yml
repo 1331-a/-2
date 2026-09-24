@@ -31,27 +31,30 @@ jobs:
           echo "--- 打版本后确认 ---"
           grep -n '^BOT_VERSION' botbattle/poker_bot.py
 
-      # 【2026-09-24 重要】锁定 PyInstaller < 6.22，不要再用 >=6.10,<7 的浮动区间。
+      # 【2026-09-24 重要】精确锁定 PyInstaller == 6.22.2，不要再用 >=6.10,<7 的浮动区间。
       #
-      # 原因：6.22.1（2026-08-15）~ 6.22.3（2026-09-12）给 **onefile 引导器**加了
-      # 「父进程安全校验」（见官方 CHANGES / GHSA-9fxf-4qw3-ghmr、文档
-      # “Security Validation in onefile Mode”）：
-      #   · 子进程通过 /proc 查父进程可执行文件、要求路径一致；
-      #   · Linux 上对有 file capabilities（security.capability xattr）的 ELF 强制启用；
-      #   · 校验继承的临时目录属主/权限（须 0700 且属主 = euid）；
-      #   · 校验环境变量是否被伪造（_PYI_PARENT_PROCESS_LEVEL 等）。
-      # 这套机制在受限沙箱（procfs 受限 / 无 xattr 权限 / 临时目录属主不同）里会直接
-      # 让子进程以「安全校验失败」退出 —— 平台侧表现为进程秒退（stdout EOF）。
-      #
-      # 实证：对比 09-11 能跑通平台的 ELF 与 09-24 判负的 ELF，引导器字符串差异为
-      #   新增：pyi-enable-onefile-parent-verification / security.capability /
-      #         getxattr / /proc/%u/stat        ← 正是上述校验引入的
-      #   相同：pyi-runtime-tmpdir / PYINSTALLER_STRICT_UNPACK_MODE（旧特性）
-      # 浮动区间导致「同一份代码、不同时间构建，引导器不是同一套」。
-      - name: Install PyInstaller (pinned below 6.22)
+      # 实证（三层证据，均指向 6.22.3 是回归引入点）：
+      #  1) PyPI 上传时间：6.22.2 上传于 2026-08-17，**6.22.3 上传于 2026-09-12**。
+      #     浮动区间在 09-11 解析到 6.22.2、在 09-24 解析到 6.22.3。
+      #  2) 二进制字符串对比（引导器区）：09-24 判负的 ELF 比 09-11 能跑的 ELF 多出
+      #     pyi-enable-onefile-parent-verification / security.capability / getxattr /
+      #     /proc/%u/stat / originating onefile parent / _MEI%08x。
+      #  3) 逐版本扫描 PyInstaller sdist 的 bootloader 源码：
+      #       6.21.0 / 6.22.0 : 无 pyi_security.c
+      #       6.22.1 / 6.22.2 : 有 pyi_security.c，但**没有**父进程校验
+      #       6.22.3          : 新增 pyi_security_verify_onefile_parent_pid /
+      #                         ..._parent_executable / ..._application_home_dir_name
+      #                         —— 子进程会经 /proc/<pid>/stat 追父进程链、
+      #                         比对父进程可执行文件路径、解析 _MEI%08x 目录名、
+      #                         并读 security.capability xattr 决定是否强制校验；
+      #                         任一步不满足即 "Security validation failure" 并退出。
+      # 平台侧表现：进程秒退（stdout EOF、退出码 255＝引导器 return -1），
+      # 对局直接 technical_loss（第 0 手、0 个动作）。这套校验在受限沙箱/受限 procfs
+      # 的容器里非常容易触发，故锁回**实测在平台上跑过整套对局**的 6.22.2。
+      - name: Install PyInstaller (pinned to 6.22.2)
         run: |
-          pip install "pyinstaller>=6.10,<6.22"
-          echo "PyInstaller 解析版本: $(pyinstaller --version)"
+          pip install "pyinstaller==6.22.2"
+          echo "PyInstaller 版本: $(pyinstaller --version)"
 
       - name: Build single-file ELF
         working-directory: botbattle
@@ -73,9 +76,11 @@ jobs:
           echo "=== ELF 要求的最高 GLIBC 符号版本（平台镜像低于此值则无法运行）==="
           readelf --version-info dist/poker_bot 2>/dev/null \
             | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -3 || true
-          echo "=== 引导器特性守卫 ==="
+          echo "=== 引导器特性守卫（应为“未发现”）==="
           if grep -aq 'pyi-enable-onefile-parent-verification' dist/poker_bot; then
-            echo "!! 警告：产物仍含 onefile 父进程校验代码 —— PyInstaller 版本不符合预期"
+            echo "!! 失败：产物含 onefile 父进程校验代码（PyInstaller >= 6.22.3 引入），"
+            echo "!!       该机制已在平台上导致 technical_loss。请检查上面打印的 PyInstaller 版本。"
+            exit 1
           else
             echo "OK：未发现 onefile 父进程校验代码"
           fi
