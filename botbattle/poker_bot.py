@@ -1736,6 +1736,15 @@ UA_RISK_RANK = {"fold": 0, "check": 0, "call": 1, "raise": 2, "allin": 3}
 # 保留为**约束**（而不是让效用模型去权衡）：这条是用户明确定的，属于策略边界；
 # 仲裁只负责比较剩下的动作。
 UA_CROSS_CHECK = True
+# 用户硬规则（09-14 / 09-24）：「对方快锁赢时 all-in」——
+# 即「再投这笔、输掉就把胜局送给对手」（跟注口径 doom）时，直接把全部押上，
+# 不再只跟一点（慢慢被锁死）。用户实战第32手：河牌一对 9 面对加注 1,765
+#   （跟注即锁赢），bot 只跟注 → 输掉后被锁死。
+# **但要与「擦线」区分**（用户在第51手明确反对过）：只越线不足 UA_SEALED_MARGIN
+#   的擦线情况（第51手仅越线 112 筹码 = 追回线的 3.9%）不触发全押——那时跟注便宜、
+#   弃牌也没被锁死，押上全部并不划算。第32手越线 3,458 = 追回线的 61% → 触发。
+UA_SEALED_ALLIN = True
+UA_SEALED_MARGIN = 0.15        # 越线幅度 ≥ 该比例 × 2×追回线 才算「明显被锁」
 
 # ── 规则学习（2026-09-16 用户规则）：赢的规则尽量重复、输的规则尽量避免 ──
 # 记账在 match_ctx（rule_stats，随 globaldata 持久化）；此处只做「用账」：
@@ -2114,6 +2123,27 @@ def _opp_is_allin(state):
     return False
 
 
+def _sealed_by_call(state, margin=None):
+    """「再投这笔、输掉就明显被锁赢」——用户所说的「对方快锁赢」。
+
+    判据（与 `_doom_risk` 同一不等式，只是加了越线幅度门槛）：
+        lead − 2×敞口  ≤  −2×追回线 × (1 + UA_SEALED_MARGIN)
+    即：跟注后输掉不仅越过追回线，而且**明显**越过（默认 15% 幅度）。
+    擦线情形（第51手：仅越线 112 筹码 = 3.9%）不算——那时跟注很便宜、
+    弃牌也还没被锁死，把全部押上并不划算（用户当时明确反对）。
+    """
+    try:
+        m = UA_SEALED_MARGIN if margin is None else float(margin)
+        lead = (int(state.total_win_chips[state.my_id])
+                - int(state.total_win_chips[state.opp_id]))
+        line = _blind_line(state, _hands_left(state), own=False)
+        if line <= 0:
+            return False
+        return (lead - 2 * _exposure(state)) <= (-2.0 * line * (1.0 + m))
+    except Exception:
+        return False
+
+
 def _endgame_matters(state, chip_action):
     """何时需要终局效用仲裁：沿用原本两个 doom 补丁的触发面。
       · 敞口 doom：输掉这笔跟注 → 对手数学上锁赢；
@@ -2165,6 +2195,13 @@ def _endgame_arbitrate(state, model, chip_action, eq, adj):
                     add = max(0, int(state.my_left))
                 if add > 0 and _doom_risk(state, extra=add):
                     return {"act": "check"}
+        # ② 用户硬规则（09-14 / 09-24）：「对方快锁赢」→ 无条件全押。
+        #    明确越线的「跟注即锁赢」（第32手：越线 61%）直接全押，
+        #    而不是只跟一小笔慢慢被锁死；擦线情形（第51手：3.9%）不触发。
+        if UA_SEALED_ALLIN and int(state.my_left) > 0 \
+                and chip_action.get("act") in ("call", "raise"):
+            if _sealed_by_call(state):
+                return {"act": "allin", "lk": 1}
         if eq is None:
             return chip_action          # 翻前没算 MC 胜率 → 不仲裁
         if not _endgame_matters(state, chip_action):

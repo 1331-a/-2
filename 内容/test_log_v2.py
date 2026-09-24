@@ -1205,6 +1205,67 @@ check("0924:真 doom（筹码只剩 3000）→ 无条件 allin",
       decide(_st51(chips=3000), _m16_quiet).get("act") == "allin",
       str(decide(_st51(chips=3000), _m16_quiet)))
 
+# ============ 2026-09-24 防锁赢全押：越线 → 无条件 allin（用户规则） ============
+# 用户规则：「对方快锁赢（再投这笔、输掉就把胜局送出去）→ 直接 all-in」，
+# 并明确「越线就全压是合理的」；唯一不算的是**擦线**（用户在第51手指出过）。
+# 实战第32手（截图，界面 1-based；我方=座位1）：
+#   河牌 2♦4♥3♠9♥K♦ · 我方 9♣J♥（一对 9）· 对手 10♣K♥（一对 K）
+#   我方 check → 对手加注至 1,765 → 我方跟注 → 输掉（本场 −1,588）
+# 【口径】截图「底池 5,982」是**跟注之后**的显示值；决策点底池 4,217
+#   （双方各投 2,991 = 5,982/2；河牌跟注 1,765 → 河牌前各已投 1,226）
+from strategy import _sealed_by_call, UA_SEALED_MARGIN   # noqa: E402
+
+_H32 = [{"round": 0, "player_id": 0, "action": 100, "action_type": "raise"},
+        {"round": 0, "player_id": 1, "action": 100, "action_type": "call"},
+        {"round": 1, "player_id": 0, "action": 300, "action_type": "raise"},
+        {"round": 1, "player_id": 1, "action": 300, "action_type": "call"},
+        {"round": 2, "player_id": 0, "action": 826, "action_type": "raise"},
+        {"round": 2, "player_id": 1, "action": 826, "action_type": "call"},
+        {"round": 3, "player_id": 1, "action": 0, "action_type": "check"},
+        {"round": 3, "player_id": 0, "action": 1765, "action_type": "raise"}]
+
+
+def _st32(chips=18774, lead=1588, hand=31):
+    """第32手河牌决策点：本场我方 -1,588（lead -3176）、剩 38 手。"""
+    return parse_request(dict(
+        num_players=2, dealer_id=0, my_id=1, my_chips=chips,
+        my_cards=[31, 37], public_cards=[2, 9, 4, 29, 46],
+        history=list(_H32), hand=hand, max_hand=70,
+        total_win_chips=[lead, -lead], total_win_games=[0, 0]))
+
+
+_h32 = _st32()
+check("0924第32手:决策点底池 4,217（非界面 5,982）", _h32.pot == 4217, str(_h32.pot))
+check("0924第32手:弃牌口径不 doom（弃牌仍安全，但只余 72 筹码）",
+      _doom_risk(_h32) is False, str(_doom_risk(_h32)))
+check("0924第32手:跟注口径越线 3,458（61% 追回线）→ 判为「明显被锁」",
+      _doom_risk(_h32, include_to_call=True) is True
+      and _sealed_by_call(_h32) is True, "")
+check("0924第32手:越线 → 防锁赢全押（带 lk 免检）",
+      _endgame_arbitrate(_h32, _m16_quiet, {"act": "call"}, 0.5,
+                         "normal") == {"act": "allin", "lk": 1},
+      str(_endgame_arbitrate(_h32, _m16_quiet, {"act": "call"}, 0.5, "normal")))
+check("0924第32手:端到端 = allin（不再只跟 1,765）",
+      decide(_h32, _m16_quiet).get("act") == "allin",
+      str(decide(_h32, _m16_quiet)))
+# 关掉硬规则 → 回到效用比较（调参入口）
+_keep_sealed = _S2.UA_SEALED_ALLIN
+_S2.UA_SEALED_ALLIN = False
+check("0924第32手:关掉硬规则 → 回落到 call（调参入口有效）",
+      _endgame_arbitrate(_h32, _m16_quiet, {"act": "call"}, 0.5,
+                         "normal") == {"act": "call"},
+      str(_endgame_arbitrate(_h32, _m16_quiet, {"act": "call"}, 0.5, "normal")))
+_S2.UA_SEALED_ALLIN = _keep_sealed
+# 擦线不算：第51手只越线 112 筹码（3.9%）< 15% → 不触发全押
+check("0924:第51手是擦线（越线 3.9%% 低于门槛 %.0f%%）→ 不触发防锁赢全押"
+      % (100 * UA_SEALED_MARGIN),
+      _sealed_by_call(_h51) is False
+      and _endgame_arbitrate(_h51, _m16_quiet, {"act": "call"}, 0.5,
+                             "normal") == {"act": "call"},
+      str(_endgame_arbitrate(_h51, _m16_quiet, {"act": "call"}, 0.5, "normal")))
+check("0924:擦线门槛 = %.2f（调 0 = 只要越线就全押）" % UA_SEALED_MARGIN,
+      UA_SEALED_MARGIN == 0.15, str(UA_SEALED_MARGIN))
+
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:
     print("\u5931\u8d25:")
