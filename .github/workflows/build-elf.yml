@@ -9,6 +9,9 @@ on:
       - 'botbattle/poker_bot.py'
       - '.github/workflows/build-elf.yml'
 
+permissions:
+  contents: write      # 供下面「发布 raw ELF 到 Release」步骤使用
+
 jobs:
   build:
     runs-on: ubuntu-22.04
@@ -132,3 +135,23 @@ jobs:
           path: botbattle/dist/poker_bot
           if-no-files-found: error
           retention-days: 90
+
+      # 【2026-09-24】artifact 的浏览器下载在用户机器上**反复得到 22 字节空 zip**
+      # （多个构建都是 22 字节 = 只有 EOCD 的空压缩包），导致拿不到 ELF。
+      # 这里额外把同一个 ELF 作为 **Release 原始附件**发布（不是 zip），
+      # 提供第二条下载通道：Releases 页面直接下载 poker_bot。
+      # 失败不阻塞构建（continue-on-error）。
+      - name: 发布 raw ELF 到 Release（备用下载通道）
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="elf-${{ env.SHA }}"
+          NOTES="PyInstaller $(cd botbattle && pyinstaller --version 2>/dev/null || echo '?') / py3.11 / commit ${{ env.SHA }}"
+          gh release create "$TAG" \
+            botbattle/dist/poker_bot \
+            --title "ELF ${{ env.SHA }}" \
+            --notes "$NOTES" \
+            --latest=false || \
+          gh release upload "$TAG" botbattle/dist/poker_bot --clobber
+          echo "Release 附件: poker_bot（原始文件，非 zip）"
