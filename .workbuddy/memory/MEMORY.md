@@ -37,15 +37,22 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
      加注/全押 = f×U(收池) + (1−f)(eq_c×U(赢大池) + (1−eq_c)×U(输更多))，
      `f=弃牌权益`，**`eq_c = eq^(1+UA_CALL_DAMP×n/底池)`**（超池全押被跟 = 已输；
      用幂次保证 eq=1 的坚果不受惩罚）；对手已全押时 f=0。
-   · 三条护栏：① 只往「更保守」方向修正（UA_RISK_RANK，不制造新加注/全押）；
-     ② 硬性弃牌（河牌公对陷阱/突袭大注/公对风险规避）不被翻案；③ 保留用户硬规则
-     `UA_CROSS_CHECK`（有免费过牌且投进去就越线 → 过牌，即 09-15 方案B）。
+   · 四条护栏（按执行顺序）：① `UA_CROSS_CHECK`（有免费过牌且投进去就越线 → 过牌，09-15 方案B）；
+     ② **`UA_SEALED_ALLIN` 防锁赢：越线 → 无条件全押** —— `_sealed_by_call` 要求越线幅度
+     ≥ `UA_SEALED_MARGIN(0.15)`×2×追回线 才算「明显被锁」（第32手越线 61% → 全押 ✓；
+     第51手越线 3.9% = 擦线 → 不触发）；设 0 = 只要越线就全押；
+     ③ 效用比较只往「更保守」方向修正（UA_RISK_RANK，不制造新加注/全押）；
+     ④ 硬性弃牌（河牌公对陷阱/突袭大注/公对风险规避）不被翻案。
+   · **顺序**（用户 2026-09-24 强调）：先判「弃牌会不会被锁赢」（入口规则2-A）→ 再判
+     「继续投入会不会越线」（②）→ 都非硬约束才轮到效用比较。
    · 触发面 `_endgame_matters`：敞口 doom / 投入即锁赢 / 搏命区；不触发则完全不动常规策略。
    · 已删除的旧补丁：`_doom_call_upgrade`（call/raise→allin，单向更激进、弃牌从不参与）、
      `_doom_bet_downgrade`（raise→check）。
    · 第51手实测 EU：弃牌 0.190 / 跟注 0.286(0.412 收池) / 加注576 0.322 / **全押 0.188（最差）**
      → 12 次决策 0 次全押。
-   · 调参：`UA_ON` / `UA_SLOPE(1.6)` / `UA_CALL_DAMP(0.6)` / `UA_CROSS_CHECK`。
+   · 调参：`UA_ON` / `UA_SLOPE(1.6)` / `UA_CALL_DAMP(0.6)` / `UA_CROSS_CHECK` /
+     `UA_SEALED_ALLIN` / `UA_SEALED_MARGIN(0.15)`。
+   · 端到端链路文档：`内容/端到端策略链.md`（平台输入 → bot.py → game_state → decide → 输出）。
 3. **方案B `_doom_bet_downgrade`**：已并入 `_endgame_arbitrate` 的 `UA_CROSS_CHECK`
    硬规则（`to_call == 0` 且本次投入会让 `_doom_risk(extra=add)` 成立 → check）。
 4. **规则10 求稳 `_stability_mode`**（`STABILITY_LINE_FACTOR=0.60` 或剩 ≤8 手且领先）→ `_stability_guard`：主动侧 check、被动只跟；强牌例外。
