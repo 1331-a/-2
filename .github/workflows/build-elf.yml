@@ -1,7 +1,7 @@
 name: build-elf
 
 # 在 GitHub 托管的 Ubuntu runner 上构建 Linux x86_64 ELF 并上传为构建产物。
-# 触发：手动 dispatch，或推送到 botbattle/poker_bot.py 时自动。
+# 触发：手动 dispatch，或推送到 botbattle/poker_bot.py / 本文件时自动。
 on:
   workflow_dispatch: {}
   push:
@@ -31,8 +31,27 @@ jobs:
           echo "--- 打版本后确认 ---"
           grep -n '^BOT_VERSION' botbattle/poker_bot.py
 
-      - name: Install PyInstaller
-        run: pip install "pyinstaller>=6.10,<7"
+      # 【2026-09-24 重要】锁定 PyInstaller < 6.22，不要再用 >=6.10,<7 的浮动区间。
+      #
+      # 原因：6.22.1（2026-08-15）~ 6.22.3（2026-09-12）给 **onefile 引导器**加了
+      # 「父进程安全校验」（见官方 CHANGES / GHSA-9fxf-4qw3-ghmr、文档
+      # “Security Validation in onefile Mode”）：
+      #   · 子进程通过 /proc 查父进程可执行文件、要求路径一致；
+      #   · Linux 上对有 file capabilities（security.capability xattr）的 ELF 强制启用；
+      #   · 校验继承的临时目录属主/权限（须 0700 且属主 = euid）；
+      #   · 校验环境变量是否被伪造（_PYI_PARENT_PROCESS_LEVEL 等）。
+      # 这套机制在受限沙箱（procfs 受限 / 无 xattr 权限 / 临时目录属主不同）里会直接
+      # 让子进程以「安全校验失败」退出 —— 平台侧表现为进程秒退（stdout EOF）。
+      #
+      # 实证：对比 09-11 能跑通平台的 ELF 与 09-24 判负的 ELF，引导器字符串差异为
+      #   新增：pyi-enable-onefile-parent-verification / security.capability /
+      #         getxattr / /proc/%u/stat        ← 正是上述校验引入的
+      #   相同：pyi-runtime-tmpdir / PYINSTALLER_STRICT_UNPACK_MODE（旧特性）
+      # 浮动区间导致「同一份代码、不同时间构建，引导器不是同一套」。
+      - name: Install PyInstaller (pinned below 6.22)
+        run: |
+          pip install "pyinstaller>=6.10,<6.22"
+          echo "PyInstaller 解析版本: $(pyinstaller --version)"
 
       - name: Build single-file ELF
         working-directory: botbattle
@@ -41,6 +60,65 @@ jobs:
           chmod +x dist/poker_bot
           file dist/poker_bot
           ls -lh dist/poker_bot
+
+      - name: 构建环境与平台兼容性报告
+        working-directory: botbattle
+        run: |
+          echo "=== runner 环境 ==="
+          uname -a
+          ldd --version | head -1
+          python -V
+          echo "=== ELF 动态依赖 ==="
+          ldd dist/poker_bot || true
+          echo "=== ELF 要求的最高 GLIBC 符号版本（平台镜像低于此值则无法运行）==="
+          readelf --version-info dist/poker_bot 2>/dev/null \
+            | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -3 || true
+          echo "=== 引导器特性守卫 ==="
+          if grep -aq 'pyi-enable-onefile-parent-verification' dist/poker_bot; then
+            echo "!! 警告：产物仍含 onefile 父进程校验代码 —— PyInstaller 版本不符合预期"
+          else
+            echo "OK：未发现 onefile 父进程校验代码"
+          fi
+
+      - name: 冒烟自检（真跑 ELF，必须应答）
+        working-directory: botbattle
+        run: |
+          REQ1='{"requests":[{"num_players":2,"dealer_id":0,"my_id":0,"my_chips":19950,"my_cards":[50,11],"public_cards":[],"history":[],"hand":0,"max_hand":70,"total_win_chips":[0,0],"total_win_games":[0,0]}],"data":"","globaldata":""}'
+          REQ2='{"requests":[{"num_players":2,"dealer_id":0,"my_id":0,"my_chips":19000,"my_cards":[50,11],"public_cards":[30,48,24,16,22],"history":[{"round":0,"player_id":0,"action":100,"action_type":"raise"},{"round":0,"player_id":1,"action":100,"action_type":"call"},{"round":1,"player_id":0,"action":0,"action_type":"check"},{"round":1,"player_id":1,"action":200,"action_type":"raise"},{"round":2,"player_id":0,"action":0,"action_type":"check"},{"round":2,"player_id":1,"action":200,"action_type":"raise"},{"round":3,"player_id":0,"action":0,"action_type":"check"},{"round":3,"player_id":1,"action":192,"action_type":"raise"}],"hand":50,"max_hand":70,"total_win_chips":[914,-914],"total_win_games":[0,0]}],"data":"","globaldata":""}'
+          printf '%s\n' "$REQ1" "$REQ2" > smoke_req.jsonl
+          set +e
+          timeout 90 ./dist/poker_bot < smoke_req.jsonl > smoke_out.txt 2> smoke_err.txt
+          RC=$?
+          set -e
+          echo "退出码 = $RC"
+          echo "--- stdout ---"
+          cat smoke_out.txt
+          echo "--- stderr（前 8 行）---"
+          head -8 smoke_err.txt || true
+          N=$(grep -c '"response"' smoke_out.txt || true)
+          echo "合法应答行数 = $N（应为 2）"
+          if [ "$N" != "2" ]; then
+            echo "冒烟自检失败：ELF 未正常应答"
+            exit 1
+          fi
+          if grep -q 'Traceback' smoke_err.txt; then
+            echo "冒烟自检失败：stderr 出现 Traceback"
+            exit 1
+          fi
+          if ! grep -q '\[REQ\] hand=' smoke_err.txt; then
+            echo "冒烟自检失败：未打印请求日志（决策链可能没跑起来）"
+            exit 1
+          fi
+          echo "冒烟自检通过：ELF 能解析请求并输出合法应答"
+
+      - name: 老发行版兼容性探测（非阻塞，仅供对照）
+        continue-on-error: true
+        working-directory: botbattle
+        run: |
+          echo "=== debian:11（glibc 2.31）==="
+          docker run --rm -v "$PWD:/w" -w /w debian:11 \
+            sh -c "timeout 90 ./dist/poker_bot < smoke_req.jsonl | head -2 \
+                   && echo '可运行' || echo '不可运行'"
 
       - name: Upload ELF artifact
         uses: actions/upload-artifact@v4
