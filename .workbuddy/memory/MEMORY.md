@@ -17,6 +17,8 @@
 ## 构建发布
 - 单文件提交版 `内容/botzone_submit.py`（`bundle.py` 打包 8+1 模块）；ELF 由 GitHub Actions（仓库 `1331-a/-2`，workflow build-elf）构建，artifact `poker_bot-linux-x86-64`（约 7MB）。
 - 本地产不出 Linux ELF（无 Docker/WSL）→ Actions 是唯一发布路径。`测/学习升级版/poker_bot` 是用户下载的 ELF，不要动。
+- 【2026-09-24 起】PyInstaller **锁定 `<6.22`**（原 `>=6.10,<7` 浮动 → 6.22.x 给 onefile 引导器加了「父进程安全校验」，产物在受限沙箱里会秒退/exec 失败）；构建新增**冒烟自检**（真跑 ELF 断言能应答；失败即构建失败）+ 兼容性报告（glibc/ldd/所需最高 GLIBC 符号版本）。
+- 【下载陷阱】Actions artifact 常下成 **22 字节空 zip**（`PK\x05\x06`）——上传前必须解压核对 `poker_bot` 字节数，别直接传 zip。
 
 ## 模块分工
 strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导）/ opponent.py（画像 + 尺寸分桶反应统计）/ equity.py（MC 胜率）/ ranges.py（169 组合百分位）/ match_ctx.py（赛制三模块 + 规则账本）。
