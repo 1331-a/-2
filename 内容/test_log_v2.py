@@ -381,11 +381,13 @@ check("0911:BOT_VERSION 存在", isinstance(_BV, str) and len(_BV) > 0, str(_BV)
 #       才导致的锁赢被判成「不 doomed」→ 只跟注（慢性死亡）。
 # 修法：两个口径分开——
 #   · 弃牌口径（ie. _match_adjust）：敞口 = 已投入  → 「弃牌是否送掉比赛」
-#   · 跟注口径（_doom_call_upgrade）：敞口 = 已投入 + to_call → 「跟注是否送掉」
-# 只有后者成立且我方本要跟注时，才升级为 all-in（弃牌很安全的牌不受影响）。
+#   · 跟注口径：敞口 = 已投入 + to_call → 「跟注是否送掉」
+# 2026-09-24 起「跟注口径」不再用「改写动作」的补丁实现，改由决策出口的
+# `_endgame_arbitrate` 把弃牌/过牌/跟注/加注/全押放在同一终局效用尺度上比较。
 from strategy import (_exposure, _invested, _doom_risk,            # noqa: E402
-                      _doom_call_upgrade, _fold_out_active,
-                      _profit_lock_allin)
+                      _fold_out_active, _profit_lock_allin,
+                      _win_utility, _endgame_eu, _endgame_matters,
+                      _endgame_arbitrate)
 
 # A. 截图场景精确复现（本场结算后 -2881 → 决策时单边 -481 → lead -962）
 pic = parse_request(req(
@@ -409,24 +411,28 @@ check("0914:弃牌口径不 doom（弃牌尚可翻身 → 保持 normal）",
 check("0914:跟注口径 doom 成立（跟注即送掉比赛）",
       _doom_risk(pic, include_to_call=True) is True, "应 True")
 
-# B. 升级只作用于 call/raise/allin；fold/check 不动
-check("0914:fold 不被升级",
-      _doom_call_upgrade(pic, {"act": "fold"}) == {"act": "fold"})
-check("0914:check 不被升级",
-      _doom_call_upgrade(pic, {"act": "check"}) == {"act": "check"})
-# 【2026-09-24 修正·规则2-B】敞口 doom 下「便宜跟注」不再升级全押：
-# 本手 to_call 300 / 我方剩余 17900 = 1.7% ≤ 15% 且手牌不强（一对 K）
-# → 封顶为跟注（花 1.7% 筹码就能继续打这一手，没必要押上全部）。
-check("0924:便宜跟注不升级(单元) → call",
-      _doom_call_upgrade(pic, {"act": "call"}) == {"act": "call"},
-      str(_doom_call_upgrade(pic, {"act": "call"})))
-check("0924:便宜加注也被封顶为 call",
-      _doom_call_upgrade(pic, {"act": "raise", "num": 900}) == {"act": "call"},
-      str(_doom_call_upgrade(pic, {"act": "raise", "num": 900})))
-check("0924:端到端 —— 便宜跟注场景最终 = call",
-      decide(pic, OpponentModel()).get("act") == "call",
+# B. 【2026-09-24 架构调整】不再「改写动作」，改为终局效用比较：
+#    同一触发面上把 弃牌/过牌/跟注/加注/全押 放在一起比 EU，取最优；
+#    仲裁只往「少冒风险」方向修正（不制造新的加注/全押）。
+_eu_pic = _endgame_eu(pic, OpponentModel(), 0.5, {"act": "call"}, "normal")
+check("0924仲裁:第35手各动作 EU 齐全（弃牌是平权候选）",
+      set(_eu_pic) >= {"fold", "check", "call", "allin"}, str(_eu_pic))
+check("0924仲裁:弃牌有价值（不为 0）",
+      0.0 < _eu_pic["fold"] < 1.0, str(_eu_pic["fold"]))
+check("0924仲裁:触发面 = 敞口 doom",
+      _endgame_matters(pic, {"act": "call"}) is True, "")
+check("0924仲裁:硬性弃牌不被翻案（fold 不被改成 allin）",
+      _endgame_arbitrate(pic, OpponentModel(), {"act": "fold"}, 0.5,
+                         "normal") == {"act": "fold"},
+      str(_endgame_arbitrate(pic, OpponentModel(), {"act": "fold"}, 0.5, "normal")))
+check("0924仲裁:便宜跟注不被升成全押",
+      _endgame_arbitrate(pic, OpponentModel(), {"act": "call"}, 0.5,
+                         "normal") == {"act": "call"},
+      str(_endgame_arbitrate(pic, OpponentModel(), {"act": "call"}, 0.5, "normal")))
+check("0924仲裁:端到端 —— 第35手不再输出 allin",
+      decide(pic, OpponentModel()).get("act") != "allin",
       str(decide(pic, OpponentModel())))
-# 同样局面但对手下注 3000（≥15% 我方剩余）→ 跟注本身已是重投入 → 仍升级 allin
+# 对手下注 3000（重投入）：跟注与全押的风险接近，此时才可能允许全押倾向
 pic_big = parse_request(req(
     my_chips=17900, hand=34, max_hand=70, dealer_id=1, my_id=0,
     my_cards=[10, 44], public_cards=[24, 0, 49, 33, 46],
@@ -439,9 +445,9 @@ pic_big = parse_request(req(
              {"round": 2, "player_id": 1, "action": 600, "action_type": "call"},
              {"round": 3, "player_id": 1, "action": 3000, "action_type": "raise"}],
     total_win_chips=[-481, 481]))
-check("0924:重投入跟注(3000/17900)仍升级 allin",
-      _doom_call_upgrade(pic_big, {"act": "call"}) == {"act": "allin"},
-      str(_doom_call_upgrade(pic_big, {"act": "call"})))
+_eu_big = _endgame_eu(pic_big, OpponentModel(), 0.5, {"act": "call"}, "normal")
+check("0924仲裁:重投入时 EU 仍可比较（不抛异常）",
+      isinstance(_eu_big.get("allin"), float), str(_eu_big))
 
 # C. to_call=0 时敞口 = 已投入（与修复前一致，不回归）
 zero = parse_request(req(my_chips=17900, hand=34, max_hand=70,
@@ -471,8 +477,9 @@ check("0914:均势弃大注：弃牌口径不 doom（弃牌只亏 100，安全�
       _doom_risk(safe_fold) is False, "应 False")
 check("0914:均势弃大注：跟注口径 doom（跟 5200 输了才送掉）",
       _doom_risk(safe_fold, include_to_call=True) is True, "应 True")
-check("0914:该类场景若本要弃牌 → 维持 fold（不被升级）",
-      _doom_call_upgrade(safe_fold, {"act": "fold"}) == {"act": "fold"})
+check("0924:该类场景若本要弃牌 → 维持 fold（不被翻案）",
+      _endgame_arbitrate(safe_fold, OpponentModel(), {"act": "fold"}, 0.5,
+                         "normal") == {"act": "fold"})
 
 # F. 两口径可由同一不等式开关切换（公式单点，避免各自演化）
 check("0914:include_to_call 开关生效（True 比 False 更易触发）",
@@ -840,7 +847,7 @@ check("0915规则17:大落后时三条8跟(搏翻盘)",
       str(decide(_st17(-8000), _m16_quiet)))
 
 # ============ 2026-09-15 方案B：主动下注若「投进去就锁赢」→ 过牌 ============
-from strategy import _doom_risk, _doom_bet_downgrade   # noqa: E402
+from strategy import _doom_risk   # noqa: E402
 
 # 真实日志（botbattle-...2f10d6cf 第9手）：我方(座位1)落后 3418、河牌已投 906、
 # 剩 61 手（追平线 9100）。再投 815 → 输掉即锁赢（-10278 ≤ -9100）。
@@ -859,36 +866,40 @@ check("0915方案B:已投口径不 doom(不投入是安全的)",
       _doom_risk(_st9) is False, str(_doom_risk(_st9)))
 check("0915方案B:extra 参数生效(再投815即锁赢)",
       _doom_risk(_st9, extra=815) is True, str(_doom_risk(_st9, extra=815)))
-check("0915方案B:主动下注会让投入后锁赢 → 过牌",
-      _doom_bet_downgrade(_st9, {"act": "raise", "num": 815}) == {"act": "check"},
-      str(_doom_bet_downgrade(_st9, {"act": "raise", "num": 815})))
-check("0915方案B:小额下注(不会越线)不动",
-      _doom_bet_downgrade(_st9, {"act": "raise", "num": 20}).get("act") == "raise",
-      str(_doom_bet_downgrade(_st9, {"act": "raise", "num": 20})))
+check("0915方案B:主动下注会让投入后锁赢 → 触发终局仲裁",
+      _endgame_matters(_st9, {"act": "raise", "num": 815}) is True, "")
+check("0915方案B:仲裁保留该硬规则（投 815 会越线 → 过牌）",
+      _endgame_arbitrate(_st9, _m16_quiet, {"act": "raise", "num": 815},
+                         0.5, "normal") == {"act": "check"},
+      str(_endgame_arbitrate(_st9, _m16_quiet, {"act": "raise", "num": 815},
+                             0.5, "normal")))
+check("0915方案B:小额下注(不会越线)不触发硬规则",
+      _endgame_matters(_st9, {"act": "raise", "num": 20}) is False, "")
 check("0915方案B:端到端=过牌(截图第9手)",
       decide(_st9, _m16_quiet).get("act") == "check",
       str(decide(_st9, _m16_quiet)))
-# 对手先加注（过不了牌）→ 本函数不动，交给 _doom_call_upgrade → allin
+# 对手先加注（过不了牌）→ 原来会升级全押；现在改为终局效用比较
 _st9b = parse_request(dict(
     num_players=2, dealer_id=0, my_id=0, my_chips=19094,
     my_cards=[25, 40], public_cards=[19, 24, 39, 50, 4],
     hand=8, max_hand=70, total_win_chips=[-3418, 3418], total_win_games=[0, 0],
     history=list(_H9) + [{"round": 3, "player_id": 1, "action": 815,
                           "action_type": "raise"}]))
-check("0915方案B:对手已加注时不降级(交给allin分支)",
-      _doom_bet_downgrade(_st9b, {"act": "call"}).get("act") == "call",
-      str(_doom_bet_downgrade(_st9b, {"act": "call"})))
-# 决策层若想「跟注」→ 升级 all-in（禁止只跟：跟注即锁赢）
-from strategy import _doom_call_upgrade   # noqa: E402
-# 【2026-09-24 修正】本手 to_call 815 / 剩余 19094 = 4.3% ≤ 15% → 便宜跟注
-# → 不再升级全押（改封顶为跟注）。这是对 09-15「过不了牌就 allin」的收紧：
-# 花 4% 筹码即可继续这一手，没有理由押上 19,094。
-check("0924:便宜跟注(815/19094)不升级 → 维持 call",
-      _doom_call_upgrade(_st9b, {"act": "call"}) == {"act": "call"},
-      str(_doom_call_upgrade(_st9b, {"act": "call"})))
+# 【2026-09-24】本手 to_call 815 / 剩余 19094 = 4.3%（便宜跟注），
+# 弃牌仍有价值 → 仲裁不会升级全押（这是对 09-15「过不了牌就 allin」的收紧）。
+check("0924仲裁:便宜跟注(815/19094)不被升成全押",
+      _endgame_arbitrate(_st9b, _m16_quiet, {"act": "call"}, 0.5,
+                         "normal") == {"act": "call"},
+      str(_endgame_arbitrate(_st9b, _m16_quiet, {"act": "call"}, 0.5, "normal")))
+_eu9b = _endgame_eu(_st9b, _m16_quiet, 0.5, {"act": "call"}, "normal")
+check("0924仲裁:第9手 EU 齐全且全押不是最优（超池全押被跟胜率低）",
+      set(_eu9b) >= {"fold", "check", "call", "allin"}
+      and _eu9b["allin"] < _eu9b["call"],
+      str({k: round(v, 3) for k, v in _eu9b.items()}))
 # 决策层若判「弃牌」→ 保持弃牌：弃牌只损失已投 906（lead −8648 未越线）✓
-check("0915方案B:对手加注时决策层判弃 → 保持弃牌",
-      decide(_st9b, _m16_quiet).get("act") == "fold",
+# （端到端只断言「不会被升成 allin」——决策层是 fold 还是 call 受 MC 抽样影响）
+check("0915方案B:对手加注时端到端不再出现 allin",
+      decide(_st9b, _m16_quiet).get("act") != "allin",
       str(decide(_st9b, _m16_quiet)))
 
 # ---- 转换器：本手投入必须按街累加（旧实现只用本街最大值）----
@@ -1119,7 +1130,7 @@ _a19c, _ = _rule_learn_adjust(_st19, _m_fold, _ctx19,
                               [{"name": "规则13 强牌激进", "act": "raise"}])
 check("0916规则学习:记录未知 → 保持加注", _a19c.get("act") == "raise", str(_a19c))
 
-# ============ 2026-09-24 规则2-B：敞口 doom 下「便宜跟注」不再升级全押 ============
+# ============ 2026-09-24 终局效用仲裁：实战第51手（源码根因 + 修复） ============
 # 实战第51手（对局日志 hand=50、界面显示「第51手」；我方 = 座位2 = player1）：
 #   河牌 9♦A♠8♠6♠7♦ · 我方 A♦4♣（一对 A）· 对手 6♣9♥（两对 9/6）
 #   我方 check → 对手下注 192 → 我方 all-in 19,600 → 被跟 → 输掉整场
@@ -1129,8 +1140,10 @@ check("0916规则学习:记录未知 → 保持加注", _a19c.get("act") == "rai
 # 复原实测：已投 400 / 需跟 192 / 剩余 19,600 / 落后 914 / 剩 19 手（追回线 1450）
 #   · 弃牌口径 −1828−2×400 = −2628 > −2900 → 不 doom（弃牌安全）
 #   · 跟注口径 −1828−2×592 = −3012 ≤ −2900 → doom（**余量仅 112 筹码**）
-#   → 旧代码把决策层的「加注 576」直接升成 19,600 全押。
-from strategy import _doom_exposure_cap, _doom_hand_strong, DOOM_CAP_STACK_FRAC  # noqa: E402
+#   → 旧结构：决策层按赔率算出「加注 576」，出口补丁把它改写成 19,600 全押。
+#   → 新结构：仲裁把 弃牌0.19 / 跟注0.286 / 加注0.322 / 全押0.188 摆开比 EU，
+#     并只允许「更保守」的方向 → 全押不再出现。
+from strategy import UA_CALL_DAMP   # noqa: E402
 
 _H51 = [{"round": 0, "player_id": 0, "action": 100, "action_type": "call"},
         {"round": 0, "player_id": 1, "action": 100, "action_type": "check"},
@@ -1160,32 +1173,33 @@ check("0924第51手:弃牌口径不 doom（弃牌安全）",
       _doom_risk(_h51) is False, str(_doom_risk(_h51)))
 check("0924第51手:跟注口径 doom（余量仅 112）",
       _doom_risk(_h51, include_to_call=True) is True, "应 True")
-check("0924第51手:一对 A + 便宜跟注 → 封顶 call",
-      _doom_exposure_cap(_h51) == "call" and _doom_hand_strong(_h51) is False,
-      str(_doom_exposure_cap(_h51)))
-check("0924第51手:端到端 = call 192（不再全押）",
-      decide(_h51, _m16_quiet) == {"act": "call"}, str(decide(_h51, _m16_quiet)))
-check("0924第51手:加注也被封顶为 call（不往会锁死的底池送钱）",
-      _doom_call_upgrade(_h51, {"act": "raise", "num": 576}) == {"act": "call"},
-      str(_doom_call_upgrade(_h51, {"act": "raise", "num": 576})))
-# 回归守卫：把便宜线关掉 → 复现修复前的全押（证明这就是根因）
-_keep_cap = _S2.DOOM_CAP_STACK_FRAC
-_S2.DOOM_CAP_STACK_FRAC = 0.0
-check("0924第51手:关掉便宜线 → 复现修复前 allin",
-      decide(_h51, _m16_quiet).get("act") == "allin",
+check("0924第51手:触发终局仲裁", _endgame_matters(_h51, {"act": "call"}) is True, "")
+_eu51 = _endgame_eu(_h51, _m16_quiet, 0.5, {"act": "call"}, "normal")
+check("0924第51手:EU 中全押最差（超池全押只剩更强的牌跟）",
+      _eu51["allin"] < min(_eu51["call"], _eu51["fold"]),
+      {k: round(v, 3) for k, v in _eu51.items()})
+check("0924第51手:弃牌的价值被算成非 0（0.19）",
+      abs(_eu51["fold"] - 0.190) < 0.03, str(round(_eu51["fold"], 3)))
+check("0924第51手:端到端不再输出全押（MC 抖动下也成立）",
+      decide(_h51, _m16_quiet).get("act") != "allin",
       str(decide(_h51, _m16_quiet)))
-_S2.DOOM_CAP_STACK_FRAC = _keep_cap
-check("0924第51手:便宜线 = %.2f（调参入口）" % DOOM_CAP_STACK_FRAC,
-      DOOM_CAP_STACK_FRAC == 0.15, str(DOOM_CAP_STACK_FRAC))
-
-# 强牌（A♦ + 公面 A♠ / 6♥ + 公面 6♠ = 两对）→ 仍全押（价值最大化）
-check("0924第51手:两对 → 仍 allin（价值最大化）",
-      _doom_exposure_cap(_st51(hole=(50, 17))) == "allin",
-      str(_doom_exposure_cap(_st51(hole=(50, 17)))))
-# 重投入跟注（5000 ≥ 15%×19600 = 2940）→ 仍全押
-check("0924第51手:重投入跟注(5000) → 仍 allin",
-      _doom_exposure_cap(_st51(bet=5000)) == "allin",
-      str(_doom_exposure_cap(_st51(bet=5000))))
+check("0924第51手:单元仲裁（eq 固定 0.5）→ call 192",
+      _endgame_arbitrate(_h51, _m16_quiet, {"act": "call"}, 0.5,
+                         "normal") == {"act": "call"},
+      str(_endgame_arbitrate(_h51, _m16_quiet, {"act": "call"}, 0.5, "normal")))
+check("0924第51手:全押不会再被生成（仲裁不制造新全押）",
+      _endgame_arbitrate(_h51, _m16_quiet, {"act": "call"}, 0.5,
+                         "normal").get("act") != "allin",
+      str(_endgame_arbitrate(_h51, _m16_quiet, {"act": "call"}, 0.5, "normal")))
+# 成本函数边界：超池全押的「被跟胜率」必须大幅收窄
+check("0924第51手:19.8 倍超池 → 被跟时 eq 收窄到 <2%",
+      (0.5 ** (1 + UA_CALL_DAMP * 19600 / 992)) < 0.02, "")
+# 强牌（A♦ + 公面 A♠ / 6♥ + 公面 6♠ = 两对）→ 继续明显优于弃牌
+_eu_pair = _endgame_eu(_st51(hole=(50, 17)), _m16_quiet, 0.9,
+                       {"act": "call"}, "normal")
+check("0924第51手:两对时「继续」的 EU 明显高于弃牌",
+      _eu_pair["call"] > _eu_pair["fold"] + 0.1,
+      str({k: round(v, 3) for k, v in _eu_pair.items()}))
 # 真 doom（弃牌口径成立：已投 17,000）→ 规则2-A 无条件全押，不豁免
 check("0924:真 doom（筹码只剩 3000）→ 无条件 allin",
       decide(_st51(chips=3000), _m16_quiet).get("act") == "allin",

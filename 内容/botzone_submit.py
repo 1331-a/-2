@@ -1607,6 +1607,7 @@ strategy.py — AI 决策引擎（升级版）。
 合法性安全程序 _normalize 保持不变（永远输出合法动作）。
 """
 
+import math
 import time
 
 from itertools import combinations
@@ -1717,22 +1718,24 @@ GAMBLE_GOOD_PCT = 0.20
 SMALL_BET_FOLD_MIN = 0.35      # 小注弃牌率低于此值 → 判定「吓不走」
 SMALL_BET_MIN_N = 4            # 至少这么多次小注样本才判（数据不足不改行为）
 
-# ── 规则2-B 扩展（2026-09-24 用户规则）：敞口 doom 下「便宜跟注」不再升级全押 ──
-# 用户反馈（实战第51手 = log hand 50）：河牌 A♦4♣（一对 A）、对手只下注 192，
-#   bot 却把 19,600 全押上，被对手两对（6♣9♥）跟掉、直接输掉整场。
-# 【关键口径】牌桌上的「底池 20,592」是 **all-in 之后**的显示值；
-#   决策时底池只有 992（= 双方河牌前各 400 的 800 + 对手这 192），
-#   即对手那注是 24% 池 / 0.98% 我方筹码的正常小注，绝非「超池大注」。
-# 触发链（复原实测）：底池 992 / 需跟 192 / 已投 400 / 落后 914 / 剩 19 手
-#   · 弃牌口径 −1828−2×400 = −2628 > −2900 → 不 doom（弃牌安全）
-#   · 跟注口径 −1828−2×592 = −3012 ≤ −2900 → doom（**余量仅 112 筹码**）
-#   → `_doom_call_upgrade` 把决策层的「加注 576」升级成「全押 19,600」。
-# 修法：敞口 doom 成立时，若**跟注便宜**（to_call ≤ 15% 我方剩余）且手牌不强
-#   （非 ≥两对 / 非超强起手）→ 封顶为**跟注**，不加注也不全押：花 1% 筹码就能
-#   继续打这一手，没有理由把 100% 押给「只会用更强的牌跟」的对手。
-# 保留全押的情形：强牌（价值最大化）、跟注本身就是重投入（≥15% 筹码，
-#   跟与全押的风险已接近）、跟注即全下、真 doom（规则2-A 弃牌口径）。
-DOOM_CAP_STACK_FRAC = 0.15     # to_call ≤ 该比例 × 我方剩余 → 便宜跟注（封顶跟注）
+# ── 终局效用仲裁（2026-09-24 用户规则）：弃牌的价值必须在决策里一起算 ──
+# 用户意见（原话）：「不是先决策再改吧？而是在决策时就要同时考量弃牌的价值，
+#   而不是决策加注后改成全压」——针对实战第51手：决策层按底池赔率算出「加注 576」，
+#   出口的 `_doom_call_upgrade` 再把它改写成「全押 19,600」（而底池只有 992）。
+# 旧结构的毛病：① 决策层完全不知道 doom 存在；② 改写函数只会往更激进走，
+#   从不考虑「弃牌其实还能保住比赛」（第51手弃牌只损失 400，且并未被锁死）。
+# 新结构（`_endgame_arbitrate`）：把每个候选动作按「本手结束后的 lead」映射成
+#   **最终赢下比赛的概率 U**，算期望效用 EU，取最优 —— 弃牌/过牌是平权候选，
+#   而不是只能被 call/raise 覆盖的兜底。
+UA_ON = True
+UA_SLOPE = 1.6          # U(lead) 的陡度：lead 差一条硬线 ≈ 1σ
+UA_CALL_DAMP = 0.6      # 被跟时 eq 收窄的指数系数：eq_c = eq^(1+DAMP×注额/底池)
+# 风险档位：仲裁只允许「不变或更保守」（数值越小越保守）
+UA_RISK_RANK = {"fold": 0, "check": 0, "call": 1, "raise": 2, "allin": 3}
+# 用户硬规则（09-15 方案B）：有免费过牌、但「投进去就越线」→ 直接过牌。
+# 保留为**约束**（而不是让效用模型去权衡）：这条是用户明确定的，属于策略边界；
+# 仲裁只负责比较剩下的动作。
+UA_CROSS_CHECK = True
 
 # ── 规则学习（2026-09-16 用户规则）：赢的规则尽量重复、输的规则尽量避免 ──
 # 记账在 match_ctx（rule_stats，随 globaldata 持久化）；此处只做「用账」：
@@ -1873,6 +1876,9 @@ _MODEL_REF = None  # 当前请求的对手模型（decide 入口设置，供防r
 _OPP_BETS_PER_HAND = 0.9  # 对手每局下注数量（decide 入口从 model 读取，
                           # 2026-08-25：驱动跟注门槛微调——高侵略收紧/被动放宽）
 _DECISION_STARTED_AT = 0.0
+# 【2026-09-24 终局效用仲裁】决策层最近一次算出的胜率与档位（供出口仲裁使用）
+_LAST_EQ = None
+_LAST_ADJ = "normal"
 
 
 def _decision_timed_out():
@@ -2007,51 +2013,188 @@ def _lock_line(state):
         return 0
 
 
-def _doom_hand_strong(state):
-    """doom 分流用的「强牌」判定：翻后有效牌型 ≥两对（含顺/花/三条/葫芦/四条）；
-    翻前超强牌（AA/KK/QQ/JJ/AKs）。
+def _win_utility(state, lead_after, hands_left=None):
+    """终局效用 U：把「本手结束后的 lead」映射成最终赢下比赛的估计概率 ∈ (0,1)。
 
-    刻意比 `_has_nuts_or_strong_draw` 更严：后者只要**公面**有 3 连牌或 3 同花
-    就认为我方有听牌（不看手牌是否参与）——实战第51手就是这么被误判的：
-    公面 9♦A♠8♠6♠7♦ 有 4 连（6-7-8-9）+ 3 张黑桃，而我们手里 A♦4♣ 既不听顺
-    也不听花。一对 + 这种「伪听牌」在 doom 里不值得把剩余筹码全押上去。
+    锚点仍是赛事两条硬线（lead 口径的 2×_blind_line）：
+      · lead ≥ +锁赢线  → 1（全程弃牌也赢）
+      · lead ≤ −追回线  → 0（只靠收盲注追不回）
+      · 中间用 logistic 平滑过渡，**不做「线上 1、线下 0」的悬崖**。
+    为什么不悬崖：这两条线是「只靠对手弃牌收盲注」的最坏界，并不是真实胜率；
+    离它只有几百筹码时远不是「必败」。用悬崖会让 bot 在擦线处孤注一掷——
+    实战第51手就是：仅越线 112 筹码，就把整副筹码押了出去。
+    陡度由 UA_SLOPE 控制（差一条硬线 ≈ 1σ）。
     """
     try:
-        if state.stage == "preflop":
-            return bool(_is_super_hand(state.hole))
-        return _effective_category(state) >= TWO_PAIR
+        hl = _hands_left(state) if hands_left is None else int(hands_left)
+        scale = max(2.0 * _blind_line(state, hl, own=True),
+                    2.0 * _blind_line(state, hl, own=False), 1.0)
+        x = UA_SLOPE * float(lead_after) / scale
+        if x >= 20.0:
+            return 1.0
+        if x <= -20.0:
+            return 0.0
+        return 1.0 / (1.0 + math.exp(-x))
     except Exception:
-        return False
+        return 0.5
 
 
-def _doom_exposure_cap(state):
-    """【规则2-B 扩展·2026-09-24 用户规则】敞口 doom 成立时「继续投入」的上限。
+def _endgame_eu(state, model, eq, chip_action, adj):
+    """终局效用：给每个候选动作算「本手结束后的 lead → 最终胜率」的期望值。
 
-    敞口 doom（`_doom_risk(include_to_call=True)`）= 「把这笔跟注输掉，对手就
-    数学上锁赢」。此时继续投入只有两种理性形态：
-      · **便宜跟注**（to_call ≤ DOOM_CAP_STACK_FRAC × 我方剩余）+ 手牌不强
-        → 封顶为 **call**：花极小代价留在这一手里（赢下它即可反锁对手），
-          绝不把全部筹码押给「只会用更强的牌跟」的对手；
-      · 其余 → **allin**：强牌要价值最大化；跟注本身已是重投入时，跟与全押的
-        风险已接近，全押还能多一份弃牌权益（原规则2 行为）。
-
-    返回 "call" / "allin" / None（None = 不适用：无跟注额或筹码已空）。
-    异常一律回退 "allin"（保守，等同于原行为）。
+    ×2 换算只用一次；底池 `state.pot` 已含对手本街已下注额。分支口径：
+      fold / check ：lead − 2×已投（弃牌只丢掉已经投进去的那部分）
+      跟注 E       ：赢 → lead + 2×(底池 − 已投)；输 → lead − 2×(已投 + E)
+      加注/全押 n  ：对手弃（概率 f）→ 同「赢」分支；
+                     对手跟 → eq_c×U(赢大池) + (1−eq_c)×U(输更多)，
+                     **eq_c = eq / (1 + UA_CALL_DAMP × n / 底池)**：
+                     注额相对底池越大，肯跟的范围越窄（超池全押只剩两对以上），
+                     这是「20 倍超池全押被跟 = 我们大概率已经输了」的量化表达。
+    对手弃牌率 f 取 `_fold_equity(model, adj)`（该函数已含原型/档位修正）。
+    返回 {动作名: EU}；异常返回 {}（调用方回退）。
     """
     try:
-        to_call = int(state.to_call)
-        my_left = int(state.my_left)
-        if to_call <= 0 or my_left <= 0:
-            return None                                  # 免费过牌：交给降级函数
-        if to_call >= my_left:
-            return "allin"                               # 跟注即全下，无中间档
-        if _doom_hand_strong(state):
-            return "allin"                               # 强牌：价值最大化
-        if to_call <= DOOM_CAP_STACK_FRAC * my_left:
-            return "call"                                # 便宜跟注：封顶跟注
-        return "allin"                                   # 重投入：与全押风险接近
+        lead = (int(state.total_win_chips[state.my_id])
+                - int(state.total_win_chips[state.opp_id]))
+        inv = _invested(state)
+        pot = max(int(state.pot), 1)
+        to_call = max(int(state.to_call), 0)
+        my_left = max(int(state.my_left), 0)
+        my_round = max(0, int(getattr(state, "my_round_bet", 0) or 0))
+        opp_bet = max(0, int(getattr(state, "opp_round_bet", 0) or 0))
+        f = _fold_equity(model, adj)
+
+        u_win_now = _win_utility(state, lead + 2 * (pot - inv))     # 收下当前底池
+        eu = {}
+        eu["fold"] = _win_utility(state, lead - 2 * inv)
+        eu["check"] = eu["fold"]                                    # 不投入 = 同弃牌
+
+        if to_call > 0:
+            eu["call"] = (eq * u_win_now
+                          + (1.0 - eq) * _win_utility(state, lead - 2 * (inv + to_call)))
+
+        # 候选注额：决策层给的加注额（有的话）+ 全押
+        # 【修正】对手已经全押（to_call ≥ 我方剩余）时，我们的「全押」只是跟注：
+        # 对手没有弃牌分支 → f 必须取 0，否则会把「他弃牌我收池」算成收益，
+        # 让全押在领先局面凭空变得划算（实测会把「领先+一对面对全押」判成全押）。
+        f_big = 0.0 if (to_call >= my_left or _opp_is_allin(state)) else f
+        n_list = []
+        if chip_action.get("act") == "raise":
+            n_list.append(int(chip_action.get("num", 0) or 0))
+        n_list.append(my_left)
+        for n in n_list:
+            n = min(max(n, to_call), my_left)
+            if n <= my_round or my_left <= 0:
+                continue
+            add = n - my_round                                     # 本次实际投入
+            # 被跟时的胜率收窄用**幂次**而不是乘系数：eq_c = eq^(1+DAMP×n/底池)。
+            # 这样 eq=1（坚果/四条）时 eq_c 仍为 1 —— 「注越大越可能被跟的是更强的
+            # 牌」只对边际牌成立，对坚果不成立（跟注范围同样被我们统治）。
+            eq_c = eq ** (1.0 + UA_CALL_DAMP * n / pot)
+            u_big_win = _win_utility(state, lead + 2 * (pot + n - opp_bet - inv))
+            u_big_lose = _win_utility(state, lead - 2 * (inv + add))
+            u = f_big * u_win_now + (1.0 - f_big) * (eq_c * u_big_win
+                                                     + (1.0 - eq_c) * u_big_lose)
+            name = "allin" if n >= my_left else "raise"
+            if name not in eu or u > eu[name]:
+                eu[name] = u
+        return eu
     except Exception:
-        return "allin"
+        return {}
+
+
+def _opp_is_allin(state):
+    """对手是否已经全押（协议字段 any_allin / opp_is_allin 任一为真）。"""
+    for attr in ("opp_is_allin", "any_allin"):
+        try:
+            if bool(getattr(state, attr, False)):
+                return True
+        except Exception:
+            pass
+    return False
+
+
+def _endgame_matters(state, chip_action):
+    """何时需要终局效用仲裁：沿用原本两个 doom 补丁的触发面。
+      · 敞口 doom：输掉这笔跟注 → 对手数学上锁赢；
+      · 投入即锁赢：决策层要加注/全押，而投入后输掉 → 锁赢；
+      · 搏命区（规则18 灰区）。
+    """
+    try:
+        if _doom_risk(state, include_to_call=True):
+            return True
+        try:
+            if _gamble_zone(state):
+                return True
+        except Exception:
+            pass
+        n = 0
+        if chip_action.get("act") == "raise":
+            n = int(chip_action.get("num", 0) or 0)
+        elif chip_action.get("act") == "allin":
+            n = int(state.my_left)
+        my_round = max(0, int(getattr(state, "my_round_bet", 0) or 0))
+        if n > my_round and _doom_risk(state, extra=n - my_round):
+            return True
+    except Exception:
+        pass
+    return False
+
+
+def _endgame_arbitrate(state, model, chip_action, eq, adj):
+    """【2026-09-24 用户规则】终局仲裁：把「弃牌 / 过牌 / 跟注 / 加注 / 全押」
+    放在同一个终局效用尺度上比较，取最优。
+
+    取代原先两个「改写动作」的补丁（`_doom_bet_downgrade` 把 raise 改成 check、
+    `_doom_call_upgrade` 把 call/raise 改成 allin）——那两个函数只会单向更激进，
+    而弃牌的价值（还能保住比赛）从来不参与计算，正是用户指出的结构问题。
+
+    触发面（`_endgame_matters`）与旧补丁一致；不触发时原样返回决策层结果，
+    普通局面完全不受影响。
+    """
+    if not UA_ON:
+        return chip_action
+    try:
+        # ① 用户硬规则（09-15 方案B）：有免费过牌 + 本次投入会让 doom 成立 → 过牌
+        if UA_CROSS_CHECK and chip_action.get("act") in ("raise", "allin"):
+            if int(state.to_call) <= 0:
+                my_round = max(0, int(getattr(state, "my_round_bet", 0) or 0))
+                if chip_action.get("act") == "raise":
+                    add = max(0, int(chip_action.get("num", 0) or 0) - my_round)
+                else:
+                    add = max(0, int(state.my_left))
+                if add > 0 and _doom_risk(state, extra=add):
+                    return {"act": "check"}
+        if eq is None:
+            return chip_action          # 翻前没算 MC 胜率 → 不仲裁
+        if not _endgame_matters(state, chip_action):
+            return chip_action
+        eu = _endgame_eu(state, model, eq, chip_action, adj)
+        if not eu:
+            return chip_action
+        best = max(eu.keys(), key=lambda k: eu[k])
+        # 只在「少冒风险」的方向修正：弃牌/过牌/跟注可以保持不变或更保守，
+        # 但仲裁**不制造新的加注/全押**——「该不该搏命」由规则2-A（弃牌即输 →
+        # 无条件全押）与规则18（搏命区）负责，这里只负责「别把筹码往会锁死
+        # 的底池里送」。这样也保证硬性弃牌（河牌公对陷阱、突袭大注、公对风险
+        # 规避等）不会被翻案成全押。
+        if UA_RISK_RANK.get(best, 1) > UA_RISK_RANK.get(chip_action.get("act"), 1):
+            return chip_action
+        if best == chip_action.get("act"):
+            return chip_action
+        if best == "allin" and int(state.my_left) > 0:
+            return {"act": "allin", "lk": 1}          # lk：免检，不被注额上限降级
+        if best == "fold":
+            return {"act": "fold"} if int(state.to_call) > 0 else {"act": "check"}
+        if best == "check":
+            return {"act": "check"} if int(state.to_call) <= 0 else chip_action
+        if best == "call":
+            if int(state.to_call) >= int(state.my_left):
+                return {"act": "allin", "lk": 1}
+            return {"act": "call"}
+        return chip_action
+    except Exception:
+        return chip_action
 
 
 def _lock_win_unified(state):
@@ -2341,79 +2484,12 @@ def _lock_win_tail_guard(state, action):
     return action
 
 
-def _doom_call_upgrade(state, action):
-    """【规则2 扩展·2026-09-14 用户规则（截图第35手）】禁止「只投入不搏」。
-
-    若「跟注后失败 → 对手锁赢」（_doom_risk include_to_call=True），则跟注/
-    加注都是慢性死亡：赢了只赢一个小池，输了直接把比赛送掉。此时当手
-    无条件 all-in，把「必须赢」变成「赢就翻倍」。
-
-    升级范围：call / raise / allin（都是「投入筹码」的动作）；
-    fold / check 不动——弃牌不投入、不产生该风险（那是 _match_adjust 的
-    弃牌口径负责判断）。
-    【2026-09-24 修正】不再「一律全押」：若跟注便宜（to_call ≤15% 我方剩余）
-    且手牌不强 → 封顶为 **call**（见 _doom_exposure_cap）。实战第51手就是
-    反例：底池仅 992、对手只下注 192（占我方筹码 0.98%），却被升成 19,600
-    全押，撞上对手两对直接输掉整场。
-    合法性：调用方在 _normalize **之后**执行本函数，此处再确认 my_left>0。
-    放在最后的原因：_normalize / _bet_limit 会按牌型上限把 allin 降级
-    （非 ≥三条 且非 doomed 时），所以必须在其后覆盖。
-    """
-    try:
-        if action.get("act") not in ("call", "raise", "allin"):
-            return action
-        if int(state.to_call) <= 0:
-            return action
-        if int(state.my_left) <= 0:
-            return action
-        if not _doom_risk(state, include_to_call=True):
-            return action
-        if _doom_exposure_cap(state) == "call":
-            return {"act": "call"}       # 便宜跟注：不升级（2026-09-24 修正）
-        return {"act": "allin"}
-    except Exception:
-        return action
-
-
-def _doom_bet_downgrade(state, action):
-    """【规则2 扩展·2026-09-15 用户规则·方案B】主动下注若「投进去就锁赢」→ 过牌。
-
-    用户规则：「能过牌就过牌（不投入）；对手先加注了、过不了牌 → all in」。
-    本函数负责**前半句**（能过牌的那半）：
-      · 条件：to_call == 0（本轮有免费过牌选项）+ 决策层要给 raise / allin +
-        「投入本次下注额后失败」即锁赢（`_doom_risk(state, extra=本次投入)`）；
-      · 动作：check —— 不投入就不会把 lead 推过锁赢线，保住剩余手数的追赶机会。
-    后半句（to_call > 0 → allin）由 _doom_call_upgrade 处理。
-
-    背景（截图第 9 手）：落后 3418、本手已投 906、剩 61 手（追平线 9100）。
-      · 不投入（check）→ 输掉 lead = −8648 > −9100 → 安全 ✓
-      · 再投 815 → 输掉 lead = −10278 ≤ −9100 → 锁赢 ✗
-    此时正确动作是过牌，而不是把 815 丢进一个会让自己越线的底池。
-    注：若连「不投入」都已锁赢（doomed），decide 入口的规则2 早已无条件 allin。
-    """
-    if action.get("act") not in ("raise", "allin"):
-        return action
-    try:
-        if int(state.to_call) > 0:
-            return action                 # 对手已下注 → 交给 _doom_call_upgrade
-        if int(state.my_left) <= 0:
-            return action
-        if action.get("act") == "raise":
-            amt = int(action.get("num", 0) or 0)
-            try:
-                cur = int((state.curbet or [0, 0])[state.my_id])
-            except Exception:
-                cur = 0
-            add = max(0, amt - cur)       # 本次额外投入 = raise-to 总额 − 本街已投
-        else:
-            add = int(state.my_left)      # 主动全下
-        if add <= 0:
-            return action
-        if _doom_risk(state, extra=add):
-            return {"act": "check"}
-    except Exception:
-        return action
-    return action
+# 【2026-09-24 架构调整】原有的两个「改写动作」补丁已删除：
+#   · `_doom_call_upgrade`（跟注/加注 → 全押）
+#   · `_doom_bet_downgrade`（加注 → 过牌）
+# 它们各自只朝一个方向改写，且弃牌的价值从不参与比较（用户指出的结构问题）。
+# 现在统一由决策出口的 `_endgame_arbitrate` 处理：在同样的触发面上，把
+# 弃牌 / 过牌 / 跟注 / 加注 / 全押放在同一个终局效用尺度上比较后取最优。
 
 
 def _aggressive_strong_bet(state, action):
@@ -2467,11 +2543,14 @@ def _prepare_globals(state, model, ctx, reset_clock=True):
     统一在这里刷新，decide 入口与 _decide_impl 共用同一份实现（口径一致）。
     """
     global _CTX, _OPP_JUMPED, _OPP_BETS_PER_HAND, \
-        _DECISION_STARTED_AT, _MODEL_REF
+        _DECISION_STARTED_AT, _MODEL_REF, _LAST_EQ, _LAST_ADJ
     if reset_clock:
         _DECISION_STARTED_AT = time.perf_counter()
     _CTX = ctx
     _MODEL_REF = model
+    # 【2026-09-24】终局效用仲裁要用的胜率/档位：每次决策先清空（翻前没算 eq）
+    _LAST_EQ = None
+    _LAST_ADJ = "normal"
     # 【对手突袭大注】全局标志（翻前/翻后共享，决策一开始就要生效）
     _OPP_JUMPED = _opp_bet_jumped(state)
     # 【2026-08-25 用户规则】对手每局下注数量 → 跟注门槛微调
@@ -2579,14 +2658,10 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 主动加注与主动全下（降级为跟注 / 过牌；强牌例外，见函数注释）。
     action = _stability_guard(state, model, action)
     action = _normalize(state, action)
-    # 【规则2 扩展·2026-09-15 用户规则·方案B】能过牌时：若「投入本次下注后
-    # 失败即锁赢」→ 索性不投入（过牌）。放在 _normalize 之后，确保它看到的是
-    # 最终注额（会被牌型上限裁剪过）。
-    action = _doom_bet_downgrade(state, action)
-    # 【规则2 扩展·2026-09-14】过不了牌（对手已加注）时：敞口式 doom 下禁止只
-    # 跟注/加注 → 当手无条件 all-in（须在 _normalize 之后，否则会被牌型注额
-    # 上限降级）。注意优先级：doom 是确定性硬规则，会覆盖上面的诈唬上限。
-    return _doom_call_upgrade(state, action)
+    # 【2026-09-24 用户规则】终局效用仲裁（放在 _normalize 之后：这样比较的是
+    # 最终合法注额；仲裁若判全押会带 `lk` 标记，不再被牌型/金额上限降级）。
+    # 取代原来的 `_doom_bet_downgrade` + `_doom_call_upgrade` 两个单向补丁。
+    return _endgame_arbitrate(state, model, action, _LAST_EQ, _LAST_ADJ)
 
 
 # ================================================================
@@ -4638,7 +4713,6 @@ def _postflop_decide(state, model):
     arch = model.archetype()
     tex = _board_texture(state.board)
     is_river = state.current_round >= 3
-
     # 对手范围感知的胜率估算（对手越松范围越宽）
     last_raiser = _last_preflop_raiser(state)
     opp_raised = (last_raiser == state.opp_id)
@@ -4648,6 +4722,10 @@ def _postflop_decide(state, model):
         state.hole, state.board, iterations=MC_ITERATIONS,
         opp_range_pct=range_pct,
         deadline=time.time() + TIME_BUDGET)
+    # 【2026-09-24 终局效用仲裁】把决策层算出的 eq / 档位留给出口仲裁用
+    global _LAST_EQ, _LAST_ADJ
+    _LAST_EQ = float(eq)
+    _LAST_ADJ = adj
 
     category = _effective_category(state)   # 净化：公共牌拼的 >三条 牌型降级为高牌
     outs = _count_outs(state.hole, state.board)
