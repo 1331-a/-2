@@ -408,20 +408,40 @@ check("0914:弃牌口径不 doom（弃牌尚可翻身 → 保持 normal）",
       "doom=%s adj=%s" % (_doom_risk(pic), _match_adjust(pic)))
 check("0914:跟注口径 doom 成立（跟注即送掉比赛）",
       _doom_risk(pic, include_to_call=True) is True, "应 True")
-check("0914:决策 = allin（不再只是跟注）",
-      decide(pic, OpponentModel()).get("act") == "allin",
-      str(decide(pic, OpponentModel())))
 
-# B. 升级只作用于 call/raise；fold/check 不动
+# B. 升级只作用于 call/raise/allin；fold/check 不动
 check("0914:fold 不被升级",
       _doom_call_upgrade(pic, {"act": "fold"}) == {"act": "fold"})
 check("0914:check 不被升级",
       _doom_call_upgrade(pic, {"act": "check"}) == {"act": "check"})
-check("0914:call 被升级为 allin",
-      _doom_call_upgrade(pic, {"act": "call"}) == {"act": "allin"})
-check("0914:raise 被升级为 allin",
-      _doom_call_upgrade(pic, {"act": "raise", "num": 900})
-      == {"act": "allin"})
+# 【2026-09-24 修正·规则2-B】敞口 doom 下「便宜跟注」不再升级全押：
+# 本手 to_call 300 / 我方剩余 17900 = 1.7% ≤ 15% 且手牌不强（一对 K）
+# → 封顶为跟注（花 1.7% 筹码就能继续打这一手，没必要押上全部）。
+check("0924:便宜跟注不升级(单元) → call",
+      _doom_call_upgrade(pic, {"act": "call"}) == {"act": "call"},
+      str(_doom_call_upgrade(pic, {"act": "call"})))
+check("0924:便宜加注也被封顶为 call",
+      _doom_call_upgrade(pic, {"act": "raise", "num": 900}) == {"act": "call"},
+      str(_doom_call_upgrade(pic, {"act": "raise", "num": 900})))
+check("0924:端到端 —— 便宜跟注场景最终 = call",
+      decide(pic, OpponentModel()).get("act") == "call",
+      str(decide(pic, OpponentModel())))
+# 同样局面但对手下注 3000（≥15% 我方剩余）→ 跟注本身已是重投入 → 仍升级 allin
+pic_big = parse_request(req(
+    my_chips=17900, hand=34, max_hand=70, dealer_id=1, my_id=0,
+    my_cards=[10, 44], public_cards=[24, 0, 49, 33, 46],
+    history=[{"round": 0, "player_id": 0, "action": 100, "action_type": "raise"},
+             {"round": 0, "player_id": 1, "action": 200, "action_type": "raise"},
+             {"round": 0, "player_id": 0, "action": 200, "action_type": "call"},
+             {"round": 1, "player_id": 0, "action": 300, "action_type": "raise"},
+             {"round": 1, "player_id": 1, "action": 300, "action_type": "call"},
+             {"round": 2, "player_id": 0, "action": 600, "action_type": "raise"},
+             {"round": 2, "player_id": 1, "action": 600, "action_type": "call"},
+             {"round": 3, "player_id": 1, "action": 3000, "action_type": "raise"}],
+    total_win_chips=[-481, 481]))
+check("0924:重投入跟注(3000/17900)仍升级 allin",
+      _doom_call_upgrade(pic_big, {"act": "call"}) == {"act": "allin"},
+      str(_doom_call_upgrade(pic_big, {"act": "call"})))
 
 # C. to_call=0 时敞口 = 已投入（与修复前一致，不回归）
 zero = parse_request(req(my_chips=17900, hand=34, max_hand=70,
@@ -860,8 +880,11 @@ check("0915方案B:对手已加注时不降级(交给allin分支)",
       str(_doom_bet_downgrade(_st9b, {"act": "call"})))
 # 决策层若想「跟注」→ 升级 all-in（禁止只跟：跟注即锁赢）
 from strategy import _doom_call_upgrade   # noqa: E402
-check("0915方案B:跟注即锁赢 → 升级 allin(单元)",
-      _doom_call_upgrade(_st9b, {"act": "call"}) == {"act": "allin"},
+# 【2026-09-24 修正】本手 to_call 815 / 剩余 19094 = 4.3% ≤ 15% → 便宜跟注
+# → 不再升级全押（改封顶为跟注）。这是对 09-15「过不了牌就 allin」的收紧：
+# 花 4% 筹码即可继续这一手，没有理由押上 19,094。
+check("0924:便宜跟注(815/19094)不升级 → 维持 call",
+      _doom_call_upgrade(_st9b, {"act": "call"}) == {"act": "call"},
       str(_doom_call_upgrade(_st9b, {"act": "call"})))
 # 决策层若判「弃牌」→ 保持弃牌：弃牌只损失已投 906（lead −8648 未越线）✓
 check("0915方案B:对手加注时决策层判弃 → 保持弃牌",
@@ -1095,6 +1118,78 @@ _a19c, _ = _rule_learn_adjust(_st19, _m_fold, _ctx19,
                               {"act": "raise", "num": 500},
                               [{"name": "规则13 强牌激进", "act": "raise"}])
 check("0916规则学习:记录未知 → 保持加注", _a19c.get("act") == "raise", str(_a19c))
+
+# ============ 2026-09-24 规则2-B：敞口 doom 下「便宜跟注」不再升级全押 ============
+# 实战第51手（对局日志 hand=50、界面显示「第51手」；我方 = 座位2 = player1）：
+#   河牌 9♦A♠8♠6♠7♦ · 我方 A♦4♣（一对 A）· 对手 6♣9♥（两对 9/6）
+#   我方 check → 对手下注 192 → 我方 all-in 19,600 → 被跟 → 输掉整场
+# 【关键口径】界面「底池 20,592」是 **all-in 之后**的显示值（992 + 19,600）；
+#   决策时底池只有 992（双方河牌前各 400 的 800 + 对手这 192）——
+#   对手那注只是 19% 池的小注，不是「超池大注」。
+# 复原实测：已投 400 / 需跟 192 / 剩余 19,600 / 落后 914 / 剩 19 手（追回线 1450）
+#   · 弃牌口径 −1828−2×400 = −2628 > −2900 → 不 doom（弃牌安全）
+#   · 跟注口径 −1828−2×592 = −3012 ≤ −2900 → doom（**余量仅 112 筹码**）
+#   → 旧代码把决策层的「加注 576」直接升成 19,600 全押。
+from strategy import _doom_exposure_cap, _doom_hand_strong, DOOM_CAP_STACK_FRAC  # noqa: E402
+
+_H51 = [{"round": 0, "player_id": 0, "action": 100, "action_type": "call"},
+        {"round": 0, "player_id": 1, "action": 100, "action_type": "check"},
+        {"round": 1, "player_id": 0, "action": 100, "action_type": "raise"},
+        {"round": 1, "player_id": 1, "action": 100, "action_type": "call"},
+        {"round": 2, "player_id": 0, "action": 200, "action_type": "raise"},
+        {"round": 2, "player_id": 1, "action": 200, "action_type": "call"}]
+
+
+def _st51(bet=192, hole=(50, 11), chips=19600):
+    """第51手河牌决策点：我方(座位2)落后 914，河牌 check 后面对对手下注。"""
+    return parse_request(dict(
+        num_players=2, dealer_id=0, my_id=1, my_chips=chips,
+        my_cards=list(hole), public_cards=[30, 48, 24, 16, 22],
+        hand=50, max_hand=70, total_win_chips=[914, -914], total_win_games=[0, 0],
+        history=list(_H51) + [
+            {"round": 3, "player_id": 1, "action": 0, "action_type": "check"},
+            {"round": 3, "player_id": 0, "action": bet, "action_type": "raise"}]))
+
+
+_h51 = _st51()
+check("0924第51手:决策点底池 = 992（非界面 20,592）", _h51.pot == 992, str(_h51.pot))
+check("0924第51手:需跟 192 / 已投 400",
+      (_h51.to_call, _invested(_h51)) == (192, 400),
+      "%s / %s" % (_h51.to_call, _invested(_h51)))
+check("0924第51手:弃牌口径不 doom（弃牌安全）",
+      _doom_risk(_h51) is False, str(_doom_risk(_h51)))
+check("0924第51手:跟注口径 doom（余量仅 112）",
+      _doom_risk(_h51, include_to_call=True) is True, "应 True")
+check("0924第51手:一对 A + 便宜跟注 → 封顶 call",
+      _doom_exposure_cap(_h51) == "call" and _doom_hand_strong(_h51) is False,
+      str(_doom_exposure_cap(_h51)))
+check("0924第51手:端到端 = call 192（不再全押）",
+      decide(_h51, _m16_quiet) == {"act": "call"}, str(decide(_h51, _m16_quiet)))
+check("0924第51手:加注也被封顶为 call（不往会锁死的底池送钱）",
+      _doom_call_upgrade(_h51, {"act": "raise", "num": 576}) == {"act": "call"},
+      str(_doom_call_upgrade(_h51, {"act": "raise", "num": 576})))
+# 回归守卫：把便宜线关掉 → 复现修复前的全押（证明这就是根因）
+_keep_cap = _S2.DOOM_CAP_STACK_FRAC
+_S2.DOOM_CAP_STACK_FRAC = 0.0
+check("0924第51手:关掉便宜线 → 复现修复前 allin",
+      decide(_h51, _m16_quiet).get("act") == "allin",
+      str(decide(_h51, _m16_quiet)))
+_S2.DOOM_CAP_STACK_FRAC = _keep_cap
+check("0924第51手:便宜线 = %.2f（调参入口）" % DOOM_CAP_STACK_FRAC,
+      DOOM_CAP_STACK_FRAC == 0.15, str(DOOM_CAP_STACK_FRAC))
+
+# 强牌（A♦ + 公面 A♠ / 6♥ + 公面 6♠ = 两对）→ 仍全押（价值最大化）
+check("0924第51手:两对 → 仍 allin（价值最大化）",
+      _doom_exposure_cap(_st51(hole=(50, 17))) == "allin",
+      str(_doom_exposure_cap(_st51(hole=(50, 17)))))
+# 重投入跟注（5000 ≥ 15%×19600 = 2940）→ 仍全押
+check("0924第51手:重投入跟注(5000) → 仍 allin",
+      _doom_exposure_cap(_st51(bet=5000)) == "allin",
+      str(_doom_exposure_cap(_st51(bet=5000))))
+# 真 doom（弃牌口径成立：已投 17,000）→ 规则2-A 无条件全押，不豁免
+check("0924:真 doom（筹码只剩 3000）→ 无条件 allin",
+      decide(_st51(chips=3000), _m16_quiet).get("act") == "allin",
+      str(decide(_st51(chips=3000), _m16_quiet)))
 
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:

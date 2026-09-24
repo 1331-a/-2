@@ -137,6 +137,23 @@ GAMBLE_GOOD_PCT = 0.20
 SMALL_BET_FOLD_MIN = 0.35      # 小注弃牌率低于此值 → 判定「吓不走」
 SMALL_BET_MIN_N = 4            # 至少这么多次小注样本才判（数据不足不改行为）
 
+# ── 规则2-B 扩展（2026-09-24 用户规则）：敞口 doom 下「便宜跟注」不再升级全押 ──
+# 用户反馈（实战第51手 = log hand 50）：河牌 A♦4♣（一对 A）、对手只下注 192，
+#   bot 却把 19,600 全押上，被对手两对（6♣9♥）跟掉、直接输掉整场。
+# 【关键口径】牌桌上的「底池 20,592」是 **all-in 之后**的显示值；
+#   决策时底池只有 992（= 双方河牌前各 400 的 800 + 对手这 192），
+#   即对手那注是 24% 池 / 0.98% 我方筹码的正常小注，绝非「超池大注」。
+# 触发链（复原实测）：底池 992 / 需跟 192 / 已投 400 / 落后 914 / 剩 19 手
+#   · 弃牌口径 −1828−2×400 = −2628 > −2900 → 不 doom（弃牌安全）
+#   · 跟注口径 −1828−2×592 = −3012 ≤ −2900 → doom（**余量仅 112 筹码**）
+#   → `_doom_call_upgrade` 把决策层的「加注 576」升级成「全押 19,600」。
+# 修法：敞口 doom 成立时，若**跟注便宜**（to_call ≤ 15% 我方剩余）且手牌不强
+#   （非 ≥两对 / 非超强起手）→ 封顶为**跟注**，不加注也不全押：花 1% 筹码就能
+#   继续打这一手，没有理由把 100% 押给「只会用更强的牌跟」的对手。
+# 保留全押的情形：强牌（价值最大化）、跟注本身就是重投入（≥15% 筹码，
+#   跟与全押的风险已接近）、跟注即全下、真 doom（规则2-A 弃牌口径）。
+DOOM_CAP_STACK_FRAC = 0.15     # to_call ≤ 该比例 × 我方剩余 → 便宜跟注（封顶跟注）
+
 # ── 规则学习（2026-09-16 用户规则）：赢的规则尽量重复、输的规则尽量避免 ──
 # 记账在 match_ctx（rule_stats，随 globaldata 持久化）；此处只做「用账」：
 # 采纳的规则若被判定为「输的规则」（胜率 < RULE_BAD_WR，样本足够）→ 把主动
@@ -412,6 +429,53 @@ def _lock_line(state):
         return 0
 
 
+def _doom_hand_strong(state):
+    """doom 分流用的「强牌」判定：翻后有效牌型 ≥两对（含顺/花/三条/葫芦/四条）；
+    翻前超强牌（AA/KK/QQ/JJ/AKs）。
+
+    刻意比 `_has_nuts_or_strong_draw` 更严：后者只要**公面**有 3 连牌或 3 同花
+    就认为我方有听牌（不看手牌是否参与）——实战第51手就是这么被误判的：
+    公面 9♦A♠8♠6♠7♦ 有 4 连（6-7-8-9）+ 3 张黑桃，而我们手里 A♦4♣ 既不听顺
+    也不听花。一对 + 这种「伪听牌」在 doom 里不值得把剩余筹码全押上去。
+    """
+    try:
+        if state.stage == "preflop":
+            return bool(_is_super_hand(state.hole))
+        return _effective_category(state) >= TWO_PAIR
+    except Exception:
+        return False
+
+
+def _doom_exposure_cap(state):
+    """【规则2-B 扩展·2026-09-24 用户规则】敞口 doom 成立时「继续投入」的上限。
+
+    敞口 doom（`_doom_risk(include_to_call=True)`）= 「把这笔跟注输掉，对手就
+    数学上锁赢」。此时继续投入只有两种理性形态：
+      · **便宜跟注**（to_call ≤ DOOM_CAP_STACK_FRAC × 我方剩余）+ 手牌不强
+        → 封顶为 **call**：花极小代价留在这一手里（赢下它即可反锁对手），
+          绝不把全部筹码押给「只会用更强的牌跟」的对手；
+      · 其余 → **allin**：强牌要价值最大化；跟注本身已是重投入时，跟与全押的
+        风险已接近，全押还能多一份弃牌权益（原规则2 行为）。
+
+    返回 "call" / "allin" / None（None = 不适用：无跟注额或筹码已空）。
+    异常一律回退 "allin"（保守，等同于原行为）。
+    """
+    try:
+        to_call = int(state.to_call)
+        my_left = int(state.my_left)
+        if to_call <= 0 or my_left <= 0:
+            return None                                  # 免费过牌：交给降级函数
+        if to_call >= my_left:
+            return "allin"                               # 跟注即全下，无中间档
+        if _doom_hand_strong(state):
+            return "allin"                               # 强牌：价值最大化
+        if to_call <= DOOM_CAP_STACK_FRAC * my_left:
+            return "call"                                # 便宜跟注：封顶跟注
+        return "allin"                                   # 重投入：与全押风险接近
+    except Exception:
+        return "allin"
+
+
 def _lock_win_unified(state):
     """【规则2·2026-09-10 合并】锁胜 / 防锁赢统一决策（优先级 2）。
 
@@ -439,7 +503,10 @@ def _lock_win_unified(state):
             except Exception:
                 pass
             return {"act": "fold"}
-        # A. 防锁赢（弃牌就锁给对手 → allin）
+        # A. 防锁赢（弃牌就锁给对手 → allin）——无条件全押，用户硬规则。
+        # 注意：这里**不做**便宜跟注豁免——此分支意味着「弃牌=认输」，必须
+        # 争取赢下这一手，全押的弃牌权益（逼对手弃更好的牌）不能放弃。
+        # 便宜跟注豁免只作用于「敞口 doom」（见 _doom_call_upgrade）。
         if _match_adjust(state) == "doomed":
             return {"act": "allin"}
         # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
@@ -704,15 +771,19 @@ def _doom_call_upgrade(state, action):
     加注都是慢性死亡：赢了只赢一个小池，输了直接把比赛送掉。此时当手
     无条件 all-in，把「必须赢」变成「赢就翻倍」。
 
-    只升级 call / raise（两者都是「投入筹码但不求最大收益」）；
+    升级范围：call / raise / allin（都是「投入筹码」的动作）；
     fold / check 不动——弃牌不投入、不产生该风险（那是 _match_adjust 的
     弃牌口径负责判断）。
+    【2026-09-24 修正】不再「一律全押」：若跟注便宜（to_call ≤15% 我方剩余）
+    且手牌不强 → 封顶为 **call**（见 _doom_exposure_cap）。实战第51手就是
+    反例：底池仅 992、对手只下注 192（占我方筹码 0.98%），却被升成 19,600
+    全押，撞上对手两对直接输掉整场。
     合法性：调用方在 _normalize **之后**执行本函数，此处再确认 my_left>0。
     放在最后的原因：_normalize / _bet_limit 会按牌型上限把 allin 降级
     （非 ≥三条 且非 doomed 时），所以必须在其后覆盖。
     """
     try:
-        if action.get("act") not in ("call", "raise"):
+        if action.get("act") not in ("call", "raise", "allin"):
             return action
         if int(state.to_call) <= 0:
             return action
@@ -720,6 +791,8 @@ def _doom_call_upgrade(state, action):
             return action
         if not _doom_risk(state, include_to_call=True):
             return action
+        if _doom_exposure_cap(state) == "call":
+            return {"act": "call"}       # 便宜跟注：不升级（2026-09-24 修正）
         return {"act": "allin"}
     except Exception:
         return action

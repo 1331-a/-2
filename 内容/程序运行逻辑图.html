@@ -350,8 +350,12 @@
    │     │  └─ _last_hand_no_fold(state, action)
    │     ├─ _bet_cap_guard(state, action) → _dynamic_cap(state)
    │     ├─ _aggressive_strong_bet(state, action)
-   │     └─ _normalize(state, action)          # 合法性兜底
-   │        except → _safe_fallback_action(state)
+   │     ├─ _normalize(state, action)          # 合法性兜底
+   │     │  except → _safe_fallback_action(state)
+   │     ├─ _doom_bet_downgrade(state, a)      # 方案B：能过牌就过牌
+   │     └─ _doom_call_upgrade(state, a)       # 出口：敞口 doom
+   │        └─ _doom_exposure_cap(state)       # 规则2-B 便宜跟注 → call
+   │           └─ _doom_hand_strong(state)     # 强牌（≥两对）→ allin
    ├─ _to_response(action)                # bot.py:45  dict → 整数
    ├─ _final_guard(state, resp)           # bot.py:57  整数级最后校验
    │  └─ except → _fallback_resp(state)   # bot.py:99  → 0
