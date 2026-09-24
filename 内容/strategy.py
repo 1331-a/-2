@@ -166,6 +166,22 @@ UA_CROSS_CHECK = True
 UA_SEALED_ALLIN = True
 UA_SEALED_MARGIN = 0.15        # 越线幅度 ≥ 该比例 × 2×追回线 才算「明显被锁」
 
+# ── 规则20（2026-09-24 用户规则）：大额投入闸门（恢复旧限制） ──
+# 用户复盘实战第21手（河牌一对 6 面对加注 6,318 → 全押 17,226）后明确要求：
+#   · 需跟 > BIG_CALL_LIMIT(3000) 时，**只有有效牌型 ≥ 三条 才跟**；
+#   · **主动**全押只在「防锁赢 / 搏命区 / 牌型 ≥ 三条（翻前超强牌）」时允许。
+# 背景：2026-09-14 为了「应对对手 all-in 的定向决策」，我把旧的金额/牌型上限
+# （翻后 <三条 ≤3000、全下下限等）整体撤掉了；撤得太宽 —— 出口的
+# `UA_SEALED_ALLIN`（跟注即越线 → 全押）带着 `lk` 免检标记，连**弱牌**也能
+# 绕开上限直接推光。第21手就是：对手模型判对手很松 → 范围 ~70% →
+# 一对 6 的 MC 胜率被抬到 0.46（中性模型只有 0.21）→ 决策层想「跟注」→
+# 出口发现「跟了再输就明显越线」→ 升级成 17,226 全押。
+# 豁免（保留 2026-09-14 用户规则）：**应对对手全下**（对手已 all-in 或需跟
+# ≥ 我方剩余筹码）属定向决策，不受金额/牌型限制；防锁赢/搏命区由入口规则
+# 2 / 18 直接返回，不走这里。
+BIG_CALL_LIMIT = 3000          # 大额跟注线（翻后）：超过它跟注需 ≥ 三条
+BIG_MONEY_GUARD_ON = True      # 总开关（调参入口）
+
 # ── 规则学习（2026-09-16 用户规则）：赢的规则尽量重复、输的规则尽量避免 ──
 # 记账在 match_ctx（rule_stats，随 globaldata 持久化）；此处只做「用账」：
 # 采纳的规则若被判定为「输的规则」（胜率 < RULE_BAD_WR，样本足够）→ 把主动
@@ -591,6 +607,55 @@ def _endgame_matters(state, chip_action):
     except Exception:
         pass
     return False
+
+
+def _strong_for_big_money(state):
+    """能否投入大额：翻后有效牌型 ≥ 三条（三条/顺/花/葫芦/四条/同花顺）；
+    翻前超强牌（AA/KK/QQ/JJ/AKs）。"""
+    try:
+        if state.stage == "preflop":
+            return bool(_is_super_hand(state.hole))
+        return _effective_category(state) >= THREE_OF_A_KIND
+    except Exception:
+        return False
+
+
+def _big_money_guard(state, action):
+    """【规则20·2026-09-24 用户规则】大额投入闸门（出口硬规则）。
+
+    用户规则（复盘实战第21手：河牌一对 6 面对加注 6,318 → 全押 17,226）：
+      · 需跟 > BIG_CALL_LIMIT(3000) 且有效牌型 < 三条 → **不跟**（弃牌）；
+      · **主动**全押只在 [有效牌型 ≥ 三条 / 翻前超强牌] 时允许 ——
+        防锁赢（规则2-A）与搏命区（规则18）在 decide 入口就已返回，不经过这里。
+
+    豁免（保留 2026-09-14 用户规则）：**应对对手全下**（对手已 all-in，或需跟
+      ≥ 我方剩余筹码）属于「针对对手 all-in 的定向决策」，不受金额/牌型限制。
+
+    降级方式：弱牌主动全押 → 免费时过牌；需要跟注时先过金额闸门
+      （>3000 且不强 → 弃牌，否则跟注）。异常一律放行（不改动）。
+    """
+    if not BIG_MONEY_GUARD_ON:
+        return action
+    try:
+        act = action.get("act")
+        to_call = int(state.to_call)
+        my_left = int(state.my_left)
+        if state.any_allin or to_call >= my_left:
+            return action                       # 定向决策：跟对手全下不受限
+        strong = _strong_for_big_money(state)
+        if act == "allin":
+            if strong:
+                return action                   # ≥三条 / 翻前超强牌 → 允许推光
+            if to_call <= 0:
+                return {"act": "check"}         # 免费过牌：不主动送筹码
+            if to_call > BIG_CALL_LIMIT:
+                return {"act": "fold"}
+            return {"act": "call"}
+        if act == "call" and to_call > BIG_CALL_LIMIT and not strong:
+            return {"act": "fold"}
+    except Exception:
+        pass
+    return action
 
 
 def _endgame_arbitrate(state, model, chip_action, eq, adj):
@@ -1121,7 +1186,11 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 【2026-09-24 用户规则】终局效用仲裁（放在 _normalize 之后：这样比较的是
     # 最终合法注额；仲裁若判全押会带 `lk` 标记，不再被牌型/金额上限降级）。
     # 取代原来的 `_doom_bet_downgrade` + `_doom_call_upgrade` 两个单向补丁。
-    return _endgame_arbitrate(state, model, action, _LAST_EQ, _LAST_ADJ)
+    action = _endgame_arbitrate(state, model, action, _LAST_EQ, _LAST_ADJ)
+    # 【规则20·2026-09-24 用户规则】大额投入闸门：需跟 > 3000 要 ≥ 三条，
+    # 主动全押要 ≥ 三条（防锁赢/搏命区已在入口返回）。必须放在仲裁**之后**——
+    # 仲裁的 `UA_SEALED_ALLIN` 会带 `lk` 免检标记直接推光，这里再收紧。
+    return _big_money_guard(state, action)
 
 
 # ================================================================

@@ -12,7 +12,7 @@ from game_state import parse_request                     # noqa: E402
 from opponent import OpponentModel, build_model_from_history  # noqa: E402
 from strategy import (decide, explain, _candidate_rules,  # noqa: E402
                       _winning_rule, DecisionLogger,
-                      _fmt_card, BetPatternDetector)
+                      _fmt_card, BetPatternDetector, ONE_PAIR)
 
 _PASS = []
 _FAIL = []
@@ -1245,8 +1245,11 @@ check("0924第32手:越线 → 防锁赢全押（带 lk 免检）",
       _endgame_arbitrate(_h32, _m16_quiet, {"act": "call"}, 0.5,
                          "normal") == {"act": "allin", "lk": 1},
       str(_endgame_arbitrate(_h32, _m16_quiet, {"act": "call"}, 0.5, "normal")))
-check("0924第32手:端到端 = allin（不再只跟 1,765）",
-      decide(_h32, _m16_quiet).get("act") == "allin",
+# 【2026-09-24 规则20 收紧】本手牌型 = 一对 9（< 三条）→ 不允许**主动**全押
+# （用户规则：主动 allin 只在 防锁赢 / 搏命区 / ≥三条）。仲裁内部仍会升成全押，
+# 但出口 `_big_money_guard` 会把它降回决策层动作（跟注 1,765 ≤ 3,000 ✓）。
+check("0924第32手:规则20 把关 → 弱牌不再主动全押（降为 call）",
+      decide(_h32, _m16_quiet).get("act") == "call",
       str(decide(_h32, _m16_quiet)))
 # 关掉硬规则 → 回到效用比较（调参入口）
 _keep_sealed = _S2.UA_SEALED_ALLIN
@@ -1265,6 +1268,104 @@ check("0924:第51手是擦线（越线 3.9%% 低于门槛 %.0f%%）→ 不触发
       str(_endgame_arbitrate(_h51, _m16_quiet, {"act": "call"}, 0.5, "normal")))
 check("0924:擦线门槛 = %.2f（调 0 = 只要越线就全押）" % UA_SEALED_MARGIN,
       UA_SEALED_MARGIN == 0.15, str(UA_SEALED_MARGIN))
+
+# ============ 2026-09-24 规则20：大额投入闸门（用户规则） ============
+# 实战第21手（UI 第21手 = log hand 20）：河牌 10♠6♦A♣3♥K♦，我方 8♣6♣ = 一对 6，
+#   对手 8♦A♦ = 一对 A。事件：对手加注至 6,318（1.14 池），我方全押 17,226。
+# 【筹码复原（与截图完全吻合）】底池 11,866 = 双方各投 2,774 + 对手这注 6,318；
+#   我方剩余 17,226 = 20,000 − 2,774；对手 10,908 = 20,000 − 2,774 − 6,318
+#   → 本场 0:0（不存在 doom，也不在搏命区）→ 全押只可能来自「跟注即越线 → 全押」
+#   的升级（`UA_SEALED_ALLIN`，本手越线 146% ≥ 15%），而其前提是决策层原本要跟注
+#   —— 这正是「对手模型把门槛压到 ~0.21 / 把范围估宽把 eq 抬到 0.46」的地方。
+# 用户规则（2026-09-24）：
+#   · 需跟 > BIG_CALL_LIMIT(3000) 且有效牌型 < 三条 → 弃牌；
+#   · **主动**全押只在 [有效牌型 ≥ 三条 / 翻前超强牌] 时允许（防锁赢、搏命区在
+#     decide 入口已经返回，不走这里）。
+#   豁免（09-14 用户规则）：应对**对手全下**（any_allin 或需跟 ≥ 剩余筹码）
+#     属定向决策，不受金额/牌型限制。
+from strategy import (_big_money_guard, _strong_for_big_money,     # noqa: E402
+                      BIG_CALL_LIMIT)
+from evaluator import THREE_OF_A_KIND                              # noqa: E402
+
+
+def _st20(cards=(27, 19), lead=0, chips=17226):
+    """第21手决策点：翻前各 100，翻牌各 765，转牌各 1,909，河牌对手加注 6,318。"""
+    hist = [{"round": 0, "player_id": 1, "action": 100, "action_type": "call"},
+            {"round": 0, "player_id": 0, "action": 0, "action_type": "check"},
+            {"round": 1, "player_id": 1, "action": 765, "action_type": "raise"},
+            {"round": 1, "player_id": 0, "action": 765, "action_type": "call"},
+            {"round": 2, "player_id": 1, "action": 1909, "action_type": "raise"},
+            {"round": 2, "player_id": 0, "action": 1909, "action_type": "call"},
+            {"round": 3, "player_id": 1, "action": 6318, "action_type": "raise"}]
+    return parse_request(dict(
+        num_players=2, dealer_id=1, my_id=0, my_chips=chips,
+        my_cards=list(cards), public_cards=[32, 18, 51, 5, 46],
+        hand=20, max_hand=70,
+        total_win_chips=[lead, -lead], total_win_games=[0, 0], history=hist))
+
+
+_h20 = _st20()
+check("0924第21手:复原 —— 需跟 6,318 / 底池 11,866 / 已投 2,774 / 一对",
+      (_h20.to_call, _h20.pot, _invested(_h20),
+       _effective_category(_h20)) == (6318, 11866, 2774, ONE_PAIR),
+      "%s/%s/%s" % (_h20.to_call, _h20.pot, _invested(_h20)))
+check("0924第21手:本场 0:0 → 不 doom、不在搏命区",
+      _doom_risk(_h20) is False and _gamble_zone(_h20) is False, "")
+check("0924第21手:跟注口径越线 146% → sealed 成立（内部仍判「明显被锁」）",
+      _sealed_by_call(_h20) is True, "")
+check("0924第21手:一对 6 → 不属于「大额可投」的牌",
+      _strong_for_big_money(_h20) is False,
+      str(_strong_for_big_money(_h20)))
+check("0924第21手:规则20 —— 弱牌主动全押被降级为弃牌（需跟 6,318 > 3,000）",
+      _big_money_guard(_h20, {"act": "allin", "lk": 1}) == {"act": "fold"},
+      str(_big_money_guard(_h20, {"act": "allin", "lk": 1})))
+check("0924第21手:规则20 —— 大额跟注（6,318 > 3,000）也降级为弃牌",
+      _big_money_guard(_h20, {"act": "call"}) == {"act": "fold"},
+      str(_big_money_guard(_h20, {"act": "call"})))
+check("0924第21手:端到端 = fold（不再跟注 / 不再全押）",
+      decide(_h20, _m16_quiet).get("act") == "fold",
+      str(decide(_h20, _m16_quiet)))
+# 三条（6♣6♥ + 公面 6♦）→ 允许大额投入
+_h20set = _st20(cards=(19, 17))
+check("0924第21手:三条 → 允许（主动全押保留）",
+      _strong_for_big_money(_h20set) is True
+      and _big_money_guard(_h20set, {"act": "allin", "lk": 1})
+      == {"act": "allin", "lk": 1}, "")
+# 真 doom（落后 1,109 → 弃牌口径成立）→ 入口规则2-A 无条件全押，不受本闸门影响
+check("0924第21手:落后 1,109（真 doom）→ 仍无条件全押",
+      decide(_st20(lead=-2218), _m16_quiet).get("act") == "allin",
+      str(decide(_st20(lead=-2218), _m16_quiet)))
+# 豁免：应对对手全下（需跟 ≥ 剩余筹码）
+_h20allin = parse_request(dict(
+    num_players=2, dealer_id=0, my_id=0, my_chips=17226,
+    my_cards=[27, 19], public_cards=[32, 18, 51, 5, 46], hand=20, max_hand=70,
+    total_win_chips=[0, 0], total_win_games=[0, 0],
+    history=[{"round": 0, "player_id": 0, "action": 100, "action_type": "call"},
+             {"round": 0, "player_id": 1, "action": 100, "action_type": "check"},
+             {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
+             {"round": 1, "player_id": 1, "action": 17226, "action_type": "allin"}]))
+check("0924第21手:应对对手全下 → 豁免（闸门不改动动作）",
+      _big_money_guard(_h20allin, {"act": "allin", "lk": 1})
+      == {"act": "allin", "lk": 1}
+      and _big_money_guard(_h20allin, {"act": "call"}) == {"act": "call"}, "")
+# 小额跟注（≤3,000）不受影响
+_h20small = parse_request(dict(
+    num_players=2, dealer_id=1, my_id=0, my_chips=17226,
+    my_cards=[27, 19], public_cards=[32, 18, 51, 5, 46], hand=20, max_hand=70,
+    total_win_chips=[0, 0], total_win_games=[0, 0],
+    history=[{"round": 0, "player_id": 1, "action": 100, "action_type": "call"},
+             {"round": 0, "player_id": 0, "action": 0, "action_type": "check"},
+             {"round": 1, "player_id": 1, "action": 765, "action_type": "raise"},
+             {"round": 1, "player_id": 0, "action": 765, "action_type": "call"},
+             {"round": 2, "player_id": 1, "action": 1909, "action_type": "raise"},
+             {"round": 2, "player_id": 0, "action": 1909, "action_type": "call"},
+             {"round": 3, "player_id": 1, "action": 2000, "action_type": "raise"}]))
+check("0924第21手:小额跟注（2,000 ≤ 3,000）放行",
+      _h20small.to_call <= BIG_CALL_LIMIT
+      and _big_money_guard(_h20small, {"act": "call"}) == {"act": "call"},
+      str(_big_money_guard(_h20small, {"act": "call"})))
+check("0924规则20:闸门参数（大额跟注线 = %d）" % BIG_CALL_LIMIT,
+      BIG_CALL_LIMIT == 3000 and THREE_OF_A_KIND == 3, str(BIG_CALL_LIMIT))
 
 print("\n\u901a\u8fc7 %d / %d" % (len(_PASS), len(_PASS) + len(_FAIL)))
 if _FAIL:

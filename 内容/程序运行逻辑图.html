@@ -352,11 +352,14 @@
    │     ├─ _aggressive_strong_bet(state, action)
    │     ├─ _normalize(state, action)          # 合法性兜底
    │     │  except → _safe_fallback_action(state)
-   │     └─ _endgame_arbitrate(state, model, a, _LAST_EQ, _LAST_ADJ)
-   │        ├─ UA_CROSS_CHECK 硬规则            # 投进去就锁赢 → 过牌
-   │        ├─ _endgame_matters(state, a)       # 敞口 doom / 投入即锁赢 / 搏命区
-   │        └─ _endgame_eu(...)                 # 弃/过/跟/加/全押 各算 EU
-   │           └─ _win_utility(state, lead)     # lead → 最终胜率（平滑，无悬崖）
+   │     ├─ _endgame_arbitrate(state, model, a, _LAST_EQ, _LAST_ADJ)
+   │     │  ├─ UA_CROSS_CHECK 硬规则            # 投进去就锁赢 → 过牌
+   │     │  ├─ _endgame_matters(state, a)       # 敞口 doom / 投入即锁赢 / 搏命区
+   │     │  └─ _endgame_eu(...)                 # 弃/过/跟/加/全押 各算 EU
+   │     │     └─ _win_utility(state, lead)     # lead → 最终胜率（平滑，无悬崖）
+   │     └─ _big_money_guard(state, action)     # 规则20 大额闸门
+   │        ├─ _strong_for_big_money(state)     # 翻后 ≥三条 / 翻前超强牌
+   │        └─ 需跟>3000 要 ≥三条｜主动全押要 ≥三条（对手全下豁免）
    ├─ _to_response(action)                # bot.py:45  dict → 整数
    ├─ _final_guard(state, resp)           # bot.py:57  整数级最后校验
    │  └─ except → _fallback_resp(state)   # bot.py:99  → 0
