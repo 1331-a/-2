@@ -30,8 +30,24 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 
 ## 当前规则清单（按生效顺序）
 1. **规则2 锁赢/防锁赢 `_lock_win_unified`**（decide 入口，先于胜率计算）：fold_out 锁胜 → fold（`to_call==0` 用 check）；**A 防锁赢（doomed）→ 无条件 allin**（带 `lk=1` 免检，`_normalize` 直接放行；用户硬规则，不给便宜跟注豁免）；C 盈利锁胜与 A 同式（死代码，可清理）。
-2. **规则2-B 便宜跟注封顶 `_doom_exposure_cap`**（2026-09-24）：敞口 doom 成立时，若 `to_call ≤ DOOM_CAP_STACK_FRAC(0.15) × 我方剩余` 且手牌不强（`_doom_hand_strong`：翻后 ≥两对 / 翻前超强）→ **call**（不加注不全押）；强牌 / 跟注本身重投入 / 跟即全下 → allin。作用点 `_doom_call_upgrade`。
-3. **方案B `_doom_bet_downgrade`**：`to_call == 0` 且本次投入会让 doom 成立 → check。
+2. **终局效用仲裁 `_endgame_arbitrate`（2026-09-24，取代两个旧补丁）**：决策出口把
+   **弃牌 / 过牌 / 跟注 / 加注 / 全押**放在同一尺度（`_win_utility`：lead → 最终胜率 U，
+   logistic 平滑、无「线上1线下0」悬崖；锚点 = ±2×_blind_line）比较 EU，取最优。
+   · EU 分支：fold/check = `lead−2×已投`；跟注 = eq×U(收池) + (1−eq)×U(输敞口)；
+     加注/全押 = f×U(收池) + (1−f)(eq_c×U(赢大池) + (1−eq_c)×U(输更多))，
+     `f=弃牌权益`，**`eq_c = eq^(1+UA_CALL_DAMP×n/底池)`**（超池全押被跟 = 已输；
+     用幂次保证 eq=1 的坚果不受惩罚）；对手已全押时 f=0。
+   · 三条护栏：① 只往「更保守」方向修正（UA_RISK_RANK，不制造新加注/全押）；
+     ② 硬性弃牌（河牌公对陷阱/突袭大注/公对风险规避）不被翻案；③ 保留用户硬规则
+     `UA_CROSS_CHECK`（有免费过牌且投进去就越线 → 过牌，即 09-15 方案B）。
+   · 触发面 `_endgame_matters`：敞口 doom / 投入即锁赢 / 搏命区；不触发则完全不动常规策略。
+   · 已删除的旧补丁：`_doom_call_upgrade`（call/raise→allin，单向更激进、弃牌从不参与）、
+     `_doom_bet_downgrade`（raise→check）。
+   · 第51手实测 EU：弃牌 0.190 / 跟注 0.286(0.412 收池) / 加注576 0.322 / **全押 0.188（最差）**
+     → 12 次决策 0 次全押。
+   · 调参：`UA_ON` / `UA_SLOPE(1.6)` / `UA_CALL_DAMP(0.6)` / `UA_CROSS_CHECK`。
+3. **方案B `_doom_bet_downgrade`**：已并入 `_endgame_arbitrate` 的 `UA_CROSS_CHECK`
+   硬规则（`to_call == 0` 且本次投入会让 `_doom_risk(extra=add)` 成立 → check）。
 4. **规则10 求稳 `_stability_mode`**（`STABILITY_LINE_FACTOR=0.60` 或剩 ≤8 手且领先）→ `_stability_guard`：主动侧 check、被动只跟；强牌例外。
 5. **规则16 放宽**：剩局少 / 对手爱 all-in → 跟全下门槛 −，上限 0.09。
 6. **规则17 盈利收紧 `_lead_allin_shift`**（翻后跟 all-in 叠加）：>+50BB +0.12 / >+10BB +0.07 / ±10BB +0.02 / <−10BB −0.03 / <−50BB −0.08。
@@ -56,7 +72,7 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 - 【教训】确定性硬规则（doom/锁赢）的输入必须用客观原始值；「赛制/风格偏移」只能改软阈值。
 - 【标签】日志里的「规则1/4 大注弃牌」是 `_winning_rule()` 的兜底标签，不是真规则。
 - 【翻后跟 all-in 判定顺序】规则2 → 河牌裸公对陷阱 → 公面同花威胁 → 突袭大注（eq 打折 0.15、牌型<三条直接弃）→ `thr = eff_req + margin ± 档位 + 规则17 − 规则16`。
-- 【调参入口】`DOOM_CAP_STACK_FRAC` / `GAMBLE_LINE_FACTOR`·`GAMBLE_GOOD_PCT` / `STABILITY_LINE_FACTOR` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON`。
+- 【调参入口】`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`（终局效用仲裁）/ `GAMBLE_LINE_FACTOR`·`GAMBLE_GOOD_PCT` / `STABILITY_LINE_FACTOR` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON`。
 - `hand_percentile`：AA 0.015 / 77 0.151 / 66 0.210 / KQs 0.275 / AKo 0.121。
 - 【测试稳定性】MC 600 次抽样会让贴门槛的断言偶发翻转（>=10/20 → >=20/40 或改直测底层函数/极端值）。
 
