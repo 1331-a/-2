@@ -64,6 +64,7 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 8. **规则19 小注作废**：对手面对 ≤40% 池小注弃牌率 <0.35（样本≥4）→ 停用四条小注路线（`_opp_check_bet` / `_blocking_bet_proxy` / `_lead_bet_proxy` / `_probe_bet_proxy`）；价值注不受影响。
 9. **规则学习**（`match_ctx.rule_stats` 跨手持久化）：样本≥4 且胜率 <0.35 的「输的规则」→ 只把 raise 降级为跟/过；胜率 >0.60 的规则优先复用；fold/check/call/allin 及硬规则、兜底标签不参与。
 10. **注额上限**：翻前 ≤1000；翻后 <三条 ≤3000（小两对 ≤2000）；≥三条不限。**只约束我方主动下注/shove**——跟注与应对对手 all-in 一律豁免（2026-09-14 用户规则：定向决策替换所有旧限制）。
+10b. **规则20 大额投入闸门 `_big_money_guard`**（2026-09-24，出口最后一步，在 `_endgame_arbitrate` 之后）：R1 `to_call > BIG_CALL_LIMIT(3000)` 且有效牌型 < 三条 → **fold**；R2 **主动**全押只在 [≥三条 / 翻前 AA·KK·QQ·JJ·AKs] 才允许，否则降级（免费→check，否则按 R1）。豁免：应对对手全下（`any_allin` 或 `to_call ≥ my_left`）。防锁赢/搏命区在入口 return，不受影响。背景：第21手一对6 因「模型压低门槛 → 决策层想跟 → `UA_SEALED_ALLIN` 升级全押」而推光 17,226。
 11. 安全网 `_normalize`（合法性夹紧）+ `_allin_floor_guard`（仅主动 shove：累计投入 ≤ 盈利+1000 → fold）。
 
 ## 牌型与强度判定
@@ -81,7 +82,8 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 - 【教训】确定性硬规则（doom/锁赢）的输入必须用客观原始值；「赛制/风格偏移」只能改软阈值。
 - 【标签】日志里的「规则1/4 大注弃牌」是 `_winning_rule()` 的兜底标签，不是真规则。
 - 【翻后跟 all-in 判定顺序】规则2 → 河牌裸公对陷阱 → 公面同花威胁 → 突袭大注（eq 打折 0.15、牌型<三条直接弃）→ `thr = eff_req + margin ± 档位 + 规则17 − 规则16`。
-- 【调参入口】`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`（终局效用仲裁）/ `GAMBLE_LINE_FACTOR`·`GAMBLE_GOOD_PCT` / `STABILITY_LINE_FACTOR` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON`。
+- 【调参入口】`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`（终局效用仲裁）/ `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON`（规则20）/ `GAMBLE_LINE_FACTOR`·`GAMBLE_GOOD_PCT` / `STABILITY_LINE_FACTOR` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON`。
+- 【对手模型对门槛的叠加影响】`arch=="maniac" → eff_req −0.08`、规则16 最多 −0.09、被动型 −0.02 → 跟注门槛可从 0.39 压到 ~0.20；`_opp_range_pct` 只看「翻前是否加注者 + vpip」，**不看当前街加注**（范围可能被估宽：一对 6 对 67% 范围 eq 0.49、对 35% 只 0.37）——这是「学习导致偏差过大」的来源，规则20 是它的兜底。
 - `hand_percentile`：AA 0.015 / 77 0.151 / 66 0.210 / KQs 0.275 / AKo 0.121。
 - 【测试稳定性】MC 600 次抽样会让贴门槛的断言偶发翻转（>=10/20 → >=20/40 或改直测底层函数/极端值）。
 
