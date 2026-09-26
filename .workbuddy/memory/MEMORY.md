@@ -19,6 +19,23 @@
   ★**只改 `OPEN_SIZE_BB` 无效**——`_learned_size`（学习优先）会用 `bucket_to_frac`
   **覆盖**它（线上开池 300 = 学习选了 pf_m 的 3.0BB，不是 OPEN_SIZE_BB）。
   分桶边界（pf small≤2.5 / med≤4）不变，3.5 仍落 med 桶。
+- 【条件化·2026-09-26 **已上线** 48914c0】开池尺寸**再乘对手权重**：
+  `_open_weight` = clamp((0.80−eff_vpip)/0.25, 0, 1)，再乘**样本门控**
+  `min(1, hands_seen/OPEN_SAMPLE_HANDS(8))` → `_open_size_bb` 在
+  `[OPEN_SIZE_HARD_CALL_BB(2.5) .. OPEN_SIZE_BB(3.5)]` 间插值；
+  **学习尺寸一并折减** `preB + w×(learned−preB)`，`_B_PRE_FRAC={2.5:2.2,3.5:3.0,4.5:4.0}`。
+  效果：对手硬跟→回退 2.5BB；爱弃→3.5BB；**前 8 手不生效**（开局不凭先验多送钱）。
+- 【A 条件化·2026-09-26 已上线】`_future_cost(state, to_call, model)` 折算额按
+  `_future_aggr_factor(model)` 缩放（`avg_bets_per_hand` 映射到 [0.15,1.0]）：
+  被动对手（不连街开火）→≈0；持续施压→满额。
+- 【听牌缺口修正·2026-09-26 已上线】原 `future_cost` 只在 `not big_draw` 计入、
+  而 `implied=1.4` 只给 `big_draw` → **作用集合不相交**，听牌（最容易被赶走的牌）
+  从未被 A 触及。现听牌也计入折算并取消隐含赔率加成（`FUTURE_DRAW_IMPLIED_CAP=1.0`）。
+- 【A 感知硬规则·2026-09-26 **默认关闭**】`BIG_BET_FOLD_A_ON=False` ——
+  「大注+无坚果→弃」仍是原样 `to_call > 0.6×池` 一刀切。
+  **隔离检验未通过**：连街开火型 +1917（p=0.734 不显著）/ 中等尺度型 −862
+  （p=0.036 显著为负）；加门控 0.60 后收益被砍 35% 而亏损未减 → 收益与亏损
+  **同源**，无法按对手激进度分离。代码/门控/测试保留，`WB_FORCE_BIGBET_A=1` 可再启用。
 
 ## 构建发布
 - 单文件提交版 `内容/botzone_submit.py`（`bundle.py` 打包 8+1 模块）；ELF 由 GitHub Actions（仓库 `1331-a/-2`，workflow build-elf）构建，artifact `poker_bot-linux-x86-64`（约 7MB）。
