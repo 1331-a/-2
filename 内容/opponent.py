@@ -313,11 +313,23 @@ class OpponentModel:
     # ---------------- 桶 -> 代表下注尺寸（策略层选用）----------------
     @staticmethod
     def bucket_to_frac(bucket):
-        """把桶转成代表下注比例（翻后：底池比例；翻前：大盲倍数）。"""
+        """把桶转成代表下注比例（翻后：底池比例；翻前：大盲倍数）。
+
+        【方案B 联动·2026-09-24】翻前代表值随 `strategy.OPEN_SIZE_BB` 上移：
+            2.2 / 3.0 / 4.0  →  2.5 / 3.5 / 4.5
+        原因：`strategy._learned_size` 是**学习优先**——一旦对手响应样本 ≥3，
+        开池尺寸就被本表的值覆盖。若 B 只改 `OPEN_SIZE_BB` 而不动本表，线上
+        开池尺寸会被学习拉回旧值（3.0BB），B 实际只在前几手生效。
+        【为什么不动分桶边界】`_bet_size_bucket` 的边界（≤2.5 / ≤4.0）保持不变：
+        新的常规开池 3.5BB 仍落在 pf_m（2.5 < 3.5 ≤ 4.0），即「常规开池」
+        归于中桶、代表值恰为 3.5 —— 分桶语义不变，只把每桶的**代表尺寸**
+        按新基准整体上移，学习得到的仍是「对手最买账的那一档」，只是尺寸
+        随之放大。翻后代表值（0.35/0.55/0.80）与 B 无关，保持不变。
+        """
         return {
-            OpponentModel._BUCKET_PF_SMALL: 2.2,
-            OpponentModel._BUCKET_PF_MED: 3.0,
-            OpponentModel._BUCKET_PF_LARGE: 4.0,
+            OpponentModel._BUCKET_PF_SMALL: 2.5,
+            OpponentModel._BUCKET_PF_MED: 3.5,
+            OpponentModel._BUCKET_PF_LARGE: 4.5,
             OpponentModel._BUCKET_SF_SMALL: 0.35,
             OpponentModel._BUCKET_SF_MED: 0.55,
             OpponentModel._BUCKET_SF_LARGE: 0.80,

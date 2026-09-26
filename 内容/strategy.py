@@ -35,11 +35,44 @@ from itertools import combinations
 # ============ 可调参数（单位见注释） ============
 # ---- 翻前范围（百分位，0~1，越小越紧） ----
 BTN_OPEN_PCT = 0.80        # 庄家开池基准：前 80% 的起手牌（HU 标准宽度）
-OPEN_SIZE_BB = 2.5         # 开池尺寸（raise-to，单位大盲；最小加注为 2BB）
-OPEN_SIZE_VS_STATION = 2.2  # 对跟注站小尺寸开池（其反正不弃）
+# 【方案B·2026-09-24 用户规则】开池尺寸 2.5 → 3.5BB。
+# 背景：实测我方翻前中位 300 vs 对手 620~1316 —— 小开池在深筹码下**毫无
+# 隔离效果**，对手便宜跟注后逐步榨取（前 20 手反复小亏的共同上游）。
+# 加大到 3.5BB：① 让对手的跟注真正付代价；② 强牌进场即把底池做大。
+# 【联动·必须同步】改这个值**不够**——`_learned_size`（学习优先）会用
+# `OpponentModel.bucket_to_frac` 的翻前代表值（旧 2.2/3.0/4.0）**覆盖**
+# 开池尺寸。实测线上日志里我方开池 300 = 学习选了 pf_m（3.0BB）覆盖的结果，
+# 而非 OPEN_SIZE_BB。故 B 必须连同该代表值一起上移（见 opponent.py），
+# 否则改动只在「学习样本不足的前几手」生效、随后被拉回旧值。
+OPEN_SIZE_BB = 3.5         # 开池尺寸上限（对手会被赶走时的 raise-to，大盲倍数）
+OPEN_SIZE_VS_STATION = 3.0  # 对跟注站略小开池（其反正不弃；随 B 同步上移）
+# 【B 条件化·2026-09-25 用户规则】开池尺寸必须**看对手跟不跟**。
+# 用户原话：「对手如果一直硬跟就降低 B 的权重」。
+# 道理：开大池的价值来自**弃牌权益**（逼走对手赢盲注/隔离弱牌）。对手若
+# 一直硬跟，弃牌权益≈0 → 开大只是「用更宽的 80% 范围、在更大的底池里打」，
+# 白白多送钱。故尺寸随对手翻前入池率（VPIP）线性回退：
+#   对手爱弃（VPIP 低）→ OPEN_SIZE_BB(3.5)：大注逼弃、隔离有效
+#   对手硬跟（VPIP 高）→ OPEN_SIZE_HARD_CALL_BB(2.5)：少冒险
+# 用 `1 - eff_vpip()`（= 收缩后的翻前弃牌率，先验 0.32）判定。
+OPEN_SIZE_HARD_CALL_BB = 2.5   # 对手硬跟时的开池尺寸下限（= 旧值）
+OPEN_VPIP_SOFT = 0.55          # VPIP ≤ 此值 → 满尺寸（对手翻前会弃）
+OPEN_VPIP_HARD = 0.80          # VPIP ≥ 此值 → 下限（几乎不弃）
+# 【B 条件化·样本门控·2026-09-25】对手画像样本不足时**不要用 B**。
+# 理由（实测）：条件化靠 `eff_vpip` 判断，而 VPIP 在开局被强收缩到先验 0.68
+# （opponent 的 _SHRINK_K=12）→ 前几手 w 只有 ~0.48，开池停在 ~3.0BB，
+# **恰好是用户关注的「前 20 手」窗口**。配对模拟实测：对纯硬跟对手，
+# 「仅 B」在前 20 手 中位 −140 / p=0.084（略负）—— 就是这个样本不足期造成的。
+# 故按对手样本手数把 B 的权重线性放开：前 OPEN_SAMPLE_HANDS 手 w→0（用旧尺寸），
+# 样本够了才启用 B。样本足够时本门控无影响。
+OPEN_SAMPLE_HANDS = 8          # 对手样本手数达到此值 → B 权重完全放开
+# 「B 之前」的翻前学习代表值（opponent.bucket_to_frac 的旧值）。
+# 用途：把**学习尺寸**里属于 B 的增量按 _open_weight 折减；键 = B 之后的值。
+_B_PRE_FRAC = {2.5: 2.2, 3.5: 3.0, 4.5: 4.0}
 BB_3BET_PCT = 0.13         # 大盲 3-bet 基准范围
 BB_3BET_BLUFFY = 0.20      # 对手高弃牌率时的诈唬性 3-bet 范围
-ISO_SIZE_BB = 3.2          # 大盲对溜入者的隔离加注尺寸
+# 隔离加注必须 **≥ 常规开池**（否则「惩罚溜入者」反而比正常开池便宜）。
+# OPEN 升到 3.5 → ISO 同步 3.2 → 4.0。
+ISO_SIZE_BB = 4.0          # 大盲对溜入者的隔离加注尺寸
 SB_4BET_VALUE_PCT = 0.035  # 面对反加注的价值 4-bet 范围（JJ+/AK）
 SB_4BET_MULT = 2.3        # 4-bet 尺寸 = 对手 3-bet 额度 × 此倍数
 
@@ -182,6 +215,133 @@ UA_SEALED_MARGIN = 0.15        # 越线幅度 ≥ 该比例 × 2×追回线 才�
 BIG_CALL_LIMIT = 3000          # 大额跟注线（翻后）：超过它跟注需 ≥ 三条
 BIG_MONEY_GUARD_ON = True      # 总开关（调参入口）
 
+# ── 方案A（2026-09-24 用户规则）：跟注门槛计入「后续投入」（future cost）──
+# 背景（4 局真实日志定量）：vs 外部对手的输局里，前中期亏损几乎全部是同一种
+# 形态 ——「翻前开池 300 → 翻后小注 188~222 或被跟 519~565 → 转牌被
+# 1316~2192 赶走」。第 9 手 T♣6♣ 净 −819、第 11 手 净 −953、第 18 手
+# 一对 J 净 −2889 都是这个形状：每一笔跟注单看底池赔率都「便宜」（req
+# 0.20~0.35），但**后面还要再付**两三笔同样便宜的钱，合计才是真实成本。
+# 旧实现只按「本街 to_call / (pot+to_call)」算 required —— 把一条三街
+# 的付费链拆成三次「划算」的跟注，于是每条街都跟，最后被赶走。
+# 新口径（只在「有效的成牌」分支生效）：
+#     future_cost = FUTURE_COST_STREETS × min(未来每条街要付的钱, 封顶)
+#     eff_required = (to_call + future_cost) / (pot + to_call + future_cost)
+#   · 未来每条街的估计投入 = max(对手本街下注额, FUTURE_COST_POT_FRAC×池)
+#     再受 FUTURE_COST_STACK_FRAC×有效筹码 封顶（深筹码也不能无限放大）；
+#   · 剩余街数：翻牌 2、转牌 1、河牌 0（只对本街负责）。
+# 适用边界（与用户既有规则不冲突）：
+#   · 只在 `_face_bet` 的 good / medium / draw 三个「跟注评估」分支生效；
+#     strong（≥两对，价值加注）与 big_draw（隐含赔率另算）不适用 ——
+#     强牌本来就该为大池付费，听牌靠隐含赔率另算；
+#   · **全下分支不适用**（全下没有「后续投入」，跟了就是跟到底）；
+#   · 应对对手 all-in 属定向决策，不受影响。
+# 调参入口：FUTURE_COST_ON 关掉即回到旧口径（逐街独立底池赔率）。
+FUTURE_COST_ON = True
+# 评估用开关：WB_NO_FUTURE_COST=1 → 临时回到旧口径（A/B 对比用，不影响平台）
+try:
+    import os as _os
+    if _os.environ.get("WB_NO_FUTURE_COST") == "1":
+        FUTURE_COST_ON = False
+except Exception:
+    pass
+FUTURE_COST_STREETS = True     # True=按剩余街数自动折算；False=固定折算 1 条街
+FUTURE_COST_POT_FRAC = 0.75    # 未来每条街要付的钱 ≥ 底池的这个比例
+FUTURE_COST_DISCOUNT = 0.45    # 每条未来街的折现因子（越远越不确定，递减计入）
+FUTURE_COST_WEIGHT = 0.50      # 后续投入计入「代价侧」的权重（≠ 现在就亏这么多）
+FUTURE_COST_GAIN = 0.50        # 后续投入计入「可赢池」的权重（对手也会继续投）
+FUTURE_COST_STACK_FRAC = 0.25  # 未来投入总额 ≤ 有效筹码 × 此值（封顶）
+# 「便宜跟注」的封顶：旧实现里便宜跟注不受注额上限约束 → 对手每街要一点、
+# 我们每街给一点，累积被掏空。这里给便宜跟注一个「本手累计投入」封顶，
+# 超过即改弃（仅对弱牌生效；≥两对/坚果不受影响）。
+# 【重要·样本门控】封顶必须等对手画像有样本后才生效 —— 开局的暴击（H16 一对 J
+# 输 2,889）发生在对手「每街小注、被加注就跑」的习惯**还没被学到**的时候；
+# 那时候一刀切地封顶只会把正常价值跟注也砍掉（实测会把 H16 从 +2,889 翻成
+# 弃牌）。所以门槛随样本量线性放开，且要求注额**相对底池**确实小。
+FUTURE_COST_CHEAP_MAX = 1500   # 便宜跟注的本手累计投入上限（筹码）
+FUTURE_COST_CAP_ON = True      # 总开关
+FUTURE_COST_CAP_MIN_HANDS = 40 # 【样本门控】第几手起封顶才线性达到满强度
+FUTURE_COST_CAP_MIN_RATIO = 0.35  # 「便宜」下限：to_call ≥ 35% 底池 → 算大注，豁免
+
+# 【A 条件化·2026-09-25 用户规则】后续投入折算必须**看对手打不打**：
+# 「跟一手再被赶走」这条付费链的前提是**对手会在后面继续开火**。对手若
+# 被动（下注少），后面根本不会有第二次、第三次下注 —— 此时把 future_cost
+# 照满额计入，等于凭「想象中的后续投入」抬门槛 → 把本来该跟的牌弃掉。
+# 用户原话：「A 主要考虑对手打法激进的情况」。
+# 用 `avg_bets_per_hand()`（对手每局主动下注次数，规则17 同款信号，
+# 先验 0.9；≥1.5 = 持续施压型，≤0.7 = 被动过牌型）线性缩放：
+#   bets/hand ≤ FUTURE_AGGR_LO  → 折算 × FUTURE_AGGR_MIN（≈关掉）
+#   bets/hand ≥ FUTURE_AGGR_HI  → 折算 × 1.0（满额）
+FUTURE_AGGR_LO = 0.70    # 每局下注 ≤ 此值 → 被动，不折算
+FUTURE_AGGR_HI = 1.50    # 每局下注 ≥ 此值 → 持续施压，满额折算
+FUTURE_AGGR_MIN = 0.15   # 被动对手保留的最小折算比例（不完全归零，留一点残余）
+# 【A 扩展·2026-09-26】听牌（big_draw）的隐含赔率上限修正。
+# 原实现里 `future_cost` 跳过 big_draw、而 `implied=1.4` 只给 big_draw →
+# 两者**作用集合不相交**，A 从未触及「听牌被赶走」这条链。现在听牌也计入
+# 后续投入，并把隐含赔率加成压到此上限（1.0 = 完全取消加成，仍保留 ≥1）。
+FUTURE_DRAW_IMPLIED_CAP = 1.0
+
+# ── 【A 感知硬规则·2026-09-26 用户规则】「大注 + 无坚果 → 弃」不再一刀切 ──
+# 用户选定方案：让这条硬规则**看得见 A**。口径从「本街 to_call」改为
+# 「本街 to_call + 后续还要付的钱」：
+#   commit = to_call + BIG_BET_FOLD_FUTURE_W × future_cost
+#   commit > BIG_BET_FOLD_FRAC × pot  →  fold
+# 效果：对手爱连街开火 → future_cost 大 → 更早弃（掐断付费链）；
+#       对手被动 / 河牌 → future_cost=0 → **逐字等价于原规则**（0.6×池）。
+# 重要性：这条规则原先**完全不经过门槛**，是 A 唯一够不到的大块
+# （实测 aggro：20 个 fold 里 12 个由它决定，占 60%）。
+BIG_BET_FOLD_FRAC = 0.60      # 基准口径：本街 to_call 超过底池的此比例算「大注」
+BIG_BET_FOLD_FUTURE_W = 1.00  # 后续折算额计入「大注」口径的权重（1.0 = 全额）
+# 【门控·2026-09-26】只有在对手**确实是施压型**时才启用上述口径放大。
+# 实测（隔离检验）：无门控时该改动对「连街开火型」为正（+1917）、对「中等尺度型」
+# 显著为负（−862，p=0.036）→ 必须按对手分化，否则等于用一个对手的收益换另一个
+# 对手的亏损。要求 `_future_aggr_factor(model) ≥ BIG_BET_FOLD_MIN_AGGR`：
+#   · 0.60 ⇔ 对手每局主动下注 ≳1.12 次（真正的连街开火者）
+#   · 顺带起到**样本门控**作用：无样本时因子只有先验 0.3625 < 0.60 → 不启用，
+#     开局绝不凭先验猜测把口径放大（与 B 的 `OPEN_SAMPLE_HANDS` 同一思路）。
+#   · 被动对手（真实日志实测 bets/hand 0.25~0.75 → 因子 0.15~0.20）→ 不启用。
+BIG_BET_FOLD_MIN_AGGR = 0.60
+# 单独开关：关掉 = 回到「只用本街 to_call」的旧口径（WB_NO_BIGBET_A=1）。
+# 用途：把「A 感知硬规则」这一项的净效果从 A 的整体效果里隔离出来做 A/B。
+#
+# ★★默认 False —— 2026-09-26 隔离检验**未通过验证**，故默认不启用（代码保留备用）：
+# 实测（同 seeds 逐 seed 配对，只换这一项）：
+#   · aggro（连街开火）  ：+1917（13好/10差，符号 p=0.734）→ **不显著**
+#   · cloudturn（中等尺度）： −862（ 8好/17差，符号 p=0.036）→ **显著为负**
+# 加门控 `BIG_BET_FOLD_MIN_AGGR=0.60` 试图只保留施压型对手：
+#   · aggro   +1917 → +1254（8好/8差，p=0.500）→ 收益被砍掉约 35%
+#   · cloudturn −862 → **−945（4好/11差，p=0.035）→ 损害一点没减**
+#   → 门控**未能分离**两类对手。原因可推算：`commit` 越过 `0.6×池` 本身就需要
+#     `factor ≳ 0.55`，即**能触发的决策已经集中在高因子区**，再按因子过滤
+#     只会等比例削掉收益，削不掉亏损。
+# 结论：这项改动的收益与亏损来自**同一片区域**，无法按对手激进度分离 →
+#       默认关闭。若日后想再试，把它设为 True 即可（或用 WB_NO_BIGBET_A 反向控制）。
+BIG_BET_FOLD_A_ON = False
+try:
+    import os as _os3
+    if _os3.environ.get("WB_NO_BIGBET_A") == "1":
+        BIG_BET_FOLD_A_ON = False
+    elif _os3.environ.get("WB_FORCE_BIGBET_A") == "1":
+        BIG_BET_FOLD_A_ON = True
+except Exception:
+    pass
+
+# 【调试】WB_FC_DEBUG=1 → WB_FC_LOG 收集 future_cost 折算记录（probe_gap.py 用）
+WB_FC_DEBUG = False
+WB_FC_LOG = []
+# 【调试·2026-09-26】WB_FACE_DEBUG=1 → WB_FACE_LOG 收集**跟注点全景**
+# （eq / 最终门槛 / 边际 / 强度分层 / 对手画像），用于定位「门槛抬升为何翻不动
+# 决策」——即区分「门槛不够高」与「eq 本身被高估」这两个完全不同的病因。
+WB_FACE_DEBUG = False
+WB_FACE_LOG = []
+try:
+    import os as _os2
+    if _os2.environ.get("WB_FC_DEBUG") == "1":
+        WB_FC_DEBUG = True
+    if _os2.environ.get("WB_FACE_DEBUG") == "1":
+        WB_FACE_DEBUG = True
+except Exception:
+    pass
+
 # ── 规则学习（2026-09-16 用户规则）：赢的规则尽量重复、输的规则尽量避免 ──
 # 记账在 match_ctx（rule_stats，随 globaldata 持久化）；此处只做「用账」：
 # 采纳的规则若被判定为「输的规则」（胜率 < RULE_BAD_WR，样本足够）→ 把主动
@@ -284,9 +444,12 @@ OPP_CHECK_BET = 0.40          # 对手 check 后立刻下注（底池比例）
 # ---- 规则1：对手锁胜时的激进调整（最高优先级）----
 # 【规则】对手最近20局弃牌率>65% 且 全下频率<10%（match_ctx.opponent_locking）
 # → 判定对手明显收紧（疑似锁胜），主动偷盲追分：
-#   BTN 任意两张牌 2.5BB 开池（100% 频率）→ 翻后 C-Bet 85% 频率、50~60% 池
+#   BTN 任意两张牌偷盲开池（100% 频率）→ 翻后 C-Bet 85% 频率、50~60% 池
 #   → 被加注/全下立即弃牌不纠缠。本规则触发时不受规则2/规则3 限制。
-STEAL_OPEN_BB = 2.5           # 偷盲开池尺寸（2.5BB）
+# 【方案B 联动·2026-09-24】偷盲用**任意两张牌**，纯赌弃牌率；尺寸故意保持
+# 低于常规开池（3.5BB）——拿垃圾牌少冒险，同时 3.0BB 仍与常规开池差异不大
+# 以免成为可读的尺寸 tell。旧值 2.5BB 与常规 3.5BB 差 1BB，过于明显。
+STEAL_OPEN_BB = 3.0           # 偷盲开池尺寸（3.0BB，低于常规开池 3.5BB）
 STEAL_CBET_FRAC = 0.55        # 偷盲档 C-Bet 下注额（底池 55%，落在 50%~60% 区间）
 STEAL_FOLD_MIN_CAT = 4        # 被加注/全下时唯一例外：顺子及以上（STRAIGHT=4）仍正常决策
 
@@ -1190,7 +1353,18 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 【规则20·2026-09-24 用户规则】大额投入闸门：需跟 > 3000 要 ≥ 三条，
     # 主动全押要 ≥ 三条（防锁赢/搏命区已在入口返回）。必须放在仲裁**之后**——
     # 仲裁的 `UA_SEALED_ALLIN` 会带 `lk` 免检标记直接推光，这里再收紧。
-    return _big_money_guard(state, action)
+    action = _big_money_guard(state, action)
+    # 【方案A·2026-09-24 用户规则】便宜跟注封顶：必须放在仲裁**之后**。
+    # 实战第32手（一对 9 面对河牌 1,765）在旧结构下的链路是：
+    #   决策层按「便宜跟注」→ call（注额上限不约束便宜跟注）
+    #   → 出口仲裁发现「跟了再输就明显越线」→ UA_SEALED_ALLIN 全押 18,774。
+    # 便宜跟注封顶是**本手成本**闸门，只有在仲裁之后执行才能拦住这条链
+    # （若放在决策层，仲裁会把它的 fold 重新改写掉）。
+    # 【关键顺序·2026-09-24】必须排在 `_big_money_guard` **之后**——规则20 会把
+    # 带 lk 的全押降级为普通 call，`lk` 标记随之丢失；若本闸门先跑，就会把
+    # 「规则2 锁赢体系」刚定下的 call 再翻成 fold（第32手实测冲突）。
+    # 配合 `_lock_win_engaged` 判定：规则2/20 已介入时本闸门一律让位。
+    return _cheap_call_guard(state, action)
 
 
 # ================================================================
@@ -1923,9 +2097,88 @@ def _preflop_decide(state, model):
         return _bb_defend(state, model, pct, arch, adj)
 
 
+def _open_weight(model):
+    """【B 条件化】「该给 B 多少权重」——对手越硬跟，B 的增量越该收回。
+
+    返回 w ∈ [0,1]：1 = 完全用 B 的新尺寸；0 = 完全回到 B 之前的旧尺寸。
+        w = clamp((OPEN_VPIP_HARD - vpip) / (OPEN_VPIP_HARD - OPEN_VPIP_SOFT), 0, 1)
+      · 对手爱弃（vpip ≤ 0.55）→ w=1
+      · 对手硬跟（vpip ≥ 0.80）→ w=0
+      · 无样本时 vpip 收缩到先验 0.68 → w=0.48（保守居中）
+
+    【样本门控·2026-09-25】再乘「对手样本手数 / OPEN_SAMPLE_HANDS」的线性系数：
+    样本不足时 w→0（用旧尺寸）。原因见 OPEN_SAMPLE_HANDS 处的注释 ——
+    VPIP 开局被强收缩到先验，前几手 w 只有 ~0.48，开池停在 ~3.0BB，
+    恰是「前 20 手」窗口；实测对硬跟对手此期间「仅 B」略负（中位 −140）。
+    """
+    try:
+        vpip = float(model.eff_vpip())
+    except Exception:
+        vpip = 0.68          # 与 opponent._PRIOR["vpip"] 一致
+    span = OPEN_VPIP_HARD - OPEN_VPIP_SOFT
+    if span <= 0:
+        w = 1.0
+    else:
+        w = (OPEN_VPIP_HARD - vpip) / span
+        w = 0.0 if w < 0.0 else (1.0 if w > 1.0 else w)
+    # 样本门控：对手样本不足 → B 的权重线性放开（0 → w）
+    try:
+        seen = float(model.hands_seen)
+    except Exception:
+        seen = 0.0
+    if OPEN_SAMPLE_HANDS > 0:
+        scale = seen / float(OPEN_SAMPLE_HANDS)
+        if scale < 0.0:
+            scale = 0.0
+        elif scale > 1.0:
+            scale = 1.0
+        w *= scale
+    return w
+
+
+def _open_size_bb(model, arch=None, learned_bb=None):
+    """【B 条件化·2026-09-25 用户规则】开池尺寸随「对手跟不跟」缩放（大盲倍数）。
+
+    用户原话：「对手如果一直硬跟就降低 B 的权重」。
+    开大池的价值来自**弃牌权益**；对手一直硬跟时弃牌权益≈0，开大只是用更宽
+    的范围在更大的底池里打 → 白送钱。故按对手翻前入池率（VPIP）线性回退：
+
+        w = clamp((OPEN_VPIP_HARD - vpip) / (OPEN_VPIP_HARD - OPEN_VPIP_SOFT), 0, 1)
+        size = OPEN_SIZE_HARD_CALL_BB + w × (OPEN_SIZE_BB - OPEN_SIZE_HARD_CALL_BB)
+
+      · 对手爱弃（vpip ≤ 0.55）→ w=1 → 3.5BB（逼弃、隔离有效）
+      · 对手硬跟（vpip ≥ 0.80）→ w=0 → 2.5BB（少冒险）
+      · 无样本时 vpip 收缩到先验 0.68 → w=0.48 → ≈3.0BB（保守居中）
+
+    【学习尺寸也一并折减】传入 learned_bb 时，把 B 的**增量**按同一 w 折减：
+        size = preB + w × (learned_bb - preB)    （preB 见 _B_PRE_FRAC）
+    必须一起收的理由：「选对手弃牌率最低的桶」这个学习口径，对**硬跟者**
+    会选出最大的桶（他连大注都不弃）→ 方向正好与弃牌权益相反，若只折减
+    常规基准、放任学习路径，等于把 B 从后门加回来。
+
+    `arch == "station"` 时再压到 OPEN_SIZE_VS_STATION（显式原型上限，安全网）。
+    """
+    w = _open_weight(model)
+    if learned_bb is not None:
+        try:
+            lf = float(learned_bb)
+        except Exception:
+            lf = 0.0
+        if lf > 0:
+            pre = _B_PRE_FRAC.get(round(lf, 1), lf)   # B 之前的同名代表值
+            size = pre + w * (lf - pre)
+        else:
+            size = OPEN_SIZE_HARD_CALL_BB + w * (OPEN_SIZE_BB - OPEN_SIZE_HARD_CALL_BB)
+    else:
+        size = OPEN_SIZE_HARD_CALL_BB + w * (OPEN_SIZE_BB - OPEN_SIZE_HARD_CALL_BB)
+    if arch == "station":
+        size = min(size, OPEN_SIZE_VS_STATION)
+    return size
+
+
 def _button_open(state, model, pct, arch, adj):
     """庄家位开池：范围随对手原型伸缩；开池尺寸学习优先。"""
-    # 偷盲档：对手疑似锁胜 → 任意两张牌 2.5BB 开池，频率 100%（规则1）
+    # 偷盲档：对手疑似锁胜 → 任意两张牌 3.0BB 开池，频率 100%（规则1）
     if adj == "steal":
         return _raise_to(state, STEAL_OPEN_BB * state.big_blind)
     # 【学习优先】对手对翻前下注的反应数据充分时，选「弃牌率最低」的开池
@@ -1947,10 +2200,11 @@ def _button_open(state, model, pct, arch, adj):
 
     if pct <= open_pct:
         if learned:
-            # lf 翻前为「大盲倍数」（2.2/3.0/4.0）
-            return _raise_to(state, lf * state.big_blind)
-        size = OPEN_SIZE_VS_STATION if arch == "station" else OPEN_SIZE_BB
-        return _raise_to(state, size * state.big_blind)
+            # lf 翻前为「大盲倍数」（2.5/3.5/4.5，已随 B 上移）
+            # 【B 条件化】学习尺寸里属于 B 的增量同样按对手跟注倾向折减
+            return _raise_to(state, _open_size_bb(model, arch, lf) * state.big_blind)
+        # 【B 条件化】对手硬跟 → 自动回退到较小尺寸（无弃牌权益，少冒险）
+        return _raise_to(state, _open_size_bb(model, arch) * state.big_blind)
 
     # 垃圾牌：对手极少主动加注时补齐溜入看翻牌；劣势追分时绝不弃庄家位
     limp_max = 1.0 if adj in ("desperate", "doomed") else 0.96
@@ -3591,6 +3845,217 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
 
 
 # ---------------- 面对下注 ----------------
+def _cheap_call_guard(state, action):
+    """【方案A·出口闸门·2026-09-24 用户规则】便宜跟注封顶（最终执行者）。
+
+    `_cheap_call_cap_hit` 是判定，本函数是**在出口仲裁之后**的执行——因为
+    仲裁（`_endgame_arbitrate`）会把它前面算出的 fold 重新改写回 call/allin。
+
+    豁免（用户既有规则优先）：
+      · 强牌（有效牌型 ≥ 两对）—— 强牌为大池付费是合理的；
+      · **规则2/规则20 已介入**（`_lock_win_engaged`）—— 锁赢体系是硬规则，
+        本闸门不得翻案（第32手：规则20 把锁赢全押降为 call，若本闸门再改
+        fold，就把「防锁赢」直接变成「认输」）；
+      · 锁赢 allin（`lk` 标记）—— 规则2 硬规则不受本闸门约束；
+      · 对手全下 / 跟注即全下 —— 定向决策，不受金额限制（2026-09-14 规则）；
+      · 搏命区 —— 已在入口 _gamble_plan 返回。
+    """
+    if not FUTURE_COST_CAP_ON:
+        return action
+    try:
+        if action.get("act") == "allin" and action.get("lk"):
+            return action                       # 规则2 锁赢硬规则：不干预
+        if _lock_win_engaged(state):
+            return action                       # 锁赢体系已介入：让位
+        if _effective_category(state) >= TWO_PAIR:
+            return action                       # 强牌豁免
+        if not _cheap_call_cap_hit(state, False):
+            return action                       # 未超限：不动
+        if state.to_call <= 0:
+            return action                       # 免费：过牌本来就不花钱
+        return {"act": "fold"}
+    except Exception:
+        return action
+
+
+def _lock_win_engaged(state):
+    """规则2 / 规则20 的复核口径是否已「介入」本手决策。
+
+    用于把 A 方案的便宜跟注闸门让位给锁赢体系（用户既有硬规则优先）。
+    口径与规则2 入口一致（弃牌口径 `_doom_risk` / 跟注口径 `_sealed_by_call`
+    / 需跟超 BIG_CALL_LIMIT），再加上终局档位（`_match_adjust` 落在
+    doomed/desperate）。任一条成立 → 锁赢体系说了算，本闸门不再干预。
+    """
+    if not BIG_MONEY_GUARD_ON:
+        return False
+    try:
+        if state.to_call > BIG_CALL_LIMIT:
+            return True
+        if _doom_risk(state):
+            return True
+        if _sealed_by_call(state):
+            return True
+        if _match_adjust(state) in ("doomed", "desperate"):
+            return True
+    except Exception:
+        return False
+    return False
+
+
+def _future_aggr_factor(model):
+    """【A 条件化·2026-09-25 用户规则】对手「后面还会继续开火」的可能性。
+
+    「跟一手再被赶走」这条付费链的前提是**对手会在后续街继续下注**。
+    被动对手（下注少）后面根本没有第二次、第三次下注 → 不该按满额折算。
+
+    输入 `model.avg_bets_per_hand()`（对手每局主动下注次数；先验 0.9；
+    ≥1.5 持续施压 / ≤0.7 被动过牌），线性映射到 [FUTURE_AGGR_MIN, 1.0]：
+      ≤ FUTURE_AGGR_LO → FUTURE_AGGR_MIN（≈关掉，不再凭想象抬门槛）
+      ≥ FUTURE_AGGR_HI → 1.0（满额）
+    model 缺失/异常 → 返回 1.0（保守：维持旧口径，不因缺数据而少折算）。
+    """
+    if model is None:
+        return 1.0
+    try:
+        bph = float(model.avg_bets_per_hand())
+    except Exception:
+        return 1.0
+    span = FUTURE_AGGR_HI - FUTURE_AGGR_LO
+    if span <= 0:
+        return 1.0
+    w = (bph - FUTURE_AGGR_LO) / span
+    if w < 0.0:
+        w = 0.0
+    elif w > 1.0:
+        w = 1.0
+    return FUTURE_AGGR_MIN + (1.0 - FUTURE_AGGR_MIN) * w
+
+
+def _future_cost(state, to_call, model=None):
+    """【方案A·2026-09-24 用户规则】跟注的「后续投入」估计（筹码）。
+
+    只按本街底池赔率评估跟注会把一条三街付费链拆成三次「划算」的跟注 ——
+    真实成本是 to_call 加上后面还要再付的几笔钱。
+
+    返回 (future_cost, streets)：future_cost=0 表示不适用（关掉/河牌/无对手注）。
+      · 翻牌 2 条剩余街、转牌 1 条、河牌 0 条；
+      · 每条街估计投入 = max(对手本街下注额, FUTURE_COST_POT_FRAC×池)；
+      · **每条街按 FUTURE_COST_DISCOUNT 折现**（不可能每街都付满：对手未必
+        连续开火、我们也未必每街都跟）→ 用 `disc^(i+1)` 递减；
+      · 总折算额受 有效筹码×FUTURE_COST_STACK_FRAC 封顶（跟注不可能让我们
+        承诺超过手上筹码）；
+      · **再乘 `_future_aggr_factor(model)`**（2026-09-25）：对手越不爱开火，
+        这条链越不存在 → 折算越小。被动对手几乎不折算，避免「凭想象中的
+        后续投入」把该跟的牌弃掉。
+      · 样本不足（对手尚未下注）→ 不折算（返回 0），避免凭空抬门槛。
+
+    【2026-09-24 修正·幅度】早期版本 `per×streets` 未折现、未封顶总投入，
+    实测把翻牌跟 0.28×池的门槛从 eff_req 0.219 抬到 **0.640**（3 倍），
+    等于「除非坚果否则弃」—— 触发面窄且触发即极端，与「少输一点」的目标
+    相悖。改为**折现 + 总封顶**后，典型抬升落在 +0.05~+0.15 区间。
+    """
+    if not FUTURE_COST_ON:
+        return 0.0, 0
+    # to_call<=0 = 免费过牌，没有「后续投入链」可言（未来街的投入是**主动**下注
+    # 决定的，不属于被迫逐街付费）→ 不折算，避免把「要不要跟」的门槛用在过牌上。
+    if to_call <= 0:
+        return 0.0, 0
+    try:
+        streets = {"flop": 2, "turn": 1, "river": 0}.get(str(state.stage), 0)
+        if streets <= 0:
+            return 0.0, 0
+        if not FUTURE_COST_STREETS:
+            streets = 1
+        per = max(float(state.opp_round_bet or 0),
+                  FUTURE_COST_POT_FRAC * float(state.pot or 0))
+        if per <= 0:
+            return 0.0, 0
+        # 折现：第 i 条剩余街按 disc^(i+1) 计入（越远越不确定）
+        total = 0.0
+        d = 1.0
+        for _ in range(streets):
+            d *= FUTURE_COST_DISCOUNT
+            total += per * d
+        # 【A 条件化·2026-09-25】乘「对手是否继续开火」因子：被动对手后面
+        # 根本不会有第二次下注 → 这条付费链不存在，不该按满额抬门槛。
+        total *= _future_aggr_factor(model)
+        # 总封顶（相对有效筹码）：跟注不可能把我们的承诺推到超过筹码
+        cap = FUTURE_COST_STACK_FRAC * float(state.effective_stack or 0)
+        if cap > 0:
+            total = min(total, cap)
+        if total <= 0:
+            return 0.0, 0
+        return total, streets
+    except Exception:
+        return 0.0, 0
+
+
+def _cheap_call_cap_hit(state, strong):
+    """【方案A·2026-09-24】便宜跟注的「本手累计投入」封顶。
+
+    旧实现里便宜跟注（to_call < _bet_limit）完全不受注额上限约束，于是
+    对手每街要一点、我们每街给一点 → 本手累计被掏空。这里对**弱牌**
+    （未到两对的成牌/听牌）设一个累计投入上限，超过即改弃。
+    strong（≥两对，价值牌）不受限——强牌为大池付费是合理的。
+    【超强牌豁免】翻前口袋大对（AA/KK/QQ/JJ，`_is_super_hand`）在翻牌成
+    超对时也是「一对」，按牌型分档会被误当弱牌封顶（实测：KcKd 顶对在
+    翻牌面对 300 下注、已投 500 时被误判封顶弃牌）。故 `_is_super_hand`
+    一律豁免。
+
+    【样本门控·关键】门槛随「已打手数 / FUTURE_COST_CAP_MIN_HANDS」线性放开：
+      · 开局阶段（对手画像空）几乎不触发 —— 那时的暴击来自「对手每街小注、
+        被加注就跑」的习惯还没学到，一刀切封顶会砍掉正常价值跟注；
+      · 中后期样本充足 → 满强度（对手的习惯已可辨认）。
+    同时要求 to_call 相对**底池**确实小（FUTURE_COST_CAP_MIN_RATIO），
+    避免把「大注跟注」也当便宜跟注处理。
+
+    【2026-09-24 修正·口径】早期版本用「to_call 是否远大于本手已投」做
+    便宜判定，方向错了：第32手（chips=18774 → inv=1226、to_call=1765、
+    pot=4217）明明是**大额跟注**（to_call 比本手已投还多 539），却被
+    `inv + to_call > cap` 一刀切判成便宜跟注 → 误弃掉「防锁赢」的全押。
+    正确语义：便宜跟注 = **这次要跟的钱相对底池很小**（跟进去不痛）。
+    故改为 `to_call < FUTURE_COST_CAP_MIN_RATIO × pot` → 视为大注，豁免。
+    """
+    if not FUTURE_COST_CAP_ON:
+        return False
+    if strong:
+        return False
+    # 超强牌（AA/KK/QQ/JJ/AKs）及其超对：不按「一对」封顶
+    try:
+        if _is_super_hand(state.hole):
+            return False
+    except Exception:
+        pass
+    # 全下对决 = 定向决策，不受本闸门约束
+    if state.any_allin or state.to_call >= state.my_left:
+        return False
+    # 翻前不适用（翻前由 PREFLOP_MAX_BET 单独管）
+    if state.stage == "preflop":
+        return False
+    try:
+        inv = INIT_CHIPS - state.my_chips          # 本手累计投入（含盲注）
+        to_call = max(state.to_call, 0)
+        if to_call <= 0:
+            return False
+        # 样本门控：开局线性放开
+        try:
+            played = int(state.hand_num)
+        except Exception:
+            played = FUTURE_COST_CAP_MIN_HANDS
+        scale = min(1.0, played / float(max(FUTURE_COST_CAP_MIN_HANDS, 1)))
+        if scale <= 0.0:
+            return False
+        cap = FUTURE_COST_CHEAP_MAX * scale
+        # 「便宜」的相对判定（口径 = 相对底池）：这次要跟的钱若相对底池
+        # 已经不小 → 是大注跟注，不属「每街给一点」的掏空链，豁免。
+        pot = max(float(state.pot or 0), 0.0)
+        if pot > 0 and to_call >= FUTURE_COST_CAP_MIN_RATIO * pot:
+            return False
+        return inv + to_call > cap
+    except Exception:
+        return False
+
+
 def _flush_threat(state):
     """【规则11·2026-09-07 用户规则】公面同花威胁: 公面4/5张同花色 + 对手下注>3000
     → 视作对手有坚果同花(T-高或更高)→ 收紧防守(我方弱同花应弃)。"""
@@ -3645,8 +4110,26 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
 
     # 【用户规则 2026-08-30】大注 + 无坚果 → 直接弃牌（弱听牌/弱成牌跟注 EV 负）
     # 截图1：J7 听花跟 2400（>0.7×pot）→ 弃而非 call
-    if to_call > 0 and to_call > 0.6 * pot and not _has_nuts_or_strong_draw(state):
-        return {"act": "fold"}
+    # 【A 感知·2026-09-26 用户规则】原先这条硬规则**从不咨询门槛**，是 A 永远
+    # 够不着的一块（实测：aggro 上 20 个 fold 里 12 个走这条路）。
+    # 现在把「大注」的口径从「本街 to_call」改为「本街 + 后续还要付的钱」：
+    #   · 对手爱连街开火 → 折算额大 → 口径被抬高 → **更早弃**（掐断「跟一手
+    #     再被赶走」的付费链，正是这条规则存在的理由）；
+    #   · 对手被动（不继续开火）或河牌 → 折算额为 0 → **逐字等价于原规则**
+    #     （0.6×池），不会反过来过度弃牌。
+    # 关掉 A（`FUTURE_COST_ON=False`）时也逐字等价于原规则 → A/B 对照可隔离。
+    if to_call > 0 and not _has_nuts_or_strong_draw(state):
+        _bb_commit = to_call
+        if FUTURE_COST_ON and BIG_BET_FOLD_A_ON:
+            # 【门控】只在对手确实是施压型时放大口径（见 BIG_BET_FOLD_MIN_AGGR）
+            try:
+                if _future_aggr_factor(model) >= BIG_BET_FOLD_MIN_AGGR:
+                    _bb_commit += (BIG_BET_FOLD_FUTURE_W *
+                                   _future_cost(state, to_call, model)[0])
+            except Exception:
+                pass
+        if _bb_commit > BIG_BET_FOLD_FRAC * pot:
+            return {"act": "fold"}
     # 【用户规则 2026-08-30】4 倍突袭 + wet 公面 + 无坚果 → 直接弃
     # 截图4：turn 4 倍加注 + 公面 4♣ 听花密集 + 自己无坚果 → 弃
     if to_call > 0:
@@ -3671,7 +4154,56 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     implied = 1.0
     if big_draw and state.effective_stack > 4 * pot and not is_river:
         implied = 1.4
+    # 【A 扩展·2026-09-26】原实现有一个**结构性互斥**：
+    #   · `future_cost` 只在 `not strong and not big_draw` 时计入；
+    #   · `implied` 加成（1.4）只在 `big_draw` 时给出；
+    # → 两者作用集合**完全不相交**（实测：10 个触发折算的记录里 implied 全是 1.0）。
+    #   于是「听牌被转牌大注赶走」这条**最典型**的付费链从未被 A 触及 ——
+    #   而听牌恰恰是最容易被赶走的牌。
+    # 修正：听牌也计入后续投入，**同时取消其隐含赔率加成** —— 不能一边假设
+    # 「下一张牌能便宜看到」，一边忽略「后面还要再付钱」。这是**乘法级**修正
+    # （1.4→1.0 让分母直接 ×1.4），比加法抬门槛有力得多。
+    # 仍是条件化的：对手被动（不开火）时不加成也不打折。
+    _draw_fc_on = bool(big_draw and not strong and FUTURE_COST_ON
+                       and _future_aggr_factor(model) > FUTURE_AGGR_MIN)
+    if _draw_fc_on:
+        implied = min(implied, FUTURE_DRAW_IMPLIED_CAP)
     eff_req = required / implied
+    # 【方案A·2026-09-24 用户规则】跟注门槛计入「后续投入」（future cost）。
+    # 用户定量结论：输局的亏损集中在「跟一手再被赶走」——每笔跟注单看底池
+    # 赔率都便宜（req 0.20~0.35），但后面还要再付两三笔同样便宜的钱，合计
+    # 才是真实成本；旧口径把三街的付费链拆成三次独立评估，于是每条街都跟。
+    # 折算后：eff_req = (to_call + future) / (pot + to_call + future) —— 池子
+    # 相应变大（未来那些钱最终会进池），但成本涨得更快，门槛因此显著抬高。
+    # 强牌（≥两对）/ 强听牌（隐含赔率另算）不适用：它们本来就该为大池付费。
+    _fc = 0.0
+    _eff_no_fc = (to_call / (pot + to_call)) / implied if (pot + to_call) > 0 else 1.0
+    if (not strong and not big_draw) or _draw_fc_on:
+        # 【A 条件化】把 model 传进去 —— 折算额按对手「会不会继续开火」缩放
+        _fc, _fc_streets = _future_cost(state, to_call, model)
+        if _fc > 0:
+            # 【权重口径】后续投入不是「现在就丢进池子」的钱，而是「继续打下去
+            # 可能还要付」的钱 —— 且只在「继续但最终输」时才真正多亏。因此按
+            # FUTURE_COST_WEIGHT 折半计入代价侧；同时它也让**可赢的池子变大**
+            # （对手也会继续投），故分子分母都加，但分母加的是全额的池增长
+            # 预期（FUTURE_COST_GAIN），效果 = 温和抬升门槛。
+            _cost = FUTURE_COST_WEIGHT * _fc
+            _gain = FUTURE_COST_GAIN * _fc
+            eff_req = ((to_call + _cost) /
+                       (pot + to_call + _cost + _gain)) / implied
+            # required 同步跟随：它在下游被用作「便宜跟注」的判定口径
+            # （big_draw / draw 分支的 required <= 0.20 等），口径必须一致。
+            required = eff_req * implied
+            # 【调试钩子】WB_FC_DEBUG=1 → 记录折算前后的门槛，供 probe_gap 统计
+            if WB_FC_DEBUG:
+                try:
+                    WB_FC_LOG.append({
+                        "stage": state.stage, "pot": pot, "to_call": to_call,
+                        "fc": _fc, "eff_old": (to_call / (pot + to_call)) / implied,
+                        "eff_new": eff_req, "implied": implied,
+                    })
+                except Exception:
+                    pass
 
     # 跟注安全边际：默认 2%；岩石的下注≈价值 → 抬门槛；疯子乱打 → 放宽
     margin = 0.02
@@ -3705,6 +4237,26 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         margin += 0.06       # 领先时只打好赔率
     elif adj in ("desperate", "doomed"):
         margin -= 0.06       # 劣势追分：跟注门槛大幅放宽（多看牌搏翻盘）
+
+    # 【调试钩子·2026-09-26】记录跟注点全景（WB_FACE_DEBUG=1）
+    if WB_FACE_DEBUG:
+        try:
+            WB_FACE_LOG.append({
+                "stage": str(state.stage), "pot": int(pot),
+                "to_call": int(to_call), "eq": float(eq),
+                "eff_req": float(eff_req), "margin": float(margin),
+                "arch": str(arch), "i_aggressor": bool(i_aggressor),
+                "strong": bool(strong), "good": bool(good),
+                "medium": bool(medium), "cat": int(category),
+                "bph": float(_OPP_BETS_PER_HAND),
+                "vpip": float(model.eff_vpip()),
+                "jumped": bool(_OPP_JUMPED),
+                "fc": float(_fc), "eff_no_fc": float(_eff_no_fc),
+                "implied": float(implied),
+                "hole": list(state.hole), "board": list(state.board),
+            })
+        except Exception:
+            pass
 
     # 【规则1】偷盲档被加注/全下：立即弃牌不纠缠（规则1 执行动作 3）。
     # 对手平时在弃牌，突然加注/全下 = 拿到强牌或识破偷盲 → 止损离场；
@@ -3778,6 +4330,9 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             if learned:
                 return _raise_pot(state, category, adj, frac=lf)
             return _raise_pot(state, category, adj, fish=_fishy(model))  # 位置+明显领先 → 克制加注
+        # 【方案A】便宜跟注封顶：本手累计投入超限 → 弃（不再逐街送钱）
+        if _cheap_call_cap_hit(state, strong):
+            return {"act": "fold"}
         if eq >= eff_req + margin:
             return {"act": "call"}
         if eq >= eff_req and (arch == "maniac" or adj in ("desperate", "doomed")):
@@ -3797,6 +4352,9 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
 
     # ---- 中等成牌：只打好赔率 ----
     if medium:
+        # 【方案A】便宜跟注封顶（中等成牌最容易掉进「每街给一点」的陷阱）
+        if _cheap_call_cap_hit(state, strong):
+            return {"act": "fold"}
         if eq >= eff_req + margin + 0.03:
             return {"act": "call"}
         if eq >= eff_req and (arch == "maniac" or adj in ("desperate", "doomed")):
@@ -3805,6 +4363,9 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
 
     # ---- 弱听牌：只在很便宜时跟；劣势追分时便宜就抽 ----
     if draw:
+        # 【方案A】便宜跟注封顶（弱听牌最容易被逐街小注掏空）
+        if _cheap_call_cap_hit(state, strong):
+            return {"act": "fold"}
         if required <= 0.20 and (eq >= required * 0.9 or adj in ("desperate", "doomed")):
             return {"act": "call"}
         return {"act": "fold"}

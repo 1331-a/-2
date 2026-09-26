@@ -55,7 +55,7 @@ a = decide(parse_request(r), OpponentModel())
 check("翻前上限:非超强牌面对超大反加降级call/fold",
       a.get("act") in ("call", "fold"), str(a))
 
-# A5) 开池 2.5BB（250 ≤ 1000）不受影响：中等牌 A9o 开池正常
+# A5) 开池 2.5BB（无样本 → B 被样本门控，回旧值；250 ≤ 1000）不受影响
 r = req(my_cards=[48, 21], history=[])
 a = decide(parse_request(r), OpponentModel())
 check("翻前上限:正常开池不受影响",

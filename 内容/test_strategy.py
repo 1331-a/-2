@@ -48,9 +48,14 @@ def check(name, cond, detail=""):
 
 
 # ---------- 1. 翻前范围 ----------
-# 庄家 AA 开池到 500（2.5BB）
+# 庄家 AA 开池 = 条件化开池尺寸 × 大盲。
+# 【注意·盲注是推导出来的】本例 my_id==dealer_id 且 my_chips=19900（已投 100）→
+# game_state 按「SB=已投盲注、BB=2×SB」推导出 BB=200（测试夹具与平台 50/100
+# 不一致的历史遗留）。
+# 【B 样本门控】无对手样本 → w=0 → 开池回旧值 2.5BB → 2.5×200 = 500。
 a = act(req(my_id=0, my_chips=19900, my_cards=[48, 44], history=[]))
-check("庄家AA开池=raise500", a == {"act": "raise", "num": 500}, str(a))
+check("庄家AA开池=raise500(无样本→旧值 2.5BB×200)",
+      a == {"act": "raise", "num": 500}, str(a))
 # 庄家 72o 弃牌（对手先验偏凶）
 a = act(req(my_id=0, my_chips=19900, my_cards=[23, 2], history=[]))
 check("庄家72o弃牌", a == {"act": "fold"}, str(a))

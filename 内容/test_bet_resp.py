@@ -126,17 +126,24 @@ m5 = OpponentModel.from_json(s)
 check("序列化:事件往返保留", m5.bet_resp_events == m4.bet_resp_events,
       "%s vs %s" % (m5.bet_resp_events, m4.bet_resp_events))
 
-# ---------- 8. 学习优先：翻前开池尺寸（学习覆盖常规 2.5BB） ----------
+# ---------- 8. 学习优先：翻前开池尺寸 ----------
+# 【2026-09-25 B 条件化 + 样本门控】尺寸乘「对手跟不跟」权重 w，而 w 又被
+# 对手样本手数线性门控（`OPEN_SAMPLE_HANDS=8`）：本用例模型没有任何翻前动作
+# 记录 → hands_seen=0 → 门控系数 0 → w=0 → **B 完全不生效，回到旧尺寸**：
+#   学习 pf_s（2.5BB，其 B 前值为 2.2）→ 2.2BB → 220
+#   无数据常规基准（2.5→3.5）      → 2.5BB → 250
 m6 = OpponentModel()
-# 对手对翻前小注(≤2.5BB)全跟、对大注(>4BB)全弃 → 学习选 pf_s → 开池 2.2BB
+# 对手对翻前小注(≤2.5BB)全跟、对大注(>4BB)全弃 → 学习选 pf_s → 开池 2.5BB
 for h in (10, 11, 12):
     m6._add_bet_resp(h, True, "pf_s", "call")
     m6._add_bet_resp(h, True, "pf_l", "fold")
 btn = req(hand=13, my_id=0, my_chips=19950, my_cards=[48, 51], history=[])   # 按钮 SB 已投 50，AA 开池
 a = decide(parse_request(btn), m6)
-check("学习优先:翻前开池用学习尺寸(2.2BB=220)", a == {"act": "raise", "num": 220}, str(a))
+check("学习优先:翻前开池用学习尺寸(B 前值 2.2BB=220)",
+      a == {"act": "raise", "num": 220}, str(a))
 a0 = decide(parse_request(btn), OpponentModel())
-check("学习优先:无数据常规开池(2.5BB=250)", a0 == {"act": "raise", "num": 250}, str(a0))
+check("学习优先:无样本 → B 不生效，开池旧值 2.5BB=250",
+      a0 == {"act": "raise", "num": 250}, str(a0))
 
 # ---------- 9. 学习优先：面对下注强牌加注（学习覆盖 fishy/常规） ----------
 m7 = OpponentModel()

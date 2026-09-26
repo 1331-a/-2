@@ -145,7 +145,7 @@ check("注码封顶:面对下注不超上限（含动态上限降级）",
       (a.get("act") == "raise" and a["num"] <= 5000) or a.get("act") == "call",
       str(a))
 
-# 翻前开池 2.5BB 不受影响
+# 翻前开池不受影响（无样本 → B 被样本门控，开池回旧值 2.5BB=250）
 st8 = parse_request(req(total_win_chips=[0, 0], my_chips=19950,
                         my_cards=[48, 51], history=[]))
 a = decide(st8, OpponentModel())
