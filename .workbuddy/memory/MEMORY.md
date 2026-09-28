@@ -35,21 +35,23 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 1. **规则2 `_lock_win_unified(state, model)`**（decide 入口，先于胜率计算）：
    B. fold_out 锁胜 → fold（`to_call==0` 用 check，平台不允许弃牌）；
    A. doomed → `_doom_plan(state, model)`；
-   C. `_profit_lock_allin` → `_doom_plan(state, model, allow_free=True)`。
-   ★【2026-09-28 45a8fb4】A/C **不再无条件全押**，改过三道门控，任一不通过 → **None（不接管，交给常规策略）**：
-   ① `to_call≤0` 且非强牌 → 不接管（强牌豁免：翻后 ≥三条 / 翻前 AA·KK·QQ·JJ·AKs，即 `_strong_for_big_money`）；
-   ② 越线幅度 `< DOOM_ALLIN_MIN_MARGIN(0.10)` → 不接管（擦线不推光）；
-   ③ 样本 ≥6 且 `eff_fold_to_bet < 0.45` → 不接管（对手不弃牌时推光＝送筹码）。
-   例外：`line≤0`（最后一手）、`DOOM_ALLIN_ON=False` / `DBG_NO_DOOM_ALLIN=1`（回退旧无条件全押）。
-   ★ A 被拒后**必须 return None**：`_profit_lock_allin` 用的是同一个 `_doom_risk` 不等式，继续往下走 C 会原样绕过门控（局2 #43 由此后门推出 19,500）。
-   ★ C 传 `allow_free=True` 跳过①——C 语义是「主动锁死局面」，非「弃牌=认输」。
+   C. `_profit_lock_allin` → `_doom_plan(state, model)`（**与 A 完全同一个函数**，`allow_free` 参数已删）。
+   ★【2026-09-28 v3】`_doom_plan` 的分界 = **「弃牌是否立死」+ 牌力分流**（用户当天推翻 v2 的越线幅度门控：
+     「既然已经越线了还投入就应该 allin，因为如果输了也是全局的」——doom 成立即「输了全局输」，与越线 2.8% 还是 28% 无关）：
+     · `to_call > 0`（必须再投入）→ **一律 allin**，无论牌多烂。唯一例外：牌好且翻前只需补大盲 → call（溜入慢打）。
+     · `to_call ≤ 0`（能免费过牌）→ **看牌质量**（用户原话「质量不好就直接 allin，质量好就再看看」）：
+       牌烂 → 直接 allin（仍过 `_shove_fold_ok`）；牌好 → **None「再看看」**；**牌好且河牌 → 收网 allin**（最后一街没得等）。
+     · `line≤0`（最后一手）→ 直接 allin；`DOOM_ALLIN_ON=False` / `DBG_NO_DOOM_ALLIN=1` → 回退旧无条件全押。
+     · v2 的 `DOOM_ALLIN_MIN_MARGIN/FOLD/FOLD_SAMPLES` 已**全部删除**。
+   ★ A 被拒后**必须 return None**：`_profit_lock_allin` 用的是同一个 `_doom_risk` 不等式，继续往下走 C 会原样绕过（局2 #43 由此后门推出 19,500）。
    ★ 异常兜底 `_safe_fallback_action` 仍是无条件 allin（只在决策层抛异常时走）。
+   ★【2026-09-28 复核】`_big_money_guard` **故意不给 `lk` 开免检口**——规则20（弱牌不许主动推光）从 2026-09-24 起就压过 `UA_SEALED_ALLIN`（见 test_log_v2「0924第21/32手」）。规则2/18 都在出口链**之前**短路返回（`_decide_impl` 里 `_gamble_plan` 命中即 `return _normalize(...)`），不会流到 guard。
 2. **终局效用仲裁 `_endgame_arbitrate`（2026-09-24）**：出口把弃/过/跟/加/全押放同一尺度比较 EU（`_win_utility`：lead→最终胜率 U，logistic 平滑无悬崖；锚点 ±2×_blind_line），取最优。
    · EU：fold/check = `lead−2×已投`；跟注 = eq×U(收池)+(1−eq)×U(输敞口)；加注/全押 = f×U(收池)+(1−f)(eq_c×U(赢大池)+(1−eq_c)×U(输更多))，`f=弃牌权益`，`eq_c=eq^(1+UA_CALL_DAMP×n/底池)`（幂次保证坚果不受罚）；对手已全押时 f=0。
    · 护栏顺序：① `UA_CROSS_CHECK`（免费过牌且投入即越线 → 过牌）；② `UA_SEALED_ALLIN`（越线幅度 ≥ `UA_SEALED_MARGIN(0.15)` → 全押）；③ 只往更保守方向修正（`UA_RISK_RANK`，不制造新加注/全押）；④ 硬性弃牌（河牌公对陷阱/突袭大注/公对规避）不翻案。
    · 触发面 `_endgame_matters`：敞口 doom / 投入即锁赢 / 搏命区。
    · 调参：`UA_ON` / `UA_SLOPE(1.6)` / `UA_CALL_DAMP(0.6)` / `UA_CROSS_CHECK` / `UA_SEALED_ALLIN` / `UA_SEALED_MARGIN(0.15)`。链路文档：`内容/端到端策略链.md`。
-3. **规则10 求稳 `_stability_mode`**（`STABILITY_LINE_FACTOR=0.60` 或剩 ≤8 手且领先）→ 主动侧 check、被动只跟；强牌例外。
+3. **规则10 求稳 `_stability_mode`**（`STABILITY_LINE_FACTOR=0.70`［2026-09-28 由 0.60 回调，v50 是 0.80，取折中：更晚求稳、领先时更敢打；改回 0.60 即恢复「更早求稳」］或剩 ≤8 手且领先）→ 主动侧 check、被动只跟；强牌例外。
 4. **规则16/17**：剩局少或对手爱 all-in → 跟全下门槛 −（上限 0.09）；翻后跟 all-in 按盈利档叠加（>+50BB +0.12 / >+10BB +0.07 / ±10BB +0.02 / <−10BB −0.03 / <−50BB −0.08）。
 5. **规则18 搏命区**：`lead ≤ −0.95×2×追回线` → 整手在区内；牌烂 → allin（带 lk）；牌好 → 能过牌就 check、翻前补大盲 call、遇下注或河牌免费则 allin。
    ★【2026-09-28】牌烂推之前先过 `_shove_fold_ok(state, model)`：**`eff_fold_to_bet ≥ 0.45`**（样本 ≥6 才门控）才推；被逼全下 / 无画像 / 剩 ≤`GAMBLE_SHOVE_FORCE_HANDS(8)` 手豁免（末段逃生口）。
@@ -87,9 +89,10 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 - 盘上行为与代码不符时先穷举输入形态（金额缺失 / my_id 反转 / 字段类型），再怀疑规则。
 - 旧 ELF 指纹：`PyInstaller.archive.readers.CArchiveReader(path).extract('poker_bot')` 取主脚本后 grep 变量名（比回放命中率可靠，回放受 MC 噪声影响）。已定位 v50 = `547e4a6`。
 - 【复盘工具】`内容/analyze_matches.py`：`load_botbattle(path, my_seat)` / `detect_seat(obj)` / `replay_decisions(path, seat)`；座位需动态检测（三局分别是 1/0/0）。
+- 【原始 replay 事件字段（与 request 不同！）】action 事件是 `player`/`action`/`amount`（**不是** player_id/action_type，写错会静默匹配 0 条）；deal_hole 是 `holes:[[座0],[座1]]`（卡面字符串如 "7d"）；hand_start 带 `sb`/`bb`/`chips`；settle 的 `net`=累计 total_win_chips（平台计分口径）、`deltas`=本手、`winners`。我方=owner 含 j1331 的一侧（测01），fffmvp5/hhhmvp 是对手。
 
 ## 调参入口
-`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`·`UA_SEALED_ALLIN`·`UA_SEALED_MARGIN` / `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON` / `DOOM_ALLIN_ON`·`DOOM_ALLIN_MIN_MARGIN(0.10)`·`DOOM_ALLIN_MIN_FOLD(0.45)` / `GAMBLE_SHOVE_FOLD_MIN(0.45)`·`GAMBLE_SHOVE_FORCE_HANDS(8)` / `RANGE_NARROW_*` / `GAMBLE_LINE_FACTOR`·`GAMBLE_GOOD_PCT` / `STABILITY_LINE_FACTOR` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON`。
+`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`·`UA_SEALED_ALLIN`·`UA_SEALED_MARGIN` / `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON` / `DOOM_ALLIN_ON` / `GAMBLE_SHOVE_FOLD_MIN(0.45)`·`GAMBLE_SHOVE_FORCE_HANDS(8)` / `RANGE_NARROW_*` / `GAMBLE_LINE_FACTOR`·`GAMBLE_GOOD_PCT` / `STABILITY_LINE_FACTOR` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON`。
 
 ## 待办 / 已知瑕疵
 - 2026-09-25 方案 A（future_cost）与方案 B（开池 3.5BB）配对模拟**均未证明**能降低前 20 手累积亏损（A 改动面 2~6% 方向混杂；B 改动面 18.9% 中位略差、95%CI 横跨 0）。未推送，等用户决定去留。

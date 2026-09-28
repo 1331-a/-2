@@ -1,0 +1,176 @@
+================================================================================
+MODULE CONSTS
+   '\ncards.py — 扑克牌表示与解析工具。\n\n内部统一用一个整数表示一张牌：card = rank * 4 + suit\n  - rank（点数）: 2..14（11=J, 12=Q, 13=K, 14=A）\n  - suit（花色）: 0=黑桃S, 1=红桃H, 2=方块D, 3=梅花C\n\nBotZone 牌字符串格式："花色 + 点数"，例如\n  "SA" -> 黑桃 A，  "HT" -> 红桃 10，  "C3" -> 梅花 3，  "DQ" -> 方块 Q\n'
+   'S'
+   'H'
+   'D'
+   'C'
+   (0, 1, 2, 3)
+   0
+   1
+   2
+   3
+   ('S', 'H', 'D', 'C')
+   '2'
+   '3'
+   '4'
+   '5'
+   '6'
+   '7'
+   '8'
+   '9'
+   'T'
+   'J'
+   'Q'
+   'K'
+   'A'
+   (2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)
+   10
+   't'
+   ('combinations',)
+   9
+   8
+   7
+   6
+   5
+   4
+   '皇家同花顺'
+   '同花顺'
+   '四条'
+   '葫芦'
+   '同花'
+   '顺子'
+   '三条'
+   '两对'
+   '一对'
+   '高牌'
+   None
+   4.5
+   3.5
+   2.5
+   1.5
+   (14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2)
+   -1
+   -2
+   -4
+   ()
+   20000
+   100
+   'GameState'
+   500
+   1.0
+   300
+   0.68
+   0.3
+   0.35
+   0.4
+   0.25
+   ('vpip', 'pfr', 'af', 'fold_to_bet', 'big_raise', 'turn_aggr', 'river_fold')
+   12
+   15
+   'OpponentModel'
+   20
+   (50, 100)
+   0.65
+   0.1
+   0.62
+   0.2
+   0.15
+   -0.1
+   'MatchContext'
+   0.8
+   2.2
+   0.13
+   3.2
+   0.035
+   2.3
+   0.75
+   0.55
+   1.3
+   0.33
+   0.45
+   1000
+   0.5
+   0.9
+   600
+   50
+   ('big_lead', 'lead', 'even', 'behind', 'big_behind')
+   0.03
+   0.38
+   -4000
+   14
+   2000
+   3000
+   -3000
+   4.0
+   False
+   0.0
+   True
+   ('fold', 'allin', 'call', 'check')
+   '__main__'
+   ((),)
+   (500, 1.0, None, None)
+   (300, None, None)
+   (None,)
+   (True,)
+   (False,)
+   (None, None, False, None)
+
+================================================================================
+FUNCTION TREE (decision-related only)
+### _allin_floor_guard
+  vars: ['state', 'action', 'floor', 'invest']
+  consts: ["'全下下限（盈利门槛）——用户规则的最后一道闸。\\n\\n    【业务逻辑】只有「累计投入 > 当前总盈利 + ALLIN_FLOOR_CONST」才\\n...", "'act'", "'allin'", '0', "'check'", "'fold'"]
+  names: ['get', '_LEAD_LOCK', 'to_call', 'total_win_chips', 'my_id', 'ALLIN_FLOOR_CONST', 'INIT_CHIPS', 'my_chips', 'min', 'my_left', 'Exception']
+### _profit_lock_allin
+  vars: ['state', 'pnl', 'invested', 'eq']
+  consts: ["'规则2：盈利锁胜全下检查。\\n\\n    【业务逻辑】当前累计总盈亏 > 0（盈利状态）且本局已累计下注金额（含\\n    盲注与当前轮，= INIT_...", '0', 'False', '600', '1.0', '0.25', "('iterations', 'opp_range_pct', 'deadline')"]
+  names: ['total_win_chips', 'my_id', 'INIT_CHIPS', 'my_chips', 'PROFIT_LOCK_CONST', 'monte_carlo_equity', 'hole', 'board', 'time', 'PROFIT_LOCK_EQ', 'Exception']
+### _bet_limit
+  vars: ['state']
+  consts: ["'当前手牌允许的最大总注额（用户规则 2026-08-25/26 牌型分级，翻后口径；\\n    翻前由 _normalize 单独按 PREFLOP_M...", "'doomed'", '1152921504606846976', "'preflop'"]
+  names: ['_match_adjust', 'stage', '_effective_category', 'HIGH_BET_MIN_CAT', 'TWO_PAIR', '_is_small_two_pair', 'SMALL_TWO_PAIR_LIMIT', 'HIGH_BET_LIMIT', 'Exception']
+### decide
+  vars: ['state', 'model', 'ctx', 'action']
+  consts: ["'根据当前状态与对手模型返回动作 dict（经 _normalize 合法化）。\\n\\n    ctx: 可选 MatchContext（bot 层从 g...", 'None', '0.9', 'False', "'doomed'", "'act'", "'allin'", "'fold'", "'preflop'"]
+  names: ['time', 'perf_counter', '_DECISION_STARTED_AT', '_CTX', '_opp_bet_jumped', '_OPP_JUMPED', 'float', 'avg_bets_per_hand', '_OPP_BETS_PER_HAND', 'Exception', 'total_win_chips', 'my_id', 'opp_id', 'LEAD_NO_ALLIN', '_LEAD_LOCK', '_match_adjust', '_fold_out_active', '_profit_lock_allin', '_decision_timed_out', 'should_avoid_risk', '_risk_avoid_route', 'stage', '_preflop_decide', '_postflop_decide', '_allin_floor_guard', '_bet_cap_guard', '_last_hand_no_fold', '_normalize']
+### _blind_line
+  vars: ['state', 'hands', 'own', 'sb', 'bb', 'next_my_sb', 'n_sb', 'n_bb']
+  consts: ["'未来 hands 局（从下一局起、位置每局轮换）的精确盲注线。\\n\\n    【用户规则 2026-08-25】锁赢判定不再用 1.5×BB×手数 的极...", '(50, 100)', '1', '2', '75.0']
+  names: ['my_id', 'dealer_id', 'Exception', 'int']
+### _fold_out_active
+  vars: ['state', 'lead', 'hands_left', 'invested']
+  consts: ["'\\n    锁胜弃牌（fold-out）判定：领先优势能否靠全程弃牌保证最终获胜。\\n\\n    【数学推导】比赛按 total_win_chips（累...", '2', 'False']
+  names: ['total_win_chips', 'my_id', 'opp_id', 'max_hand', 'hand_num', 'INIT_CHIPS', 'my_chips', '_blind_line', 'Exception']
+### _match_adjust
+  vars: ['state', 'hands_left', 'lead', 'bb', 'invested']
+  consts: ["'\\n    max_hand 手定胜负的比赛中，根据领先量与剩余手数调整风险偏好：\\n      protect   —— 大幅领先且临近终局：降波动（...", 'None', '2', '-2', 'False', "('own',)", "'doomed'", '15', '30', '0.7', "'pressure'", "'protect'", '-30', "'desperate'", "'normal'"]
+  names: ['max_hand', 'hand_num', 'total_win_chips', 'my_id', 'opp_id', 'big_blind', '_CTX', 'threshold_offset', 'strategy_shift', 'INIT_CHIPS', 'my_chips', '_blind_line', 'opp_chips', 'Exception']
+### _preflop_allin_decide
+  vars: ['state', 'model', 'arch', 'base_rp', 'factor', 'rp', 'eq', 'call_amt', 'total_pot', 'required', 'lead', 'bb', 'big_bb', 'small_bb', 'thr', 'hands_left']
+  consts: ["'翻前对手全下（或需跟注额 ≥ 我方筹码，跟注即全下）时的独立决策。\\n\\n    【业务逻辑——按用户方案三要素 + 第四步防反向剥削】\\n      ...", 'True', '0.9', '0.7', '0.6', '0.35', "('maniac', 'station', 'tag', 'rock')", '0.02', '1.0', "('iterations', 'opp_range_pct', 'deadline')", '0', "'act'", "'allin'", "'fold'", "'big_lead'", "'lead'", "'even'", "'behind'", "'big_behind'", '15']
+  names: ['archetype', '_opp_range_pct', 'get', '_clamp', 'monte_carlo_equity', 'hole', 'ALLIN_MC', 'time', 'ALLIN_TIME_BUDGET', 'min', 'my_left', 'to_call', 'pot', 'ALLIN_BAND_PCT', 'total_win_chips', 'my_id', 'opp_id', 'big_blind', 'ALLIN_LEAD_BB', 'ALLIN_SMALL_BB', 'ALLIN_THR', 'max_hand', 'hand_num', 'ALLIN_ENDGAME_SHIFT', '_OPP_JUMPED', 'OPP_JUMP_FAC_MARGIN', 'max']
+### _preflop_decide
+  vars: ['state', 'model', 'pct', 'arch', 'adj']
+  consts: ['None', '0']
+  names: ['hand_percentile', 'hole', 'archetype', '_match_adjust', 'opp_is_allin', 'to_call', 'my_left', '_preflop_allin_decide', 'is_button', 'blind', '_button_open', '_button_vs_3bet', '_bb_option', '_bb_defend']
+### _button_open
+  vars: ['state', 'model', 'pct', 'arch', 'adj', 'lf', 'learned', 'open_pct', 'size', 'limp_max']
+  consts: ["'庄家位开池：范围随对手原型伸缩；开池尺寸学习优先。'", "'steal'", 'None', 'True', "('is_preflop',)", "'rock'", '0.92', "'station'", '0.85', "'maniac'", '0.75', "'protect'", "('desperate', 'doomed')", '1.0', '0.96', '0.25', "'act'", "'call'", "'fold'"]
+  names: ['_raise_to', 'STEAL_OPEN_BB', 'big_blind', '_learned_size', 'BTN_OPEN_PCT', 'min', 'OPEN_SIZE_VS_STATION', 'OPEN_SIZE_BB', 'eff_pfr']
+### _opp_range_pct
+  vars: ['model', 'opp_raised_preflop', 'vpip', 'base']
+  consts: ["'对手当前范围宽度估计（0~1），驱动蒙特卡洛对手抽样。'", '0.22', '0.7', '0.55', '0.8', '0.6', '0.08', '0.95']
+  names: ['eff_vpip', '_clamp']
+### _postflop_decide
+  vars: ['state', 'model', 'adj', 'arch', 'tex', 'is_river', 'last_raiser', 'opp_raised', 'i_aggressor', 'range_pct', 'eq', 'category', 'outs', 'weak_pair', 'strong', 'good', 'medium', 'big_draw', 'draw', '_st']
+  consts: ['None', '3', "('iterations', 'opp_range_pct', 'deadline')", '0.78', '0.6', '0.5', '8', '4', '0', 'False']
+  names: ['_match_adjust', 'archetype', '_board_texture', 'board', 'current_round', '_last_preflop_raiser', 'opp_id', 'my_id', '_opp_range_pct', 'monte_carlo_equity', 'hole', 'MC_ITERATIONS', 'time', 'TIME_BUDGET', '_effective_category', '_count_outs', 'should_avoid_risk', 'TWO_PAIR', 'to_call', '_stability_mode', 'Exception', '_check_side_stable', '_check_side', '_face_bet']
+### _stability_mode
+  vars: ['state', 'model', 'freq', 'hands_left', 'lead', 'safe_line']
+  consts: ["'【规则10·2026-09-07 用户规则】求稳模式判定。\\n\\n    触发（任一）：\\n      1. 对手频繁 allin（全下攻击型）——全押...", '1', '0.2', 'True', "('own',)", '0', '0.8', 'False']
+  names: ['allin_count', 'max', 'hands_seen', 'max_hand', 'hand_num', 'total_win_chips', 'my_id', 'opp_id', '_blind_line', 'Exception']
+### _normalize
+  vars: ['state', 'action', 'act', 'to_call', 'my_left', 'num', 'min_r', 'max_r']
+  consts: ["'\\n    防止非法操作触发的最终安全程序。\\n    - 规则5：本局有人全押 → 只能弃牌/全押；\\n    - check 仅当无需跟注；call...", "'act'", "'fold'", "'doomed'", '0', "'allin'", "'preflop'", "'check'", "'raise'", "('act', 'num')", "'call'", "'num'"]
+  names: ['get', 'to_call', 'my_left', 'any_allin', '_LEAD_LOCK', '_match_adjust', '_over_limit', 'stage', '_bet_limit', 'PREFLOP_MAX_BET', 'min_raise', 'min', 'LEAD_MAX_BET', 'int', 'round', 'float', 'TypeError', 'ValueError', 'max_raise', '_effective_category', 'HIGH_BET_MIN_CAT']

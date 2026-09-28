@@ -1805,18 +1805,27 @@ DOOM_CALL_UPGRADE_ON = True
 # 牌型闸门（第21手一对 6 推光 17,226 正是规则20 要防的）。故默认 False。
 DOOM_UPGRADE_FORCE_ALLIN = False
 
-# ── 【规则2-A 修正·2026-09-28】doomed 不再「无条件全押」，改三道门控 ──
+# ── 【规则2-A 修正·2026-09-28 v2】doomed 的门控 = 「弃牌是否立死」 ──
 # 实战教训（用户 2026-09-28 三局日志）：
 #   · 局2 手43：翻牌 allin 19,500（我方 K9，公面 TT，**对手已过牌**）→ 输 20,000；
 #   · 局3 手43：翻前 allin 20,000（我方 Q5 高牌）→ 输 20,000；
-#   · 两次 doom 的越线幅度只有 **2.8% / 4.5%**（几乎贴着追回线）；
 #   · 局1 同样机制全押 30 手，因对手每次都弃 → 反而 +3,000。
-#   → 三局合计 −23,500，是这批日志里唯一的系统性亏损来源。
-# 门控（任一不通过 → 不接管，交给常规策略 / 深度够时由规则18 接管）：
+#
+# ★【用户 2026-09-28 澄清·关键】原「越线幅度门控」是**用错了变量**：
+#   doom 成立的含义就是「这手输了 → 对手锁赢 → 全局输」，与越线是 2.8% 还是
+#   28% 无关。既然已经越线，那就已经没有「省着点投」的余地：
+#     **只要弃牌真的等于立刻输，就必须 allin —— 无论牌多烂。**
+#   拿整副筹码去赌 30% 翻盘，严格优于「确定性地输」。
+#
+# 于是门控只剩**口径**这一条（`to_call`）：
+#   ① `to_call > 0`（必须再投入才能继续）且 doom 成立
+#        → 弃牌 = 立死 → **一律 allin**（不设牌力底线、不设弃牌率门控）。
+#   ② `to_call <= 0`（能免费过牌）→ **不接管**。
+#        原因：此时 doom 是按「如果弃牌」的假设用弃牌口径算出来的，
+#        而过牌后这手**还没结束、还没输**（后面几街仍可能赢下）。
+#        局2 手43 正是这种情况（免费过牌却推 19,500）。
+#   （另有 `_doom_risk(include_to_call=True)` 的跟注口径，用于 `_doom_call_upgrade`）
 DOOM_ALLIN_ON = True
-DOOM_ALLIN_MIN_MARGIN = 0.10    # ② 越线幅度 ≥ 此比例 × 2×追回线（对齐 UA_SEALED_MARGIN 口径）
-DOOM_ALLIN_MIN_FOLD = 0.45      # ③ 对手面对下注的弃牌率下限（会跟的对手不搏命）
-DOOM_ALLIN_MIN_FOLD_SAMPLES = 6 # ③ 的样本门控：样本不足时不门控（不用先验乱拦）
 
 # 【方向2·2026-09-28】规则18 搏命区「牌烂梭哈」的对手弃牌率门控。
 # 理由：牌烂时梭哈**唯一的收益来源就是弃牌权益**（没有摊牌价值）。
@@ -2009,7 +2018,12 @@ RULE_LEARN_ON = True
 #   ③ 求稳模式下**取消**「对手过牌 → 强制小注」（主动下注会把底池做大、
 #      给对手 all-in 的机会），主动侧一律过牌、被动侧只跟不 raise；
 #   ④ 强牌（有效牌型 ≥ 两对）仍保留价值下注 —— 用户针对的是「没牌主动下注」。
-STABILITY_LINE_FACTOR = 0.60   # 求稳触发：lead ≥ 此比例 × 锁赢线
+# 【2026-09-28 v50 对照回调】0.60 → 0.70：v50（纯数值版）该比例是 0.80，
+#   即「更晚进入求稳、领先时仍保持进攻性」。当前 0.60 是 2026-09-14 定的
+#   （原话「更早进入求稳」）——由 0.80 下调而来。此处取中间值 0.70 折中：
+#   比 0.60 晚一点求稳（多打一点价值），但不照搬 v50 的 0.80。
+#   想回到「更早求稳」把它改回 0.60 即可。
+STABILITY_LINE_FACTOR = 0.70   # 求稳触发：lead ≥ 此比例 × 锁赢线
 STABILITY_ENDGAME_HANDS = 8    # 剩 ≤ 此手数且领先 → 也求稳
 
 # ---- 钓鱼下注（对跟注型对手缩小价值注，钓更宽跟注范围）----
@@ -2502,6 +2516,11 @@ def _big_money_guard(state, action):
         return action
     try:
         act = action.get("act")
+        # 【2026-09-28 复核】这里**故意不**给 `lk` 开免检口：规则20（弱牌不许
+        # 主动推光）在 2026-09-24 定案时就明确压过 UA_SEALED_ALLIN（见
+        # test_log_v2「0924第21/32手:规则20 把关」）——弱牌主动全押必须降级。
+        # 而规则2（doom）与规则18（搏命区）都在 `_decide_impl` 出口链**之前**
+        # 短路返回（`return _normalize(state, _gp)`），根本不会流到这里。
         to_call = int(state.to_call)
         my_left = int(state.my_left)
         if state.any_allin or to_call >= my_left:
@@ -2537,7 +2556,10 @@ def _endgame_arbitrate(state, model, chip_action, eq, adj):
         return chip_action
     try:
         # ① 用户硬规则（09-15 方案B）：有免费过牌 + 本次投入会让 doom 成立 → 过牌
-        if UA_CROSS_CHECK and chip_action.get("act") in ("raise", "allin"):
+        #    【2026-09-28】`lk` 标记（锁赢/搏命硬规则）豁免本条——那些场景的语义
+        #    正是「必须搏」，不能用「投入会 doom」把它改成过牌。
+        if UA_CROSS_CHECK and chip_action.get("act") in ("raise", "allin") \
+                and not chip_action.get("lk"):
             if int(state.to_call) <= 0:
                 my_round = max(0, int(getattr(state, "my_round_bet", 0) or 0))
                 if chip_action.get("act") == "raise":
@@ -2622,13 +2644,14 @@ def _lock_win_unified(state, model=None):
                 return _dp
             # 【2026-09-28】A 被门控拒绝接管时**不得**落到 C：
             # `_profit_lock_allin` 用的是同一个 `_doom_risk` 不等式（同式），
-            # 若继续往下走，三道门控会被 C 原样绕过——实测局2 手43
-            # （to_call=0、越线仅 2.8%）正是从这条后门把 19,500 推出去的。
+            # 若继续往下走，门控会被 C 原样绕过——实测局2 手43
+            # （to_call=0）正是从这条后门把 19,500 推出去的。
             return None
         # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
-        # 【2026-09-28】同样过门控，避免成为 A 的绕过通道。
+        # 【2026-09-28】与 A 走同一套 `_doom_plan`（弃牌立死 → allin；
+        # 免费过牌 → 看牌质量），避免成为 A 的绕过通道。
         if _profit_lock_allin(state):
-            _dp = _doom_plan(state, model, allow_free=True)
+            _dp = _doom_plan(state, model)
             if _dp is not None:
                 return _dp
             return None
@@ -2637,70 +2660,56 @@ def _lock_win_unified(state, model=None):
     return None
 
 
-def _doom_plan(state, model=None, allow_free=False):
-    """【规则2-A 修正·2026-09-28】doomed（弃牌口径）时的行动方案。
+def _doom_plan(state, model=None):
+    """【规则2-A 修正·2026-09-28 v3】doomed（弃牌口径）时的行动方案。
 
-    `allow_free=True`（规则2-C 盈利锁胜用）：跳过门控①。
-    C 是独立的盈利侧用户规则（「投入过大时全下把局面锁死」），语义与 A 不同
-    ——A 是「弃牌=认输所以必须搏」，C 是「主动锁死局面」。且 A 已在
-    `_lock_win_unified` 里 `return None` 中断，C 不会成为 A 的绕过通道，
-    因此 C 不需要「免费过牌就不许接管」这条约束。
+    ★门控 = **弃牌是否立死**（`to_call` 口径）+ **牌力分流**。
+    不做越线幅度判断（用户指出该变量逻辑错误），也不拿牌力当「门槛」。
+
+    用户 2026-09-28 规则：
+      doom 成立的含义是「这手输了 → 对手锁赢 → 全局输」，与越线 2.8%
+      还是 28% 无关。既然已经越线，就没有「省着点投」的余地：
+        **只要弃牌 = 立刻输，就必须 allin —— 无论牌多烂**
+        （拿整副筹码赌一把，严格优于确定性地输掉全局）。
+
+      ① `to_call > 0`（必须再投入才能继续）→ 弃牌 = 立死 → **一律 allin**。
+         唯一例外：牌好且翻前只需补大盲 → call（溜入看翻牌，慢打）。
+      ② `to_call <= 0`（能免费过牌）→ **看牌质量**（用户原话：
+         「质量不好就直接 allin，质量好就再看看」）：
+           · 牌烂（`_gamble_hand_good` 为假）→ **直接 allin**
+             （过牌赢不下足够大的底池、追不回缺口；梭哈靠弃牌权益，
+              故仍受 `_shove_fold_ok` 门控——对手会跟则不硬推）
+           · 牌好 → **return None「再看看」**（交给常规策略下注/过牌，
+             不再由 doom 强制接管）
+
+    v1（历史）：无条件全押（用户 2026-09-10 硬规则）。
+    v2（2026-09-28 上午）：加「越线幅度 ≥10%」门控 → 用户指出用错了变量。
 
     返回动作 dict；**None = 不接管**（交给常规策略，可能是过牌/跟注/弃牌）。
-
-    历史实现是「无条件全押」（用户 2026-09-10 的硬规则：弃牌=认输，必须搏）。
-    实战三局日志（2026-09-28）证明该实现太宽：
-      · 局2 手43 翻牌 allin 19,500（K9 / 公面 TT，**对手已过牌**）→ 输 20,000；
-      · 局3 手43 翻前 allin 20,000（Q5 高牌）→ 输 20,000；
-      · 而两次 doom 的越线幅度只有 **2.8% / 4.5%**（几乎贴着追回线）；
-      · 局1 同机制全押 30 手（对手每次都弃）反而 +3,000。
-      → 三局合计 −23,500 = 这批日志唯一的系统性亏损来源。
-
-    三道门控（任一不通过 → None）：
-      ① **能免费过牌**（to_call ≤ 0）→ 不接管：不许把免费牌换成 coin flip；
-      ② **越线幅度** ≥ DOOM_ALLIN_MIN_MARGIN × 2×追回线 → 边缘不推光；
-      ③ **对手会弃牌**（样本够且 eff_fold_to_bet < DOOM_ALLIN_MIN_FOLD）→ 不搏命
-         （对手「会跟」时每手全押 = 送光筹码；局2/3 对手面对下注只弃 30%）。
-
-    通过后按牌力分流（对齐规则18 搏命区）：
-      · 牌好 + 翻前只需补大盲 → call（溜入看翻牌，即翻前版的「慢打」）
-      · 其余 → all-in（带 lk 免检，不被注额/牌型上限降级）
     """
     try:
         if not DOOM_ALLIN_ON:
             return {"act": "allin", "lk": 1}      # 旧行为（无条件全押）
-        # ① 能免费过牌 → 不接管（常规策略会过牌；规则18 若深度够仍可能搏命）
-        #    豁免：**强牌**（翻后 ≥三条 / 翻前 AA·KK·QQ·JJ·AKs）不受此限——
-        #    此时全押是价值推（赢了直接翻盘），不是拿整副筹码去打 coin flip。
-        lead = (int(state.total_win_chips[state.my_id])
-                - int(state.total_win_chips[state.opp_id]))
-        invested = _invested(state)
         line = _blind_line(state, _hands_left(state), own=False)
         if line <= 0:
-            # 最后一手：已经没有追回线（不会再有下一手）→ 只能搏，不受门控限制
+            # 最后一手：已经没有追回线（不会再有下一手）→ 只能搏
             return {"act": "allin", "lk": 1}
-        # ① 能免费过牌 → 不接管（常规策略会过牌；规则18 若深度够仍可能搏命）
-        #    豁免：**强牌**（翻后 ≥三条 / 翻前 AA·KK·QQ·JJ·AKs）不受此限——
-        #    此时全押是价值推（赢了直接翻盘），不是拿整副筹码去打 coin flip。
-        if (not allow_free and int(state.to_call) <= 0
-                and not _strong_for_big_money(state)):
-            return None
-        over = (-(lead - 2 * invested) - 2.0 * line) / (2.0 * line)
-        if over < DOOM_ALLIN_MIN_MARGIN:
-            return None                            # ② 边缘 doom → 不推光
-        # ③ 对手弃牌率门控（样本足够才门控）
-        if model is not None:
-            try:
-                if int(getattr(model, "faces_bet", 0) or 0) >= \
-                        DOOM_ALLIN_MIN_FOLD_SAMPLES:
-                    if float(model.eff_fold_to_bet()) < DOOM_ALLIN_MIN_FOLD:
-                        return None
-            except Exception:
-                pass
-        # 牌力分流
+        to_call = int(state.to_call)
+        # ① 能免费过牌 → 看牌质量（「质量不好直接 allin / 质量好再看看」）
+        if to_call <= 0:
+            if not _gamble_hand_good(state):
+                if not _shove_fold_ok(state, model):
+                    return None                    # 对手会跟 → 烂牌也不硬推
+                return {"act": "allin", "lk": 1}   # 质量不好 → 直接 allin
+            # 质量好 → 再看看；但**河牌是最后一街，没有「再看」的余地**
+            # （与 `_gamble_plan` 好牌路径的「最后一街不再等」一致）→ 收网 allin
+            if state.stage == "river":
+                return {"act": "allin", "lk": 1}
+            return None                            # 质量好 → 再看看（留下注/过牌给常规策略）
+        # ② 弃牌 = 立死 → 一律 allin；仅「牌好 + 只需补大盲」走溜入慢打
         if _gamble_hand_good(state) and state.stage == "preflop":
             try:
-                if int(state.to_call) <= int(state.big_blind):
+                if to_call <= int(state.big_blind):
                     return {"act": "call"}         # 补大盲溜入（慢打）
             except Exception:
                 pass
