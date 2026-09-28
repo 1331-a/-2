@@ -36,6 +36,18 @@
   **隔离检验未通过**：连街开火型 +1917（p=0.734 不显著）/ 中等尺度型 −862
   （p=0.036 显著为负）；加门控 0.60 后收益被砍 35% 而亏损未减 → 收益与亏损
   **同源**，无法按对手激进度分离。代码/门控/测试保留，`WB_FORCE_BIGBET_A=1` 可再启用。
+- 【规则2 补漏·2026-09-28 **已上线** ef67a93】`_doom_call_upgrade`（出口**最后一步**）：
+  **跟注口径 doom 成立（`_doom_risk(include_to_call=True)`）→ 不允许便宜跟注**。
+  只改写 `call`；fold/check/raise 不动。落点按牌力：
+  **强牌（翻后 ≥三条 / 翻前 AA..AKs）→ allin(lk)；弱牌 → fold**。
+  `DOOM_UPGRADE_FORCE_ALLIN=False`（默认尊重规则20）；设 True = 无视牌力无条件 allin。
+  开关 `DOOM_CALL_UPGRADE_ON`（`DBG_NO_DOOM_UPGRADE=1` 关）。
+  背景：实战第10手——越线仅 **2.3%** < `UA_SEALED_MARGIN` 15% → 强制全押不触发，
+  而仲裁「不制造全押」→ 放行了便宜跟注（eq 0.339 > 需要 0.250，**筹码 EV 本是正的**，
+  属政策选择非算错）；该手输 1,614 → 终局差 1.03BB 落败。
+  实测代价：09-24 四局 259 个决策里 **7 个（2.7%）**被改写（全弱牌→fold）。
+  ★**搏命区（规则18）与规则2-A 都在 decide 入口 return**，不经过本规则。
+  ★与 2026-09-24 的决定相反（当时接受弱牌降级为 call）→ 按最新指示统一。
 
 ## 构建发布
 - 单文件提交版 `内容/botzone_submit.py`（`bundle.py` 打包 8+1 模块）；ELF 由 GitHub Actions（仓库 `1331-a/-2`，workflow build-elf）构建，artifact `poker_bot-linux-x86-64`（约 7MB）。
