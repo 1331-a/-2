@@ -199,6 +199,28 @@ UA_CROSS_CHECK = True
 UA_SEALED_ALLIN = True
 UA_SEALED_MARGIN = 0.15        # 越线幅度 ≥ 该比例 × 2×追回线 才算「明显被锁」
 
+# ── 【规则2 补漏·2026-09-28 用户规则】跟注即锁赢 → 不允许便宜跟注 ──
+# 用户实战第10手明确指出：「跟注输了会导致对手锁赢，此时应该将跟注改为 allin
+# （如果要跟注的话）」。上面 UA_SEALED_MARGIN 的「擦线不触发」只该管**强制全押**；
+# 但「擦线时放行便宜跟注」是重构漏掉的一条 —— 见 `_doom_call_upgrade`。
+# 触发面 = `_doom_risk(include_to_call=True)`（跟注并输 → 对手数学上锁赢），
+# 只把**已决定的 call** 改成 all-in；fold/check/raise 不动。
+DOOM_CALL_UPGRADE_ON = True
+# 【与规则20 的关系】跟注即锁赢时，call 必须消失；落点按牌力分流：
+#   弱牌 → fold（默认，尊重规则20「弱牌不许主动推光」）、强牌 → allin。
+# 用户原话是「改为 allin」。若要不看牌力**无条件** allin，把下面设 True ——
+# 注意代价：第32手（一对 9）等弱牌也会被推光，等于放开规则20 对「主动全押」的
+# 牌型闸门（第21手一对 6 推光 17,226 正是规则20 要防的）。故默认 False。
+DOOM_UPGRADE_FORCE_ALLIN = False
+try:
+    import os as _os4
+    if _os4.environ.get("DBG_NO_DOOM_UPGRADE") == "1":
+        DOOM_CALL_UPGRADE_ON = False
+    if _os4.environ.get("DBG_DOOM_FORCE_ALLIN") == "1":
+        DOOM_UPGRADE_FORCE_ALLIN = True
+except Exception:
+    pass
+
 # ── 规则20（2026-09-24 用户规则）：大额投入闸门（恢复旧限制） ──
 # 用户复盘实战第21手（河牌一对 6 面对加注 6,318 → 全押 17,226）后明确要求：
 #   · 需跟 > BIG_CALL_LIMIT(3000) 时，**只有有效牌型 ≥ 三条 才跟**；
@@ -743,6 +765,57 @@ def _sealed_by_call(state, margin=None):
         return (lead - 2 * _exposure(state)) <= (-2.0 * line * (1.0 + m))
     except Exception:
         return False
+
+
+def _doom_call_upgrade(state, action):
+    """【规则2 补漏·2026-09-28 用户规则】「跟注即锁赢」→ 不允许便宜跟注，改全押。
+
+    用户实战第10手（截图）：
+      河牌 我方 J♥Q♣，公面 6♥K♥K♦10♠10♥，对手 A♦5♠，对手下注 807。
+      本手开始我们 −2,989（lead −5,978）、已投入 807、剩 60 手、追回线 2×=9,000。
+      · 弃牌口径：−5,978 −2×807      = −7,592  > −9,000 → 弃了还能翻身（不 doom）
+      · **跟注口径：−5,978 −2×(807+807) = −9,206 ≤ −9,000 → 跟注并输 = 送对手锁赢**
+      实际却走了**便宜跟注**（807）→ 本手净 −1,614 → 本场变 −4,603，
+      终局以 1.03BB 之差落败。
+
+    为什么旧结构能拦住、新结构拦不住：
+      · 旧 `_doom_call_upgrade`（2026-09-14）：跟注即锁赢 → 直接把 call 升级为
+        allin，用户原话「弃牌=认输，必须争取赢下这一手」「**不给便宜跟注豁免**」；
+      · 2026-09-24 重构把它并入 `_endgame_arbitrate` 的效用比较，而仲裁
+        **「只往更保守方向修正、不制造新加注/全押」**；唯一能强制全押的
+        `UA_SEALED_ALLIN` 又要求「**明显**被锁」（`_sealed_by_call`，越线
+        ≥ `UA_SEALED_MARGIN`=15%）。
+      · 第10手只越线 **2.3%** → 全部落空 → 便宜跟注被放行。**这是重构漏掉的一条**。
+
+    本函数把该规则恢复为**出口硬约束**（在出口最后一步执行）：
+      · 触发条件 = `_doom_risk(include_to_call=True)`（跟注并输 → 对手锁赢）；
+      · 只改写 **call** 一种动作，且按牌力分流（**必须**与规则20 一致）：
+          - 牌力够主动全押（`_strong_for_big_money`：翻后 ≥三条 / 翻前 AA..AKs）
+            → **all-in**（用户原话「将跟注改为 allin」，带 `lk` 免检）；
+          - 牌力不够 → **fold**（不放行便宜跟注，同时**不违反规则20** 的
+            「弱牌不许主动推光」——第21手一对 6 推光 17,226 的教训）。
+      · fold / check / raise 一律不动 —— 「宁可弃牌」仍由上游效用仲裁给出，
+        所以本函数不会把已经决定弃牌的局面翻成全押。
+
+    【与历史决定的差异·务必知悉】用户 2026-09-24 曾接受「弱牌在跟注即锁赢时
+    降级为 call」（第32手），并明确反对在第51手全押。本次用户看到第10手实战
+    后要求「不允许便宜跟注」。两者不可能同时成立（第10/32/51 手都是
+    『跟注口径 doom 成立、弃牌口径不成立』），故按**最新指示**统一为
+    「不再放行 call」，并用规则20 的牌型闸门决定 fallback（强→全押 / 弱→弃）。
+    该取舍就是第32/51手测试期望值变更的原因。
+    """
+    try:
+        if not DOOM_CALL_UPGRADE_ON:
+            return action
+        if not isinstance(action, dict) or action.get("act") != "call":
+            return action
+        if not _doom_risk(state, include_to_call=True):
+            return action
+        if _strong_for_big_money(state) or DOOM_UPGRADE_FORCE_ALLIN:
+            return {"act": "allin", "lk": 1}
+        return {"act": "fold"}
+    except Exception:
+        return action
 
 
 def _endgame_matters(state, chip_action):
@@ -1364,7 +1437,11 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 带 lk 的全押降级为普通 call，`lk` 标记随之丢失；若本闸门先跑，就会把
     # 「规则2 锁赢体系」刚定下的 call 再翻成 fold（第32手实测冲突）。
     # 配合 `_lock_win_engaged` 判定：规则2/20 已介入时本闸门一律让位。
-    return _cheap_call_guard(state, action)
+    action = _cheap_call_guard(state, action)
+    # 【规则2 补漏·2026-09-28 用户规则】跟注即锁赢 → 不允许「便宜跟注」，改全押。
+    # 必须放在**最后一步**（在 `_big_money_guard` / `_cheap_call_guard` 之后）：
+    # 规则20 会把带 lk 的主动全押降级为 call，而本规则是用户硬规则、优先级更高。
+    return _doom_call_upgrade(state, action)
 
 
 # ================================================================
