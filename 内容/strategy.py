@@ -212,6 +212,44 @@ DOOM_CALL_UPGRADE_ON = True
 # 注意代价：第32手（一对 9）等弱牌也会被推光，等于放开规则20 对「主动全押」的
 # 牌型闸门（第21手一对 6 推光 17,226 正是规则20 要防的）。故默认 False。
 DOOM_UPGRADE_FORCE_ALLIN = False
+
+# ── 【规则2-A 修正·2026-09-28】doomed 不再「无条件全押」，改三道门控 ──
+# 实战教训（用户 2026-09-28 三局日志）：
+#   · 局2 手43：翻牌 allin 19,500（我方 K9，公面 TT，**对手已过牌**）→ 输 20,000；
+#   · 局3 手43：翻前 allin 20,000（我方 Q5 高牌）→ 输 20,000；
+#   · 两次 doom 的越线幅度只有 **2.8% / 4.5%**（几乎贴着追回线）；
+#   · 局1 同样机制全押 30 手，因对手每次都弃 → 反而 +3,000。
+#   → 三局合计 −23,500，是这批日志里唯一的系统性亏损来源。
+# 门控（任一不通过 → 不接管，交给常规策略 / 深度够时由规则18 接管）：
+DOOM_ALLIN_ON = True
+DOOM_ALLIN_MIN_MARGIN = 0.10    # ② 越线幅度 ≥ 此比例 × 2×追回线（对齐 UA_SEALED_MARGIN 口径）
+DOOM_ALLIN_MIN_FOLD = 0.45      # ③ 对手面对下注的弃牌率下限（会跟的对手不搏命）
+DOOM_ALLIN_MIN_FOLD_SAMPLES = 6 # ③ 的样本门控：样本不足时不门控（不用先验乱拦）
+
+# 【方向2·2026-09-28】规则18 搏命区「牌烂梭哈」的对手弃牌率门控。
+# 理由：牌烂时梭哈**唯一的收益来源就是弃牌权益**（没有摊牌价值）。
+# 面对「会跟」的对手（实测局2/3 面对我方下注只弃 30%、弃牌率 0.21~0.23），
+# 弃牌权益≈0 → 用整副 20,000 去打一次 coin flip，被 call 一次就输光；
+# 而此时还剩 26 手、缺口 3,876 < 追回线 3,900，常规打法完全追得回来。
+# 牌好时不门控（好牌希望被跟，不需要弃牌权益）。
+GAMBLE_SHOVE_FOLD_MIN = 0.45            # 低于此弃牌率 → 不梭哈
+GAMBLE_SHOVE_FOLD_SAMPLES = 6           # 样本不足时不门控
+GAMBLE_SHOVE_FORCE_HANDS = 8            # 剩 ≤8 手时不门控（没时间靠常规打法磨回来）
+
+# 【方向3·2026-09-28】`_opp_range_pct` 的「本街加注收窄」参数。
+# 每次对手在本街加注，范围按 (1 - per) 倍收窄；per 随对手主动下注频率递减
+# （罕出手的对手一旦加注，牌力信号更强 → 收窄更多）。
+RANGE_NARROW_MAX_RAISES = 3     # 最多按 3 次加注收窄（防连打时范围塌到 0）
+RANGE_NARROW_BASE = 0.45        # per = BASE - AGG × 对手主动下注频率
+RANGE_NARROW_AGG = 0.30
+RANGE_NARROW_MIN = 0.20         # 爱开火的对手每次仍收窄 20%
+RANGE_NARROW_MAX = 0.40         # 罕出手的对手每次最多收窄 40%
+try:
+    import os as _os5
+    if _os5.environ.get("DBG_NO_DOOM_ALLIN") == "1":
+        DOOM_ALLIN_ON = False           # 回到旧行为（无条件全押），便于 A/B
+except Exception:
+    pass
 try:
     import os as _os4
     if _os4.environ.get("DBG_NO_DOOM_UPGRADE") == "1":
@@ -957,7 +995,7 @@ def _endgame_arbitrate(state, model, chip_action, eq, adj):
         return chip_action
 
 
-def _lock_win_unified(state):
+def _lock_win_unified(state, model=None):
     """【规则2·2026-09-10 合并】锁胜 / 防锁赢统一决策（优先级 2）。
 
     用户澄清：这三件事本质是同一件事——「本局胜败如何影响最终锁赢」，
@@ -984,18 +1022,101 @@ def _lock_win_unified(state):
             except Exception:
                 pass
             return {"act": "fold"}
-        # A. 防锁赢（弃牌就锁给对手 → allin）——无条件全押，用户硬规则。
-        # 注意：这里**不做**便宜跟注豁免——此分支意味着「弃牌=认输」，必须
-        # 争取赢下这一手，全押的弃牌权益（逼对手弃更好的牌）不能放弃。
-        # 便宜跟注豁免只作用于「敞口 doom」（见 _doom_call_upgrade）。
+        # A. 防锁赢（弃牌就锁给对手）——【2026-09-28 修正】不再「无条件全押」，
+        # 改由 `_doom_plan` 做三道门控 + 牌力分流（见该函数注释里的实战教训）。
+        # 门控都没通过时返回 None → **不接管**，交给常规策略
+        # （可能过牌 / 跟注 / 弃牌；深度够时再由规则18 搏命区接管）。
         if _match_adjust(state) == "doomed":
-            return {"act": "allin"}
+            _dp = _doom_plan(state, model)
+            if _dp is not None:
+                return _dp
+            # 【2026-09-28】A 被门控拒绝接管时**不得**落到 C：
+            # `_profit_lock_allin` 用的是同一个 `_doom_risk` 不等式（同式），
+            # 若继续往下走，三道门控会被 C 原样绕过——实测局2 手43
+            # （to_call=0、越线仅 2.8%）正是从这条后门把 19,500 推出去的。
+            return None
         # C. 盈利锁胜全下（锁定既有收益，非盈利也可由 A 覆盖）
+        # 【2026-09-28】同样过门控，避免成为 A 的绕过通道。
         if _profit_lock_allin(state):
-            return {"act": "allin"}
+            _dp = _doom_plan(state, model, allow_free=True)
+            if _dp is not None:
+                return _dp
+            return None
     except Exception:
         pass
     return None
+
+
+def _doom_plan(state, model=None, allow_free=False):
+    """【规则2-A 修正·2026-09-28】doomed（弃牌口径）时的行动方案。
+
+    `allow_free=True`（规则2-C 盈利锁胜用）：跳过门控①。
+    C 是独立的盈利侧用户规则（「投入过大时全下把局面锁死」），语义与 A 不同
+    ——A 是「弃牌=认输所以必须搏」，C 是「主动锁死局面」。且 A 已在
+    `_lock_win_unified` 里 `return None` 中断，C 不会成为 A 的绕过通道，
+    因此 C 不需要「免费过牌就不许接管」这条约束。
+
+    返回动作 dict；**None = 不接管**（交给常规策略，可能是过牌/跟注/弃牌）。
+
+    历史实现是「无条件全押」（用户 2026-09-10 的硬规则：弃牌=认输，必须搏）。
+    实战三局日志（2026-09-28）证明该实现太宽：
+      · 局2 手43 翻牌 allin 19,500（K9 / 公面 TT，**对手已过牌**）→ 输 20,000；
+      · 局3 手43 翻前 allin 20,000（Q5 高牌）→ 输 20,000；
+      · 而两次 doom 的越线幅度只有 **2.8% / 4.5%**（几乎贴着追回线）；
+      · 局1 同机制全押 30 手（对手每次都弃）反而 +3,000。
+      → 三局合计 −23,500 = 这批日志唯一的系统性亏损来源。
+
+    三道门控（任一不通过 → None）：
+      ① **能免费过牌**（to_call ≤ 0）→ 不接管：不许把免费牌换成 coin flip；
+      ② **越线幅度** ≥ DOOM_ALLIN_MIN_MARGIN × 2×追回线 → 边缘不推光；
+      ③ **对手会弃牌**（样本够且 eff_fold_to_bet < DOOM_ALLIN_MIN_FOLD）→ 不搏命
+         （对手「会跟」时每手全押 = 送光筹码；局2/3 对手面对下注只弃 30%）。
+
+    通过后按牌力分流（对齐规则18 搏命区）：
+      · 牌好 + 翻前只需补大盲 → call（溜入看翻牌，即翻前版的「慢打」）
+      · 其余 → all-in（带 lk 免检，不被注额/牌型上限降级）
+    """
+    try:
+        if not DOOM_ALLIN_ON:
+            return {"act": "allin", "lk": 1}      # 旧行为（无条件全押）
+        # ① 能免费过牌 → 不接管（常规策略会过牌；规则18 若深度够仍可能搏命）
+        #    豁免：**强牌**（翻后 ≥三条 / 翻前 AA·KK·QQ·JJ·AKs）不受此限——
+        #    此时全押是价值推（赢了直接翻盘），不是拿整副筹码去打 coin flip。
+        lead = (int(state.total_win_chips[state.my_id])
+                - int(state.total_win_chips[state.opp_id]))
+        invested = _invested(state)
+        line = _blind_line(state, _hands_left(state), own=False)
+        if line <= 0:
+            # 最后一手：已经没有追回线（不会再有下一手）→ 只能搏，不受门控限制
+            return {"act": "allin", "lk": 1}
+        # ① 能免费过牌 → 不接管（常规策略会过牌；规则18 若深度够仍可能搏命）
+        #    豁免：**强牌**（翻后 ≥三条 / 翻前 AA·KK·QQ·JJ·AKs）不受此限——
+        #    此时全押是价值推（赢了直接翻盘），不是拿整副筹码去打 coin flip。
+        if (not allow_free and int(state.to_call) <= 0
+                and not _strong_for_big_money(state)):
+            return None
+        over = (-(lead - 2 * invested) - 2.0 * line) / (2.0 * line)
+        if over < DOOM_ALLIN_MIN_MARGIN:
+            return None                            # ② 边缘 doom → 不推光
+        # ③ 对手弃牌率门控（样本足够才门控）
+        if model is not None:
+            try:
+                if int(getattr(model, "faces_bet", 0) or 0) >= \
+                        DOOM_ALLIN_MIN_FOLD_SAMPLES:
+                    if float(model.eff_fold_to_bet()) < DOOM_ALLIN_MIN_FOLD:
+                        return None
+            except Exception:
+                pass
+        # 牌力分流
+        if _gamble_hand_good(state) and state.stage == "preflop":
+            try:
+                if int(state.to_call) <= int(state.big_blind):
+                    return {"act": "call"}         # 补大盲溜入（慢打）
+            except Exception:
+                pass
+        return {"act": "allin", "lk": 1}
+    except Exception:
+        return {"act": "allin", "lk": 1}           # 异常兜底：维持旧行为
 
 
 def _profit_lock_allin(state):
@@ -1094,10 +1215,42 @@ def _gamble_hand_good(state):
         return False
 
 
-def _gamble_plan(state):
+def _shove_fold_ok(state, model=None):
+    """【方向2·2026-09-28】「梭哈靠弃牌权益」是否成立（对手会不会弃牌）。
+
+    牌烂时梭哈的唯一收益 = 弃牌权益。对手「会跟」时该收益≈0，
+    用整副筹码打 coin flip 只会加速出局（局2/3 各一次 −20,000）。
+    门控条件（全部满足才放行梭哈）：
+      · 无 model（离线/单测）→ 放行；
+      · 对手已把我们逼到必须全下（to_call ≥ 我方剩余）→ 放行（没有别的选择）；
+      · 样本不足（< GAMBLE_SHOVE_FOLD_SAMPLES）→ 放行（不用先验乱拦）；
+      · eff_fold_to_bet ≥ GAMBLE_SHOVE_FOLD_MIN → 放行。
+    """
+    try:
+        if model is None:
+            return True
+        if int(state.to_call) >= int(state.my_chips):
+            return True                                  # 已被逼到全下，别无选择
+        # 逃生口：剩下手数太少时没时间靠常规打法磨回来 → 允许梭哈
+        # （对齐规则10「剩 ≤8 手」的终局口径）。
+        if int(_hands_left(state)) <= GAMBLE_SHOVE_FORCE_HANDS:
+            return True
+        _n = getattr(model, "faces_bet", None)           # eff_fold_to_bet 的样本数
+        if _n is None:
+            _n = getattr(model, "fold_to_bet_samples", None)
+        if _n is not None and int(_n) < GAMBLE_SHOVE_FOLD_SAMPLES:
+            return True
+        return float(model.eff_fold_to_bet()) >= GAMBLE_SHOVE_FOLD_MIN
+    except Exception:
+        return True
+
+
+def _gamble_plan(state, model=None):
     """【规则18·2026-09-16 用户规则】搏命路线（返回动作；None = 不在搏命区）。
 
       牌烂 → 立刻 all-in（"开局 allin"：逼对手用整副筹码接 50/50）
+      【方向2·2026-09-28】先过 `_shove_fold_ok`：对手「会跟」时不梭哈
+      （返回 None → 交给常规策略，通常弃掉小池而不是推光整副筹码）。
       牌好 → 多过牌再 allin（慢打诱敌）：
         · 能过牌（to_call == 0）→ check（过牌诱敌）；
           河牌是最后一条街，不能再等 → all-in
@@ -1108,6 +1261,8 @@ def _gamble_plan(state):
     if not _gamble_zone(state):
         return None
     if not _gamble_hand_good(state):
+        if not _shove_fold_ok(state, model):
+            return None
         return {"act": "allin", "lk": 1}
     try:
         to_call = int(state.to_call)
@@ -1348,7 +1503,7 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 本质是同一件事：本局胜败对「最终锁赢」的影响，合并为 _lock_win_unified。
     # （原「优先级 1 = _LEAD_LOCK 优势锁定」已于 2026-09-14 删除）
     # 【M2】外层 decide() 入口已算过 → 直接复用，避免重复调用（也可能不一致）
-    _lw = _lock_win_unified(state) if _lw is _LW_UNSET else _lw
+    _lw = _lock_win_unified(state, model) if _lw is _LW_UNSET else _lw
     if _lw is not None:
         if _lw.get("act") == "allin" and _decision_timed_out():
             DecisionLogger.log(state.hand_num, state.stage, state.pot,
@@ -1381,7 +1536,7 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     #     只赢个小池（弃牌权益≈0）；开局 all-in 才能逼他用整副筹码接 50/50；
     #   · 牌好 → 多过牌再 all-in：慢打诱敌（见 _gamble_plan）。
     # allin 带 lk 标记 → 免检（否则会被翻前 1000 / 翻后牌型上限降级）。
-    _gp = _gamble_plan(state)
+    _gp = _gamble_plan(state, model)
     if _gp is not None:
         _g_act = str(_gp.get("act"))
         DecisionLogger.log(state.hand_num, state.stage, state.pot,
@@ -1750,7 +1905,8 @@ def _risk_avoid_route(state, model):
         # 大幅落后且剩余局数少：允许跟全下，但胜率必须 > 25%（纯数学底线）
         eq = monte_carlo_equity(
             state.hole, state.board, iterations=MC_ITERATIONS,
-            opp_range_pct=_opp_range_pct(model, _opp_raised_preflop(state)),
+            opp_range_pct=_opp_range_pct(model, _opp_raised_preflop(state),
+                                        _opp_street_raises(state)),
             deadline=time.time() + TIME_BUDGET)
         if to_call <= 0:
             return {"act": "check"}
@@ -3207,7 +3363,7 @@ def _candidate_rules(state, model, cat=None):
         out.append({"name": name, "act": act, "suggest": suggest or act})
 
     try:
-        lk = _lock_win_unified(state)
+        lk = _lock_win_unified(state, model)
         if lk:
             add("\u89c4\u52192 \u9501\u8d62/\u9632\u9501\u8d62",
                 lk.get("act"), "allin" if lk.get("act") == "allin" else "fold \u9501\u80dc")
@@ -3559,14 +3715,57 @@ class DecisionLogger:
         return list(cls._records)
 
 
-def _opp_range_pct(model, opp_raised_preflop):
-    """对手当前范围宽度估计（0~1），驱动蒙特卡洛对手抽样。"""
+def _opp_street_raises(state):
+    """对手在**当前街**已做出的加注 / 全下次数（0~3+）。
+
+    【方向3·2026-09-28】只看 vpip + 翻前是否加注会让 eq 系统性高估：
+    对手在本街加注后，范围已经明显收紧，但旧口径仍按「入池时的宽范围」抽样
+    → 实测高估 0.15~0.30（局1#8 估 0.92 / 真实 ≈0.61，局3#10 估 0.86 / ≈0.60）。
+    """
+    try:
+        hist = (getattr(state, "request", None) or {}).get("history") or []
+        cur = int(state.current_round)
+        opp = state.opp_id
+        n = 0
+        for r in hist:
+            if int(r.get("round", 0)) != cur:
+                continue
+            if r.get("player_id") != opp:
+                continue
+            if str(r.get("action_type")) in ("raise", "allin", "bet"):
+                n += 1
+        return n
+    except Exception:
+        return 0
+
+
+def _opp_range_pct(model, opp_raised_preflop, street_raises=0):
+    """对手当前范围宽度估计（0~1），驱动蒙特卡洛对手抽样。
+
+    【方向3·2026-09-28】新增 `street_raises`：对手在本街的加注次数。
+    每次加注按「对手平时爱不爱主动下注」收窄范围——罕出手的对手一旦加注，
+    牌力信号更强（收窄更多）；本来就爱开火的对手收窄较少。
+    这是修复「造池后被大注赶走 / 弱牌连下三街被跟到底」的公共根因。
+    """
     vpip = model.eff_vpip()
     if opp_raised_preflop:
         base = 0.22 * (0.7 + vpip)      # 主动加注者：范围收紧
     else:
         base = 0.55 * (0.8 + 0.6 * vpip)  # 平跟入池：范围较宽
-    return _clamp(base, 0.08, 0.95)
+    base = _clamp(base, 0.08, 0.95)
+    try:
+        n = max(0, min(int(street_raises), RANGE_NARROW_MAX_RAISES))
+    except Exception:
+        n = 0
+    if n <= 0:
+        return base
+    try:
+        agg = _clamp(float(model.eff_bet_freq()), 0.10, 0.90)
+    except Exception:
+        agg = 0.5
+    per = _clamp(RANGE_NARROW_BASE - RANGE_NARROW_AGG * agg,
+                 RANGE_NARROW_MIN, RANGE_NARROW_MAX)
+    return _clamp(base * ((1.0 - per) ** n), 0.05, 0.95)
 
 
 def _postflop_decide(state, model):
@@ -3578,7 +3777,9 @@ def _postflop_decide(state, model):
     last_raiser = _last_preflop_raiser(state)
     opp_raised = (last_raiser == state.opp_id)
     i_aggressor = (last_raiser == state.my_id)
-    range_pct = _opp_range_pct(model, opp_raised)
+    # 【方向3·2026-09-28】本街对手加注次数 → 收窄范围（修复 eq 高估）
+    range_pct = _opp_range_pct(model, opp_raised,
+                               _opp_street_raises(state))
     eq = monte_carlo_equity(
         state.hole, state.board, iterations=MC_ITERATIONS,
         opp_range_pct=range_pct,
@@ -4633,7 +4834,7 @@ def decide(state, model, ctx=None, debug=False):
     except Exception:
         pass
     try:
-        _lw0 = _lock_win_unified(state)
+        _lw0 = _lock_win_unified(state, model)
         if _lw0 is not None:
             action = _normalize(state, _lock_win_legal(state, _lw0))
     except Exception:

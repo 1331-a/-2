@@ -106,7 +106,20 @@ st4 = parse_request(req(total_win_chips=[1000, -1000], public_cards=[46, 6, 1],
                                  {"round": 1, "player_id": 1, "action": 0,
                                   "action_type": "check"}]))
 a = decide(st4, OpponentModel())
-check("规则2:深投入被规则2接管全下", a == {"act": "allin"}, str(a))
+# 【2026-09-28 方向1】doom 三道门控之一：to_call==0（可免费过牌）且非强牌
+# → 规则2 不接管，交回常规策略过牌（旧实现无条件 allin，实战三局因此亏
+# −23,500：局2 手43 在 to_call=0 时推 19,500 输 20,000）。
+check("规则2:深投入+可免费过牌→不接管(过牌)",
+      a.get("act") == "check", str(a))
+# 对照：关闭门控 → 旧行为（无条件 allin）
+import strategy as _SG  # noqa: E402
+_SG.DOOM_ALLIN_ON, _old4 = False, _SG.DOOM_ALLIN_ON
+try:
+    a_old4 = decide(st4, OpponentModel())
+finally:
+    _SG.DOOM_ALLIN_ON = _old4
+check("规则2(对照):关闭门控→深投入仍全下",
+      a_old4 == {"act": "allin"}, str(a_old4))
 
 # 落后 2000（lead=-4000）深投入 → doom 无条件 allin
 st5 = parse_request(req(total_win_chips=[-2000, 2000], public_cards=[46, 6, 1],
@@ -117,7 +130,11 @@ st5 = parse_request(req(total_win_chips=[-2000, 2000], public_cards=[46, 6, 1],
                                  {"round": 1, "player_id": 1, "action": 0,
                                   "action_type": "check"}]))
 a = decide(st5, OpponentModel())
-check("规则2:落后深投入 doom 触发无条件 allin", a == {"act": "allin"}, str(a))
+# 【2026-09-28 方向1】同上：doom + 免费过牌 + 非强牌 → 不接管（过牌）。
+# 「无条件 allin」仅保留给：已被逼到全下 / 最后一手 / 越线幅度足够大 /
+# 对手会弃牌 / 强牌 这些情况（见 strategy._doom_plan 注释）。
+check("规则2:落后深投入+可免费过牌→不接管(过牌)",
+      a.get("act") == "check", str(a))
 
 # ---------- 4. 注额封顶仍然生效（<三条 ≤3000 / 小两对 ≤2000） ----------
 st6 = parse_request(req(total_win_chips=[0, 0], public_cards=[46, 6, 1],

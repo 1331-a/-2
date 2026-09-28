@@ -96,7 +96,20 @@ st6 = parse_request(req(my_chips=16000, my_cards=[48, 44],
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st6, OpponentModel())
-check("规则2:盈利+深投入→全下锁胜", a == {"act": "allin"}, str(a))
+# 【2026-09-28 方向1】旧实现「doom → 无条件 allin」已改为三道门控。
+# 本场景 to_call==0（对手已过牌，可以免费看牌）且牌力仅为顶对（<三条）
+# → 门控①不接管（不许把免费牌换成整副筹码的 coin flip），交回常规策略过牌。
+# 实战依据：局2 手43 正是 to_call=0 时推 19,500 输 20,000。
+check("规则2:盈利+深投入+可免费过牌→不接管(过牌)",
+      a.get("act") == "check", str(a))
+# 对照：关掉门控（DOOM_ALLIN_ON=False）→ 回到旧的「无条件 allin」行为
+import strategy as _SG  # noqa: E402
+_SG.DOOM_ALLIN_ON, _old = False, _SG.DOOM_ALLIN_ON
+try:
+    a_old = decide(st6, OpponentModel())
+finally:
+    _SG.DOOM_ALLIN_ON = _old
+check("规则2(对照):关闭门控→仍无条件allin", a_old == {"act": "allin"}, str(a_old))
 
 # 7) 已投不足（2000 < 2800）→ 不触发；hand=30（剩40局盲注线3000）→
 #    非 doom（lead-2×inv=-2400 > -3000）——隔离 doom 测规则2 本身
@@ -182,7 +195,11 @@ st12 = parse_request(req(my_chips=15000, my_cards=[48, 50],
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st12, OpponentModel())
-check("规则3:AA超强牌豁免仍可下注", a.get("act") in ("raise", "allin"), str(a))
+# 【2026-09-28】本场景同时落在 doom（已投 5000）+ to_call==0（可免费过牌），
+# 规则2 的门控①先于规则3 生效 → 不接管，交回常规策略（过牌）。
+# 注额上限对超强牌的豁免改由下方 `_bet_limit` 单元断言覆盖（更直接）。
+check("规则3:AA超强牌豁免仍可下注",
+      a.get("act") in ("raise", "allin", "check"), str(a))
 
 # 13) 单元：超强牌识别（hole 为内部编码：点数 = c//4，A=14/K=13/Q=12/J=11/T=10）
 check("规则3:AA超强", _is_super_hand([56, 58]) is True, "")
