@@ -215,7 +215,25 @@ def run():
     无任何输出 → 预检判定「Bot 未响应」。逐行模式两种情形都兼容：
       - 每轮重启：平台关 stdin → EOF → 循环结束，进程自然退出；
       - 常驻模式：继续循环等待下一行 request。
+
+    【2026-09-28 P0·技术判负防护】实测对局 20260928205725-fbfdfaa4：
+    第 7 手翻牌后我方**零响应**即 technical_loss，全程只有 43 秒
+    —— 远小于 60 秒/步的超时 → **不是超时，是进程/输出层面出了问题**。
+    进程一旦退出（或输出失败），平台立刻判技术负，比「回一个保守动作」
+    严重得多。因此这里加三道保险，确保**循环永不因异常中断**：
+      ① stdin/stdout 编码兜底（防 UnicodeDecodeError 直接崩）；
+      ② `_handle_line` + 序列化 全包 try/except；
+      ③ 异常时也要输出**合法**响应（宁可被判按 call/fold 处理，
+         也绝不能「不响应」）；写出失败同样吞掉，不让循环退出。
     """
+    try:
+        sys.stdin.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     for raw in sys.stdin:
         raw = raw.strip()
         if not raw:
@@ -224,13 +242,31 @@ def run():
             obj = json.loads(raw)
         except Exception:
             continue  # 非 JSON 输入（如预热握手）直接忽略，避免崩溃
-        resp, data_out, json_mode = _handle_line(obj)
-        if json_mode:
-            out = {"response": resp, "data": data_out, "globaldata": data_out}
-            sys.stdout.write(json.dumps(out) + "\n")
-        else:
-            sys.stdout.write(str(resp) + "\n")
-        sys.stdout.flush()
+        try:
+            resp, data_out, json_mode = _handle_line(obj)
+            if json_mode:
+                out = {"response": resp, "data": data_out, "globaldata": data_out}
+                line = json.dumps(out) + "\n"
+            else:
+                line = str(resp) + "\n"
+        except Exception as _e:
+            # 保险②③：绝不因异常退出；输出保守但**合法**的响应
+            try:
+                _log("[FATAL] run() 异常：%r" % (_e,))
+            except Exception:
+                pass
+            try:
+                if isinstance(obj, dict) and "requests" in obj:
+                    line = '{"response": 0, "data": "", "globaldata": ""}\n'
+                else:
+                    line = "0\n"
+            except Exception:
+                line = "0\n"
+        try:
+            sys.stdout.write(line)
+            sys.stdout.flush()
+        except Exception:
+            pass   # 写出失败也不能让循环退出（保险③）
 
 
 if __name__ == "__main__":

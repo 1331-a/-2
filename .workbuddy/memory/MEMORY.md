@@ -86,6 +86,7 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 - 日志里的「规则1/4 大注弃牌」是 `_winning_rule()` 的兜底标签，不是真规则。
 - MC 600 次抽样会让贴门槛断言偶发翻转 → 加大迭代或直测底层函数/极端值。
 - 验证某规则是否提前 return，不能拿最终动作当判据（别的规则也会导致同样动作），要看 `WB_FACE_LOG` 有无记录。
+- 【技术判负诊断·2026-09-28】对局 20260928205725-fbfdfaa4：第7手翻牌后零响应被判 technical_loss，`ended_at` 只 43 秒 **迷惑性极强**——它只记到最后事件的时间，实际 60 秒等待未计入 → **真故障＝最后一步没响应**。判据：per_decision 60s + 前几步 used 仅 0.1~0.3s ⇒ 不是超时，是进程退出/卡住。已加固 `run()`：① stdin/stdout reconfigure(utf-8, errors=replace)；② `_handle_line`+序列化全包 try/except；③ 异常也输出合法响应、写出失败吞掉，**循环永不中断**（进程退出＝立即判负，比回保守动作严重得多）。异常写 stderr `[FATAL] run() 异常`。复核通过：`_to_response/_final_guard/_fallback_resp` 全路径返回合法 int；stdout 无污染（日志都走 stderr）；MC 有迭代上限+软时限+拒绝采样兜底（不会死循环）；400 随机场景最慢 0.26s；`ast.parse(feature_version=(3,11))` 全通过。
 - 盘上行为与代码不符时先穷举输入形态（金额缺失 / my_id 反转 / 字段类型），再怀疑规则。
 - 旧 ELF 指纹：`PyInstaller.archive.readers.CArchiveReader(path).extract('poker_bot')` 取主脚本后 grep 变量名（比回放命中率可靠，回放受 MC 噪声影响）。已定位 v50 = `547e4a6`。
 - 【复盘工具】`内容/analyze_matches.py`：`load_botbattle(path, my_seat)` / `detect_seat(obj)` / `replay_decisions(path, seat)`；座位需动态检测（三局分别是 1/0/0）。
