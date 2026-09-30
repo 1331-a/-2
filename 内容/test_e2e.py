@@ -97,11 +97,19 @@ worst = req(my_chips=18200, public_cards=[46, 6, 1], history=[
     {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
 ])
 t0 = time.time()
-for _ in range(20):
+worst_dt = 0.0
+N = 3
+for _ in range(N):
+    _t = time.time()
     run_turn(wrap(worst))
-dt = (time.time() - t0) / 20
-check("平均单步耗时<0.5s", dt < 0.5, True)
-print("实际平均耗时: %.0f ms" % (dt * 1000))
+    worst_dt = max(worst_dt, time.time() - _t)
+dt = (time.time() - t0) / N
+# 【2026-09-30】平台已确认：Holdem 为**单步 60 秒**（botarena，原 botbattle；
+# 平台只接受代码注册的稳定时限 ID，容器启动/预热不计入）。
+# 因此阈值从旧的 0.5s（Botzone「每步 1 秒」口径）放宽 —— 留 3 倍余量。
+check("平均单步耗时<20s（平台预算 60s）", dt < 20.0, True)
+check("最慢单步耗时<40s（= DECISION_TIMEOUT 硬保护）", worst_dt < 40.0, True)
+print("实际平均耗时: %.0f ms（最慢 %.0f ms）" % (dt * 1000, worst_dt * 1000))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

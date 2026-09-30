@@ -575,9 +575,18 @@ check("0914规则14:强牌(strong)不被接管",
       is None)
 
 # F. 决策层：过牌后对手下 300 永不弃牌（跨随机化采样）
-_acts14 = set()
-for _ in range(120):
-    _acts14.add(decide(_small, _m14).get("act"))
+# 【2026-09-30】现在每次决策都会按「局面」播种 → 同一局面必定得到同一结果
+# （目的是让决策可复现、可回归）。因此这里临时关闭播种才能观察到混合动作。
+# 生产环境的多样性由「局面不同 → 种子不同」保证：同一场比赛内每个决策点的
+# hand / 底牌 / 公共牌 / 历史 / 筹码都不同，种子天然不同。
+import os as _os14                                                     # noqa: E402
+_os14.environ["WB_NO_SEED"] = "1"
+try:
+    _acts14 = set()
+    for _ in range(120):
+        _acts14.add(decide(_small, _m14).get("act"))
+finally:
+    _os14.environ.pop("WB_NO_SEED", None)
 check("0914规则14:决策层对 300 小注从不弃牌",
       _acts14.issubset({"call", "raise"}), str(_acts14))
 check("0914规则14:决策层两种动作都出现(跟注/反加都试)",

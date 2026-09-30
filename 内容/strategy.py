@@ -87,18 +87,45 @@ BLUFF = 0.55               # 纯诈唬
 BLOCKER = 0.45             # 中等牌有位置的小注施压
 
 # ---- 计算预算 ----
-MC_ITERATIONS = 1000       # 蒙特卡洛最大抽样数
-TIME_BUDGET = 0.5          # 决策软时限（秒），平台预检超时 8s，预留充足余量
+# 【2026-09-30 大幅上调】平台已确认：本平台（botarena / 原 botbattle）Holdem
+# 为**单步 60 秒**（平台只接受代码注册的稳定时限 ID；且排队 / 容器启动 /
+# 预热均不计入计时，计时从完整请求交给就绪的 Bot 起、到完整响应到达为止）。
+#
+# 实测（本机 evaluate_7 吞吐 16,884 次/秒）：
+#   · 原配置 iterations=1000 → 实际只用 0.073 秒（软时限 0.5s 根本没跑满）
+#     ⇒ 真正的约束是 **iterations 上限**，不是时钟；
+#   · 概率误差 SE = 0.5/√N：N=1000→1.58%，N=30,000→0.29%
+#     —— 原先 1.6% 的噪声足以在「底池赔率门槛」附近把决策翻面
+#     （这正是历史上「贴门槛断言偶发翻转」的根源）。
+# 上调后同时把抽样流播种（见 _prepare_globals）→ 决策变为**确定性可复现**。
+MC_ITERATIONS = 30000      # 蒙特卡洛最大抽样数（原 1000）→ SE≈0.29%
+TIME_BUDGET = 5.0          # 单次胜率计算软时限（秒）（原 0.5）
+EQ_TOTAL_BUDGET = 12.0     # 单次决策内所有胜率计算**合计**软时限（秒）
+# 环境变量可覆盖（给测试/快速迭代用，不影响生产默认值）：
+#   WB_MC_ITERS=1000 WB_MC_BUDGET=0.5  → 退回旧口径
+try:
+    import os as _os_mc
+    if _os_mc.environ.get("WB_MC_ITERS"):
+        MC_ITERATIONS = int(_os_mc.environ["WB_MC_ITERS"])
+    if _os_mc.environ.get("WB_MC_BUDGET"):
+        TIME_BUDGET = float(_os_mc.environ["WB_MC_BUDGET"])
+except Exception:
+    pass
+
 # 【2026-09-11】机器人版本号——构建时由 CI 用 git 短 SHA 覆盖
 # （见 .github/workflows/build-elf.yml）。用于自证「场上跑的是哪一版 ELF」：
 # 下载的压缩包名 / stderr 日志里的 [DECISION] 首行都会带这个值。
 BOT_VERSION = "dev"
 
-DECISION_TIMEOUT = 0.90    # 清单规定的硬超时保护（秒）
+# 单步硬超时保护（秒）。原 0.90 是按 Botzone「每步 1 秒」设的；
+# 本平台 60 秒/步 ⇒ 放到 40 秒（留 20 秒给解析/序列化/写出的余量）。
+# 触发时 _decide_impl 会直接返回 fold —— 是「兜底」而非正常路径，
+# 若日志里频繁出现说明 EQ_TOTAL_BUDGET 仍然偏大。
+DECISION_TIMEOUT = 40.0
 
 # ---- 翻前全下决策（按累计盈亏动态分档，防止「优势下跟 all-in 比运气」）----
-ALLIN_MC = 600             # 全下决策蒙特卡洛抽样数（翻前只需 5 张公共牌，速度快）
-ALLIN_TIME_BUDGET = 0.30   # 全下决策软时限（秒）
+ALLIN_MC = 20000           # 全下决策蒙特卡洛抽样数（原 600）→ SE≈0.35%
+ALLIN_TIME_BUDGET = 4.0    # 全下决策软时限（秒）（原 0.30）
 ALLIN_BAND_PCT = 0.10      # 第四步：极端赔率带宽（必要胜率 ±10% 无条件跟/弃，防反向剥削）
 ALLIN_LEAD_BB = 50         # 大幅领先/落后阈值（单位大盲，50BB=+5000）
 ALLIN_SMALL_BB = 10        # 小幅领先/落后阈值（10BB=+1000）
@@ -558,6 +585,10 @@ _MODEL_REF = None  # 当前请求的对手模型（decide 入口设置，供防r
 _OPP_BETS_PER_HAND = 0.9  # 对手每局下注数量（decide 入口从 model 读取，
                           # 2026-08-25：驱动跟注门槛微调——高侵略收紧/被动放宽）
 _DECISION_STARTED_AT = 0.0
+# 【2026-09-30】决策起点的**墙钟**时间（time.time()），供 monte_carlo_equity
+# 的 deadline 使用。注意 equity.py 里用的是 time.time()，而 _DECISION_STARTED_AT
+# 用的是 time.perf_counter()——两者不可混用，必须分开保存。
+_DECISION_STARTED_WALL = 0.0
 # 【2026-09-24 终局效用仲裁】决策层最近一次算出的胜率与档位（供出口仲裁使用）
 _LAST_EQ = None
 _LAST_ADJ = "normal"
@@ -566,6 +597,75 @@ _LAST_ADJ = "normal"
 def _decision_timed_out():
     return _DECISION_STARTED_AT > 0 and \
         time.perf_counter() - _DECISION_STARTED_AT > DECISION_TIMEOUT
+
+
+def _eq_deadline(per_call=None):
+    """本次决策内**所有**胜率计算共用的截止时刻（墙钟），供 equity 软时限使用。
+
+    【2026-09-30】为什么要共用：一次决策可能触发多路胜率计算
+    （决策层主 eq / 全下判定 / 落后兜底 / 日志）。若各自用
+    `time.time() + TIME_BUDGET`，路数一多就可能叠加超出单步预算。
+    这里取「单次软时限」与「本决策合计软时限」的较小值：
+        截止 = min(now + per_call, 决策起点 + EQ_TOTAL_BUDGET)
+    因此无论触发几路，一次决策的胜率计算总耗时都不超过 EQ_TOTAL_BUDGET。
+    """
+    try:
+        now = time.time()
+    except Exception:
+        return None
+    per = TIME_BUDGET if per_call is None else float(per_call)
+    limit = now + per
+    if _DECISION_STARTED_WALL > 0:
+        total = _DECISION_STARTED_WALL + EQ_TOTAL_BUDGET
+        if total < limit:
+            limit = total
+    # 至少给一点点时间，避免已经超预算时立刻退化成 0 次抽样（eq 返回 0.5）
+    return max(limit, now + 0.05)
+
+
+def _decision_seed(state):
+    """按「决策上下文」生成确定性种子：同一局面 → 同一种子。
+
+    【2026-09-30】配合 equity.seed_rng 使用，让蒙特卡洛抽样可复现。
+    只用整数做混合（Python 对字符串的 hash 在不同进程间会随机化，
+    整数/tuple[int] 不会），因此跨进程重放也稳定。
+    """
+    acc = 17
+
+    def mix(v):
+        nonlocal acc
+        try:
+            acc = (acc * 1000003 + (int(v) & 0xFFFF)) & 0x7FFFFFFF
+        except Exception:
+            pass
+
+    try:
+        mix(getattr(state, "hand_num", 0) or 0)
+        mix(len(getattr(state, "board", None) or []))
+        for c in (getattr(state, "hole", None) or []):
+            mix(c)
+        for c in (getattr(state, "board", None) or []):
+            mix(c)
+        hist = []
+        try:
+            hist = (state.request or {}).get("history") or []
+        except Exception:
+            hist = []
+        mix(len(hist))
+        for a in hist:
+            try:
+                mix(a.get("player_id", 0))
+                mix(a.get("action", 0))
+                mix(a.get("round", 0))
+            except Exception:
+                pass
+        for v in (getattr(state, "total_win_chips", None) or [0, 0]):
+            mix(v)
+        mix(getattr(state, "to_call", 0) or 0)
+        mix(getattr(state, "my_chips", 0) or 0)
+    except Exception:
+        pass
+    return acc or 1
 
 
 def _opp_bet_jumped(state):
@@ -1469,9 +1569,28 @@ def _prepare_globals(state, model, ctx, reset_clock=True):
     统一在这里刷新，decide 入口与 _decide_impl 共用同一份实现（口径一致）。
     """
     global _CTX, _OPP_JUMPED, _OPP_BETS_PER_HAND, \
-        _DECISION_STARTED_AT, _MODEL_REF, _LAST_EQ, _LAST_ADJ
+        _DECISION_STARTED_AT, _MODEL_REF, _LAST_EQ, _LAST_ADJ, \
+        _DECISION_STARTED_WALL
     if reset_clock:
         _DECISION_STARTED_AT = time.perf_counter()
+        _DECISION_STARTED_WALL = time.time()
+        # 【2026-09-30】给随机源播种 → 同一局面必定同一结果。
+        # 必须播两处：
+        #   ① equity 的抽样流（_rng 原先从未播种）；
+        #   ② **全局 random** —— 尺寸抖动 random.uniform()、诈唬频率
+        #      random.random() 都在用它；只播 ① 时实测重放一致率仅 52/60。
+        # 两条流用不同派生值，避免相互相关。
+        # 环境变量 WB_NO_SEED=1 可关闭（需要观察抽样波动时用）。
+        try:
+            import os as _os_sd
+            if _os_sd.environ.get("WB_NO_SEED") != "1":
+                _sd = _decision_seed(state)
+                import equity as _eq_mod
+                _eq_mod.seed_rng(_sd)
+                import random as _rnd_mod
+                _rnd_mod.seed(_sd ^ 0x5A5A5A5A)
+        except Exception:
+            pass
     _CTX = ctx
     _MODEL_REF = model
     # 【2026-09-24】终局效用仲裁要用的胜率/档位：每次决策先清空（翻前没算 eq）
@@ -1917,7 +2036,7 @@ def _risk_avoid_route(state, model):
             state.hole, state.board, iterations=MC_ITERATIONS,
             opp_range_pct=_opp_range_pct(model, _opp_raised_preflop(state),
                                         _opp_street_raises(state)),
-            deadline=time.time() + TIME_BUDGET)
+            deadline=_eq_deadline())
         if to_call <= 0:
             return {"act": "check"}
         if eq > RISK_ALLIN_EQ_FLOOR:
@@ -2266,7 +2385,7 @@ def _preflop_allin_decide(state, model):
     rp = _clamp(base_rp * factor, 0.02, 1.0)   # all-in 宣告 → 范围再收紧
     eq = monte_carlo_equity(
         state.hole, [], iterations=ALLIN_MC, opp_range_pct=rp,
-        deadline=time.time() + ALLIN_TIME_BUDGET)
+        deadline=_eq_deadline(ALLIN_TIME_BUDGET))
 
     # ---- 第二步：必要胜率（底池赔率）----
     call_amt = min(state.my_left, state.to_call)
@@ -3793,7 +3912,7 @@ def _postflop_decide(state, model):
     eq = monte_carlo_equity(
         state.hole, state.board, iterations=MC_ITERATIONS,
         opp_range_pct=range_pct,
-        deadline=time.time() + TIME_BUDGET)
+        deadline=_eq_deadline())
     # 【2026-09-24 终局效用仲裁】把决策层算出的 eq / 档位留给出口仲裁用
     global _LAST_EQ, _LAST_ADJ
     _LAST_EQ = float(eq)
