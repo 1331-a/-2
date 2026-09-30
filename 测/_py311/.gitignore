@@ -1,0 +1,5 @@
+# 只保留分析脚本；Python 3.11 embeddable 运行时（~40MB）不入库
+*
+!.gitignore
+!*.py
+!*.md
