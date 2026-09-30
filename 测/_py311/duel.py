@@ -23,14 +23,45 @@ SB, BB, INIT, MAX_HAND = 50, 100, 20000, 70
 STREET_N = (0, 3, 1, 1)
 
 
+BODY = open(BASE + "/测/_v50_body.bin", "rb").read()
+
+
+def load_v50(tag):
+    """v50：每个实例独立 exec 一份命名空间（全局变量天然隔离）。"""
+    ns = {"__name__": "v50_" + tag, "__file__": "poker_bot.py"}
+    exec(marshal.loads(BODY), ns)
+    return ns
+
+
+def load_now(tag):
+    """当前版：每个实例独立加载一份 strategy 模块副本。
+
+    【关键】真实对局里双方是**独立进程**，模块级全局（_CTX/_LAST_EQ/
+    _LAST_ADJ/_DECISION_STARTED_AT 等）天然隔离；若在同一进程共享同一份
+    strategy 模块，两个 bot 会互相污染 → 自对弈都不均衡（实测 now vs now
+    6 场差 43,304，而 v50 因为全局依赖少只差 4,180）。
+    """
+    import importlib.util
+    import types
+    path = BASE + "/内容/strategy.py"
+    key = "strategy_" + tag
+    spec = importlib.util.spec_from_file_location(key, path)
+    m = importlib.util.module_from_spec(spec)
+    sys.modules[key] = m
+    spec.loader.exec_module(m)
+    m.__dict__.setdefault("_ISOLATED_COPY", True)
+    return m
+
+
 class BotV50:
     name = "v50"
 
-    def __init__(self):
-        self.parse = V["parse_request"]
-        self.decide = V["decide"]
-        self.model = V["OpponentModel"]()
-        self.to_resp = V["_to_response"]
+    def __init__(self, tag="a"):
+        self.V = load_v50(tag)
+        self.parse = self.V["parse_request"]
+        self.decide = self.V["decide"]
+        self.to_resp = self.V["_to_response"]
+        self.model = self.V["OpponentModel"]()
 
     def act(self, req):
         st = self.parse(req)
@@ -38,23 +69,24 @@ class BotV50:
         return int(self.to_resp(a)), st
 
     def reset(self):
-        self.model = V["OpponentModel"]()
+        self.model = self.V["OpponentModel"]()
 
 
 class BotNow:
     name = "now"
 
-    def __init__(self):
+    def __init__(self, tag="a"):
         import game_state as G
         import opponent as O
         import match_ctx as M
+        self.S = load_now(tag)
         self.G, self.O, self.M = G, O, M
         self.model = O.OpponentModel()
         self.ctx = M.MatchContext.from_dict(self.model.ctx_dict)
 
     def act(self, req):
         st = self.G.parse_request(req)
-        a = NOW_S.decide(st, self.model, self.ctx, debug=False)
+        a = self.S.decide(st, self.model, self.ctx, debug=False)
         return int(NOW_B._final_guard(st, NOW_B._to_response(a))), st
 
     def reset(self):
@@ -115,9 +147,10 @@ def play_hand(bots, chips_in, twc, hand, dealer, rng, log=None):
                              "action": -1, "action_type": "fold"})
                 return _settle_fold(seat, chips, pot, start)
             elif resp == -2:
-                add = min(chips[seat], max(0, street_bet[1 - seat] - street_bet[seat])
-                          if to_call > 0 else chips[seat])
-                add = chips[seat]
+                # 全下：按**有效筹码**封顶（对手本街最多还能投多少）
+                opp_cap = street_bet[1 - seat] + chips[1 - seat]
+                max_add = max(0, opp_cap - street_bet[seat])
+                add = min(chips[seat], max_add)
                 chips[seat] -= add
                 street_bet[seat] += add
                 pot += add
@@ -209,10 +242,10 @@ def main():
     nets = []
     for i in range(n):
         if i % 2 == 0:
-            diff = play_match(MK[ta](), MK[tb](), rng)
+            diff = play_match(MK[ta]("a"), MK[tb]("b"), rng)
             a_net = diff
         else:
-            diff = play_match(MK[tb](), MK[ta](), rng)
+            diff = play_match(MK[tb]("b"), MK[ta]("a"), rng)
             a_net = -diff
         nets.append(a_net)
         if a_net > 0:

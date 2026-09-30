@@ -90,6 +90,9 @@ strategy.py（决策+安全网）/ game_state.py（协议解析+合法性推导�
 - 盘上行为与代码不符时先穷举输入形态（金额缺失 / my_id 反转 / 字段类型），再怀疑规则。
 - 旧 ELF 指纹：`PyInstaller.archive.readers.CArchiveReader(path).extract('poker_bot')` 取主脚本后 grep 变量名（比回放命中率可靠，回放受 MC 噪声影响）。已定位 v50 = `547e4a6`。
 - 【复盘工具】`内容/analyze_matches.py`：`load_botbattle(path, my_seat)` / `detect_seat(obj)` / `replay_decisions(path, seat)`；座位需动态检测（三局分别是 1/0/0）。
+- 【★ 让 v50 真跑起来（2026-09-30）】v50 的 pyc 是 **Python 3.11** 编译的，3.13 的 marshal 读不了、decompyle3 也不支持 3.11 → 下载 **python-3.11.9-embed-amd64.zip**（用 `registry.npmmirror.com/-/binary/python/3.11.9/` 镜像；python.org 直连超时）解压到 `测/_py311/`，然后 `marshal.loads(open('测/_v50_body.bin','rb').read())` + `exec(code, ns)` 即得可调用模块（91 个对象）。**同一进程可同时 import 当前版**（当前版纯标准库，3.11 也能跑）→ 逐场景对拍成为可能。工具：`测/_py311/{cmp2.py,diag2.py,duel.py}`。
+- 【★ 对拍/对弈的协议校准（踩过的坑）】① history **不含 blind 条目**（盲注由 GameState 从 my_chips 推导），自己编 `{action:-4,action_type:"blind"}` 会让 `to_call` 算成 0；② 牌号 **n = rank*4 + suit，rank 2..14**（2→0..3, T→32..35, J→36..39, Q→40..43, K→44..47, A→48..51），**K 不是 52**（52 非法，会让 `_effective_category` 出高牌）；③ raise 的 `action` 是 **raise-to 累计额**；④ 单挑 **翻前 dealer(SB) 先行动、翻后非 dealer(BB) 先行动**；⑤ 构造场景必须先跑「状态自检」（两版 to_call/pot/stage 一致）再比较结论。
+- 【★ 对拍基线结论（2026-09-30，39 场景）】翻前开池 / BB 防守两版**完全一致**；翻后主动仅尺寸有别；**翻后面对下注本版反而更激进**（听牌/空气加注 vs v50 弃牌）。真正的保守点只有两处：`_doom_plan` 的「翻前好牌补大盲→call 溜入」（已删，改为一律 allin）；`_stability_guard` 在翻前也压制主动加注（v50 只管翻后，但这是用户 09-14 规则，**保留待定**）。
 - 【原始 replay 事件字段（与 request 不同！）】action 事件是 `player`/`action`/`amount`（**不是** player_id/action_type，写错会静默匹配 0 条）；deal_hole 是 `holes:[[座0],[座1]]`（卡面字符串如 "7d"）；hand_start 带 `sb`/`bb`/`chips`；settle 的 `net`=累计 total_win_chips（平台计分口径）、`deltas`=本手、`winners`。我方=owner 含 j1331 的一侧（测01），fffmvp5/hhhmvp 是对手。
 
 ## 调参入口
