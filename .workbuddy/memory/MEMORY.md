@@ -18,12 +18,15 @@
 - `hand` 0-based；`_hands_left = max_hand − hand − 1`；`hand_start.chips` 已扣盲注。
 - 只在**我方行动时**收 request；对手弃牌不可见 → globaldata 按增量推断（+50 对手 SB 弃 / +100 对手 BB 弃）。
 - 单挑：**翻前 dealer(SB) 先、翻后非 dealer(BB) 先**。
+- 【★ 手号 0-based vs 1-based 陷阱】`hand_start.hand` 是 **0-based**；`botbattle_log.load_botbattle` 的 `meta["hand"]` 是 **1-based**；平台界面也是 1-based。**两套混用会「看错手」**（我第一轮扫描因此把 55/59/62 对到了相邻的手）。分析前先确认用哪套。
 - 原始 replay 事件字段与 request 不同：action 是 `player`/`action`/`amount`；deal_hole 是 `holes:[[座0],[座1]]`（"7d" 字符串）；settle 的 `net`=累计（平台计分口径）。
 
 ## 构建发布
 - 单文件 `内容/botzone_submit.py`（`bundle.py` 打包 equity/opponent/match_ctx/strategy/bot）；Linux ELF 由 GitHub Actions（仓库 `1331-a/-2`，workflow `build-elf`）产出，artifact `poker_bot-linux-x86-64`（~7MB）。本地无 Docker/WSL → Actions 是唯一发布路径。
 - PyInstaller **锁 `<6.22`**（6.22.x onefile 引导器有父进程校验，产物在受限沙箱秒退）。
 - 【陷阱】artifact 常下成 **22 字节空 zip**（`PK\x05\x06`）→ 部署前解压核对字节数。
+- 【★ 平台资源约束（09-30 ChatGPT 侧确认，此前未知）】**1 核 CPU / 512 MiB 内存 / `/tmp` 256 MiB / 无网络 / 单步 60s**；允许约 200MB ELF，但「能打包」≠「适合运行」（onefile 每次启动解压到 `/tmp`）。
+  ⇒ **撤回「numpy 加速评估器」的想法**：512MiB + 256MiB `/tmp` 下 numpy 让 onefile 膨胀 30~40MB、启动变慢。**保持纯 Python，靠抬高 MC 抽样数（内存零开销）拿精度更稳**。
 - `测/学习升级版/poker_bot` 是用户下载的 ELF，**不要动**（有一处历史未提交改动）。
 
 ## 模块分工
@@ -92,6 +95,11 @@ strategy.py（决策+安全网，5052 行/110 函数）/ game_state.py（协议�
 - 盘上行为与代码不符时先穷举输入形态（金额缺失 / `my_id` 反转 / 字段类型），再怀疑规则。
 - 旧 ELF 指纹：`CArchiveReader(path).extract('poker_bot')` 后 grep 变量名（比回放可靠）。v50 = `547e4a6`。
 - 复盘工具：`内容/analyze_matches.py`（`load_botbattle` / `detect_seat` / `replay_decisions`）。
+
+## ★ 行为指纹判座位（09-30 新增，重要）
+BotBattle 日志双方元数据可能**完全相同**（同账号上传两份 ELF：`display_name/id/name/owner` 全同）→ **无法从元数据判座位**。
+解法：把同一批真实决策点分别喂给两版，统计动作一致率，高者为该座位的实际版本。
+工具 `测/_py311/fingerprint.py`（Python 3.11 运行）。实测 20260930201238：**座位0=当前版 93.8%**（v50 79.4%）、**座位1=v50 98.1%**（当前版 80.0%），分离度 14~18 个百分点。配套 `verify_hands.py`（逐手两版对照 + 累计比分）、`diag_shove.py`（按规则归因）。
 
 ## ★ 让 v50 真跑起来（09-30，可复现）
 v50 pyc 是 **Python 3.11** → 3.13 marshal 读不了、decompyle3 不支持。路径：
