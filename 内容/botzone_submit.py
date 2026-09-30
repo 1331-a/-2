@@ -2706,13 +2706,14 @@ def _doom_plan(state, model=None):
             if state.stage == "river":
                 return {"act": "allin", "lk": 1}
             return None                            # 质量好 → 再看看（留下注/过牌给常规策略）
-        # ② 弃牌 = 立死 → 一律 allin；仅「牌好 + 只需补大盲」走溜入慢打
-        if _gamble_hand_good(state) and state.stage == "preflop":
-            try:
-                if to_call <= int(state.big_blind):
-                    return {"act": "call"}         # 补大盲溜入（慢打）
-            except Exception:
-                pass
+        # ② 弃牌 = 立死 → **一律 allin**（用户 2026-09-28 原话：
+        #    「既然已经越线了还投入就应该 allin，因为如果输了也是全局的」）。
+        # 【2026-09-30 修正】原先此处有一条「牌好且翻前只需补大盲 → call
+        # 溜入慢打」的例外，实测与 v50 对拍暴露它是保守 bug：
+        #   落后 18000（doom 成立、AKo、to_call=50）→ 本版 call 溜入，
+        #   而 v50 直接全押。doom 的语义是「这手输了就全局输」，此时必须
+        #   立即把整副筹码压上去决胜负；溜入 50 只能赢小池，根本追不回
+        #   缺口（追回线 4400 vs 落后 18000）。该例外已删除。
         return {"act": "allin", "lk": 1}
     except Exception:
         return {"act": "allin", "lk": 1}           # 异常兜底：维持旧行为
@@ -5523,6 +5524,16 @@ def _stability_guard(state, model, action):
     if action.get("act") not in ("raise", "allin"):
         return action
     try:
+        # 【2026-09-30 复核·保留原样】与 v50 对拍发现：v50 的求稳只作用于
+        # 翻后（`_check_side_stable` 挂在翻后主动侧），**翻前开池不受影响**；
+        # 本版 guard 在出口链上，翻前也会被压制（领先 8000 + AKo 开池被降级
+        # 成 call，v50 正常 raise 250）。
+        # 但 test_log_v2「0914规则10」明确固化「翻前也求稳」——那是用户
+        # 2026-09-14 亲自定的规则（「靠近锁赢线时不要主动加注」），且 AKo
+        # 不在强牌例外（例外只有 AA/KK/QQ/JJ/AKs）。
+        # → 这是「用户规则 vs v50 行为」的取向差异，**不是 bug**；是否放宽
+        #   由用户决定。若要对齐 v50，在此加一行 `if state.stage == "preflop":
+        #   return action`，并同步更新 test_log_v2 的两条断言。
         if not _stability_mode(state, model):
             return action
         # ---- 强牌例外 ----
