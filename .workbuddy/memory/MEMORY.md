@@ -96,7 +96,15 @@ strategy.py（决策+安全网，5052 行/110 函数）/ game_state.py（协议�
 - 复盘：`botbattle_log.load_botbattle` 逐决策点重放，投入**按街累加**；界面「底池」常是结果态（all-in 后）→ 必须回到决策前。座位需动态检测（我方 = owner 含 `j1331` / 显示名"测01"）。
 - `DecisionLogger`：`decide(debug=False)` 会**关掉**日志并覆盖手动 enable；分析器需 `enable(True) + _quiet=True`。
 - 日志里的「规则1/4 大注弃牌」是 `_winning_rule()` 兜底标签，不是真规则。
-- MC 600 次抽样会让贴门槛断言偶发翻转 → 加大迭代或直测底层函数。
+- 【★ 已落地 09-30 提交 f34f565】`MC_ITERATIONS` 1000→**30000**、`TIME_BUDGET` 0.5s→**5.0s**、
+  `ALLIN_MC` 600→**20000**、`ALLIN_TIME_BUDGET` 0.30s→**4.0s**、`DECISION_TIMEOUT` **0.90s→40.0s**
+  （原值是按 Botzone 1 秒设的，不改会强制 fold）、新增 `EQ_TOTAL_BUDGET=12.0s`（一次决策内各路共用总预算）。
+  **播种两处**：`equity._rng` **和全局 `random`** —— 只播前者重放一致率仅 52/60，
+  因为尺寸抖动 `random.uniform` / 诈唬频率 `random.random` 用的是全局 `random`；两者都播后 **60/60**。
+  环境变量：`WB_MC_ITERS` / `WB_MC_BUDGET` 覆盖迭代与预算、`WB_NO_SEED=1` 关播种。
+  实测：单步最慢 3.49s（平台预算 5.8%）；测试变慢（test_log_v2 约 12 分钟）。
+  验证工具 `测/check_repro.py`（重放真实日志查可复现性 + 单步耗时）。
+  ⇒ 旧的「MC 噪声导致偶发翻转」问题已消除；**改动只需把 `_eq_deadline()` 的预算调小即可回退**。
 - 【★ 算力余量 09-30 实测·全书最重要的一条】`equity.py` 文件头仍写「平台每步限 1 秒」（**过时**，实际 60s），
   `TIME_BUDGET=0.5s` / `MC_ITERATIONS=1000` / `ALLIN_MC=600` → 实测 600 次只用 **0.073s**，
   **真正的约束是 iterations 上限，不是时间**。平台 60s/步 ⇒ **只用了 0.12% 的时间预算（120 倍余量）**。
