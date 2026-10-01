@@ -29,13 +29,27 @@
 strategy（决策+安全网）/ game_state（协议解析）/ opponent（画像+尺寸分桶）/ equity（胜率）/ ranges（169 组合百分位）/ match_ctx（赛制三模块+规则账本）/ evaluator（牌型）/ bot（I/O）。
 
 ## 出口链（★ 最大结构问题）
-`decide` → 入口短路 `_lock_win_unified`(规则2 A/B/C) 与 `_gamble_plan`(规则18) → 决策层 → **出口多层改写**（`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`）。每层可覆盖前层 → 反复出 bug。v50 出口只有 `_normalize`。**建议收敛为 2 层**。
+`decide` → 入口短路 `_lock_win_unified`(规则2 A/B/C，**23/315=7.3%** 的决策点) 与 `_gamble_plan`(规则18) → 决策层 → **出口 10 层改写**（`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`）。v50 出口只有 `_normalize`。
+
+**【实测画像 2026-10-01，`测/exit_chain_probe.py`，315 个真实决策点】**
+`_stability_guard` **26/49 = 53%**（其中 **22/26 = 85% 在翻前**，全把 raise 降级为 call/check）；
+`_bet_cap_guard` 9；`_aggressive_strong_bet` 7（全在放大）；`_cheap_call_guard` 2；`_doom_call_upgrade` 2；`_normalize` 1；`_endgame_arbitrate` 1；`_big_money_guard` 1；
+**`_lock_win_tail_guard` 0、`_bluff_cap_guard` 0**（各被调用 292 次，从未翻转）。
+**净翻转 13.3%；被改写 ≥2 次仅 1.9%；打架仅 1 次**（手53 转牌：`_endgame_arbitrate` call→allin(lk)，`_big_money_guard` 又改回 call = 规则20 压过 lk）。
+⇒ ① **「层间打架」不是主要风险** —— 我原先的假设被否定：`我加注→对加注→我再加注→我弃牌` 来自**决策层自身**（同街每次轮到我都是独立决策点），不是出口链改写出来的，**别再用它当证据**；
+② 收敛收益要**调低预期**（只有 2 个从未生效的层）；
+③ `_stability_guard` 的翻前压制是唯一大项，直接对应待裁决事项 ①（关掉后约 7% 的决策点会从 call/check 变回 raise）。
+④ 工具陷阱：`LIMIT` 会**静默截断**（首跑 LIMIT=70 只覆盖 140/315 点、漏掉 doom 手，得出过错误结论）——**重放前先确认决策点总数**。
 
 ## 锁赢 / doom 数学（用户硬规则）
 - `lead = 我方net − 对手net`；**筹码损失让 lead 变化 2 倍**，`×2` 只用一次。
 - 追回线 `_blind_line(hands_left, own=False)`：固定 SB=50/BB=100，**勿用 `state.big_blind`**（翻前会被推导污染）。
 - fold_out 锁胜：`lead > 2×(盲注线 + invested)` → fold。
 - doom：`lead − 2×敞口 ≤ −2×追回线`；弃牌口径取 `_invested`，跟注口径取 `_invested + to_call`。只用**原始 lead**（match_ctx 偏移只作用于软阈值）。
+- **追回线 ≈ 75×剩余手数** ⇒ doom 阈值 ≈ **落后 150×剩余手数**（剩 12 手→1800=18BB；剩 18 手→2700=27BB）。
+- **★ 用户 2026-10-01 裁决：「doom 成立 → 无条件 allin」不动，`to_call>0` 分支无 `_shove_fold_ok` 门控 = 有意设计。不要再提收紧 doom。**
+  （我提过异议：doom 状态会持续 ⇒ 全下期权不会过期、且靠弃牌权益追回被 doom 定义本身排除 ⇒ 应等好牌再推。用户驳回，理由「弃牌立死不 allin 赌对面弃牌还能干啥」。**已搁置，勿再提。**）
+  唯一未受该反驳影响、仍待用户决定的：`to_call==0` 且未见翻牌时先过牌看翻牌（手58 就是这种情况，白扔 92o）。
 
 ## 规则清单（生效顺序）
 1. **规则2 `_lock_win_unified`**（入口）：B fold_out→fold（`to_call==0` 用 check）；A doomed / C `_profit_lock_allin` → 同为 `_doom_plan`。
