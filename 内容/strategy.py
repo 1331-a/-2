@@ -4177,8 +4177,10 @@ def _stability_mode(state, model):
     触发（任一）：
       1. 对手频繁 allin（全下攻击型）——全押手数占比 ≥ 20%
          （每 5 手至少 1 次全下，主动下注大底池会被他梭哈/被反诈唬）；
-      2. 我方接近锁赢线（lead ≥ STABILITY_LINE_FACTOR(0.6) × 锁赢线）——
+      2. 我方接近锁赢线（lead ≥ STABILITY_LINE_FACTOR × 锁赢线）——
          求稳不赌，降低波动保收益；
+         ★ 具体比例**以常量 `STABILITY_LINE_FACTOR` 为准**（2026-10-01 核对 = 0.70；
+           历史上曾为 0.8 → 0.6。此前的 docstring 写死 0.6 属陈旧注释，已改为不写死）。
       3. 【2026-09-14 新增】终局领先：剩余 ≤ STABILITY_ENDGAME_HANDS(8) 手
          且 lead > 0 —— 已无时间承受波动。
     返回 True = 进入求稳（过牌跟注，不主动下注/加注）。
@@ -4195,6 +4197,9 @@ def _stability_mode(state, model):
         # 等于「40% 锁赢线」就求稳 → 过度求稳（健康度表里本规则 EV 最差）。
         # 统一改用 _lock_line(state)（含 2× 与 本手已投）。
         # 【2026-09-14 用户规则】比例 0.8 → 0.6（更早求稳）。
+        # ★ 2026-10-01 核对：常量现值是 **0.70**（不是注释里写的 0.6，也不是 0.8）。
+        #   两次调整（0.8→0.6→0.70）都只改了常量、没同步注释 → 已在 docstring
+        #   改为「以常量为准」。**不要在本函数里再写死比例。**
         line = _lock_line(state)
         if line > 0 and lead >= STABILITY_LINE_FACTOR * line:
             return True

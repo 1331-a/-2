@@ -612,6 +612,26 @@ def stab():
 
     now = run_batch(seeds, opp, hands, old=False, stab_off=False)
     cand = run_batch(seeds, opp, hands, old=False, stab_off=True)
+
+    # ---- 诊断：求稳触发次数（★ 必需，否则「两臂一字不差」无法解读）----
+    # 触发 = `_stability_mode()` 返回 True 的次数（每条街的每个决策点最多 1 次）。
+    # 候选臂里翻前那一段被 `STABILITY_PREFLOP_ON` 拦在 `_stability_mode` 之前，
+    # 所以「现状 − 候选」= 被翻前拦下的触发次数 = 本 A/B 真正作用到的决策点上限。
+    nt = [now[s][3] for s in seeds]
+    ct = [cand[s][3] for s in seeds]
+    zero = sum(1 for v in nt if v == 0)
+    print("-" * 108)
+    print("★ 求稳触发次数（诊断）  现状臂 %d 次 = %.2f 次/局 | 候选臂 %d 次 = %.2f 次/局"
+          % (sum(nt), sum(nt) / max(1, groups), sum(ct), sum(ct) / max(1, groups)))
+    print("  被翻前拦下的触发（现状−候选）= %d 次 = %.2f 次/局   （真实日志基准 ≈ 11 次/局）"
+          % (sum(nt) - sum(ct), (sum(nt) - sum(ct)) / max(1, groups)))
+    print("  现状臂「零触发」的组数 = %d/%d" % (zero, groups))
+    if sum(nt) == 0:
+        print("  ⚠️ 现状臂一次都没触发 ⇒ 这一臂根本没被作用，结果必为假阴性。"
+              "需加长局数或改用「构造领先开局」的方式。")
+    elif zero > groups * 0.5:
+        print("  ⚠️ 过半组零触发 ⇒ 信噪比低，需要更多组数才能出信号。")
+
     now_t = [now[s][1] for s in seeds]
     cand_t = [cand[s][1] for s in seeds]
     d_all = [c - n for c, n in zip(cand_t, now_t)]
