@@ -83,6 +83,9 @@
   「同 seed 连跑两次逐字节一致」**只在同一进程内成立**（`check_repro.py` 即同进程）。
   实例：顶两对豁免曾报「2 点（H35+H53）」，对照一测 **H53 属噪声**，真实效应只有 H35。
 - 对手 all-in 在 history 里写**真实金额**（写 `-2` 会让 `to_call` 塌缩）；翻后公牌张数要对（3/4/5）。
+- 花色标号**只用于相等比较**（`evaluator.is_flush`、`hand_percentile` 的 `% 4`）⇒ 任意重标号
+  不影响决策/胜率；回放链路所有牌号都出自 `card_to_platform`，**内部自洽无 bug**。
+  但 3 处 docstring 口径不一致（已写成「以 `botbattle_log._SUIT` 为唯一权威」+ 标注为文档瑕疵）。
 - 复盘：界面「底池」常是结果态 → 回到决策前；座位需动态检测。`DecisionLogger`：`decide(debug=False)` 会关日志，分析器需 `enable(True) + _quiet=True`。
 - 日志「规则1/4 大注弃牌」是 `_winning_rule()` 兜底标签，不是真规则。验证是否提前 return 看 `WB_FACE_LOG`。
 - **★ 行为指纹判座位**（09-30）：日志双方元数据可能完全相同 → 把同一批决策点喂给两版，一致率高者为该座位版本。工具 `测/_py311/{fingerprint,verify_hands,diag_shove}.py`。
