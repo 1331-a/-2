@@ -3,8 +3,14 @@
 game_state.py — BotZone 德州扑克官方协议解析与牌局状态重建。
 
 官方协议要点（只支持 JSON 交互，每步限时 1 秒）：
-  - 牌用 0~51 整数编号：点数 = n//4 + 2（2~14，A=14），花色 = n%4
-    （0=红桃，1=方块，2=黑桃，3=草花）。
+  - 牌用 0~51 整数编号：点数 = n//4 + 2（2~14，A=14），花色 = n%4。
+    ★ 花色那一位是**纯标号**：全项目只在 `evaluator.is_flush` 与
+    `ranges.hand_percentile` 里做**相等比较**，标号本身不影响任何决策/胜率。
+    此处原先标注「0=红桃 1=方块 2=黑桃 3=草花」，但日志回放侧
+    （`botbattle_log._SUIT = {'c':0,'d':1,'h':2,'s':3}` ⇒ 0=♣ 1=♦ 2=♥ 3=♠）
+    与若干测试夹具的口径都不一致，且**日志里只有字母、没有整数，无法独立验证**。
+    ⇒ 把这些标注一律当**文档瑕疵**看待；若需写字母↔标号的转换代码，
+    以 `botbattle_log._SUIT` 为唯一权威（详见 `cards.py` 头部说明）。
   - request 字段：num_players / dealer_id / my_id / my_chips / my_cards /
     public_cards / history / hand / max_hand / total_win_chips / total_win_games。
     每手牌筹码重置为 INIT_CHIPS（20000）。

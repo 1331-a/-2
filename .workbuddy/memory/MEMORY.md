@@ -60,6 +60,14 @@
 - combo 级 1326 权重**暂缓**（70 手 ≈130 翻后点，识别 1326 参数严重欠定）；`opp_weights` 接口已建好（`_build_range`/`monte_carlo_equity`/`exact_equity`/`equity_best` 全支持），体积仅 ≈**5KB**。
 - 【★ 10-01 尺寸结论】「对手过牌→我方下注」全量 85 次：**25~45%（现用）与 45~70% 两档均值完全相同（+243/手）**，尺寸中位 39.3% ⇒ **加大尺寸不是杠杆，不改**。（我原用「纯诈唬盈亏平衡尺寸 ≈ f/(1−f)×池」主张加大尺寸 —— **推理错误**：我们的下注非纯诈唬、且弃牌率 f 随尺寸下降。）
 - 【★ 10-01 模拟算力】生产口径 **70 手/场 ≈4 分钟**（两臂×60 组 = 8h，不可行；20 手短局触发数为 0）。**两臂同口径降抽样** `WB_MC_ITERS=1500 WB_MC_BUDGET=0.3` → **≈7 秒/场（~35×）**，240 组约 1h。**必须加「触发计数器」**（`sim_early.py` CHILD 输出第 5 字段）才能区分「无效果」与「没触发」；实测触发 11.25 次/局 与真实日志 11 次/局吻合 ⇒ **可当保真度校验**。
+- 【★ 10-01 求稳翻前 A/B 终验（任务 #39）】240 组同 seed 配对 × 2 对手，两臂同口径降抽样。
+  **结论：观察性估计 +3,450/场 被证伪** —— cloud 全场均值 **+422**（95%CI −556~+1467，符号 36:36 p=0.500）；
+  station 全场均值 **−468**（CI −1379~+154，符号 65:43 但均值负 = 重尾）。两对手**方向不一致**。
+  ⇒ **无一致证据支持改 `STABILITY_PREFLOP_ON`；待裁决 ① 结案 = 保持现状（默认 True）**。
+  保真度校验：被翻前拦下 5.67（cloud）/ 9.33（station）次/局 vs 真实日志 ≈11 次/局。
+  功效边界：CI ≈ ±1,000 ⇒ **+500 量级小效应无法排除**（需 ≈1,000 组）。
+  ⚠️ 本口径下两臂对内置对手都是**负水平**（cloud 旧 −111/新 +311；station 旧 −833/新 −1301）
+  ⇒ **内置对手强于本 bot，是另一个待查项**。
 - 【★ 对手 code A 画像 10-01】`eff_vpip` 0.70→**0.89**（翻前几乎不弃）、`bets/hand` 0→1.08~1.17 ⇒ **「翻前松、翻后 fit-or-fold」**。可剥削点在**翻后弃牌多**（我方靠逼弃收 20,256 / 63 手）。全量：靠逼对手弃牌是主要收入（过牌线 +24k、全下线 +24k），摊牌是方差来源。
 
 ## 牌型判定
@@ -67,7 +75,13 @@
 - `hand_percentile`：AA 0.015 / 77 0.151 / 66 0.210 / KQs 0.275 / AKo 0.121。状态机：normal/protect/pressure/desperate/doomed/steal。
 
 ## 工具 / 测试陷阱
-> 完整版（含 10 条血泪陷阱与判读顺序）见技能 `~/.workbuddy/skills/poker-strategy-ab/SKILL.md`。
+> 完整版（含 11 条血泪陷阱与判读顺序）见技能 `~/.workbuddy/skills/poker-strategy-ab/SKILL.md`。
+- ★★ **跨进程重放自带 ~0.5~1% 噪声下限**（2026-10-01，`测/repro_noise.py`）：两臂配置**完全相同**、
+  只换进程，同一份 140 决策点日志的对照差异是 1/0/1 点；固定 `PYTHONHASHSEED=0` 无效。
+  ⇒ **凡报「幅度」必须同时跑对照组臂，结论写「净效应 = 实验组差异 − 对照组差异」**；
+  **≤1 点**的差异在这套工具上**不可判读**（要合并多份日志，或改测决策层内部确定性量）。
+  「同 seed 连跑两次逐字节一致」**只在同一进程内成立**（`check_repro.py` 即同进程）。
+  实例：顶两对豁免曾报「2 点（H35+H53）」，对照一测 **H53 属噪声**，真实效应只有 H35。
 - 对手 all-in 在 history 里写**真实金额**（写 `-2` 会让 `to_call` 塌缩）；翻后公牌张数要对（3/4/5）。
 - 复盘：界面「底池」常是结果态 → 回到决策前；座位需动态检测。`DecisionLogger`：`decide(debug=False)` 会关日志，分析器需 `enable(True) + _quiet=True`。
 - 日志「规则1/4 大注弃牌」是 `_winning_rule()` 兜底标签，不是真规则。验证是否提前 return 看 `WB_FACE_LOG`。
@@ -91,7 +105,8 @@ strategy（决策+安全网）/ game_state（协议）/ opponent（画像+尺寸
 `UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`·`UA_SEALED_ALLIN`·`UA_SEALED_MARGIN` / `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON`·`BIG_MONEY_TOPTWO_ON` / `DOOM_ALLIN_ON`·`DOOM_TOPTWO_CALL_ON` / `GAMBLE_SHOVE_FOLD_MIN(0.45)`·`GAMBLE_SHOVE_FORCE_HANDS(8)`·`GAMBLE_LINE_FACTOR(0.95)` / `RANGE_NARROW_*`·`RANGE_SOFT_TAIL` / `STABILITY_LINE_FACTOR(0.70)`·`STABILITY_ENDGAME_HANDS(8)`·`STABILITY_PREFLOP_ON` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON` / `OPEN_SIZE_BB(3.5)`。
 
 ## 待办 / 已知瑕疵
-- **待用户裁决**：① 求稳是否只作用翻后（开关 `STABILITY_PREFLOP_ON` 已就位，240 组配对模拟进行中 = 任务 #39）；② 强牌加注尺寸是否调大；③ `to_call==0` 且未见翻牌时是否先过牌看翻牌（手58 那种情况）。
+- **待用户裁决**：① ~~求稳是否只作用翻后~~ **已结案（10-01）**：配对模拟证伪观察性估计 ⇒ 保持「求稳也压翻前」；② 强牌加注尺寸是否调大；③ `to_call==0` 且未见翻牌时是否先过牌看翻牌（手58 那种情况）。
+- ★ **内置对手（cloud / station）强于本 bot**：240 组配对模拟里两臂全场均值都是**负的**（cloud −111/+311；station −833/−1301）—— 这是新暴露的待查项。
 - ★ `STABILITY_LINE_FACTOR` 实为 **0.70**（原 docstring/注释写 0.6 / 0.8 属陈旧，已修为「以常量为准」）。
 - **打不过 v50** 是首要问题，唯一可信验证 = 用户提供 vs v50 的真实日志。
 - `测/学习升级版/poker_bot` 有一处非本轮改动未提交。交付文档 `项目交接说明.md`（用户已转用 ChatGPT 写代码）。

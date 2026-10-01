@@ -7,7 +7,23 @@ cards.py — 扑克牌的生成工具。
 
 内部统一用一个整数表示一张牌：card = rank * 4 + suit
   - rank（点数）: 2..14（11=J, 12=Q, 13=K, 14=A）
-  - suit（花色）: 0=黑桃S, 1=红桃H, 2=方块D, 3=梅花C
+  - suit（花色）: 0..3（**纯标号**，见下面 ★ 警告）
+
+★ 【2026-10-01 核实】花色标号在整个代码库里**只被用于「相等比较」**——
+  全项目只有两处消费它：`evaluator` 的 `is_flush`（`len({c % 4}) == 1`）
+  与 `ranges.hand_percentile`（`hole[0] % 4 == hole[1] % 4`）。
+  ⇒ **任意重标号都不影响任何决策、胜率或测试结果**；
+  但**不同来源的牌号绝不能混用**，否则同花比较会错：
+  * 平台 request 的牌号由 `game_state` 统一 `+8`；
+  * 回放日志的字母由 `botbattle_log.card_to_platform` 映射
+    （`_SUIT = {'c':0,'d':1,'h':2,'s':3}` ⇒ 实际标号 0=♣ 1=♦ 2=♥ 3=♠），
+    而 `load_botbattle` 生成的 request 也走这条路 ⇒ **回放链路内部自洽**，
+    所以「日志牌号 +8 后喂给模型」是安全的。
+  * ⚠️ 但 `game_state` 的 docstring 写「0=红桃 1=方块 2=黑桃 3=草花」，
+    本文件此前写「0=黑桃 1=红桃 2=方块 3=梅花」，部分测试夹具按「0=黑桃」命名
+    —— **四处说法不一致，且都无法从日志独立验证**（日志只有字母，没有整数）。
+    这些**全是文档瑕疵，不影响运行**。写新的解码/查表代码时
+    **以 `botbattle_log._SUIT` 为准**（它是字母→标号的唯一权威）。
 
 说明：本模块原有 parse_card / card_str / rank / suit 等字符串互转工具，
 经「零引用」扫描确认在机器人运行路径中无人调用，已清理（需要时可从
@@ -226,8 +242,14 @@ def hand_percentile(hole):
 game_state.py — BotZone 德州扑克官方协议解析与牌局状态重建。
 
 官方协议要点（只支持 JSON 交互，每步限时 1 秒）：
-  - 牌用 0~51 整数编号：点数 = n//4 + 2（2~14，A=14），花色 = n%4
-    （0=红桃，1=方块，2=黑桃，3=草花）。
+  - 牌用 0~51 整数编号：点数 = n//4 + 2（2~14，A=14），花色 = n%4。
+    ★ 花色那一位是**纯标号**：全项目只在 `evaluator.is_flush` 与
+    `ranges.hand_percentile` 里做**相等比较**，标号本身不影响任何决策/胜率。
+    此处原先标注「0=红桃 1=方块 2=黑桃 3=草花」，但日志回放侧
+    （`botbattle_log._SUIT = {'c':0,'d':1,'h':2,'s':3}` ⇒ 0=♣ 1=♦ 2=♥ 3=♠）
+    与若干测试夹具的口径都不一致，且**日志里只有字母、没有整数，无法独立验证**。
+    ⇒ 把这些标注一律当**文档瑕疵**看待；若需写字母↔标号的转换代码，
+    以 `botbattle_log._SUIT` 为唯一权威（详见 `cards.py` 头部说明）。
   - request 字段：num_players / dealer_id / my_id / my_chips / my_cards /
     public_cards / history / hand / max_hand / total_win_chips / total_win_games。
     每手牌筹码重置为 INIT_CHIPS（20000）。
@@ -5996,8 +6018,10 @@ def _stability_mode(state, model):
     触发（任一）：
       1. 对手频繁 allin（全下攻击型）——全押手数占比 ≥ 20%
          （每 5 手至少 1 次全下，主动下注大底池会被他梭哈/被反诈唬）；
-      2. 我方接近锁赢线（lead ≥ STABILITY_LINE_FACTOR(0.6) × 锁赢线）——
+      2. 我方接近锁赢线（lead ≥ STABILITY_LINE_FACTOR × 锁赢线）——
          求稳不赌，降低波动保收益；
+         ★ 具体比例**以常量 `STABILITY_LINE_FACTOR` 为准**（2026-10-01 核对 = 0.70；
+           历史上曾为 0.8 → 0.6。此前的 docstring 写死 0.6 属陈旧注释，已改为不写死）。
       3. 【2026-09-14 新增】终局领先：剩余 ≤ STABILITY_ENDGAME_HANDS(8) 手
          且 lead > 0 —— 已无时间承受波动。
     返回 True = 进入求稳（过牌跟注，不主动下注/加注）。
@@ -6014,6 +6038,9 @@ def _stability_mode(state, model):
         # 等于「40% 锁赢线」就求稳 → 过度求稳（健康度表里本规则 EV 最差）。
         # 统一改用 _lock_line(state)（含 2× 与 本手已投）。
         # 【2026-09-14 用户规则】比例 0.8 → 0.6（更早求稳）。
+        # ★ 2026-10-01 核对：常量现值是 **0.70**（不是注释里写的 0.6，也不是 0.8）。
+        #   两次调整（0.8→0.6→0.70）都只改了常量、没同步注释 → 已在 docstring
+        #   改为「以常量为准」。**不要在本函数里再写死比例。**
         line = _lock_line(state)
         if line > 0 and lead >= STABILITY_LINE_FACTOR * line:
             return True
