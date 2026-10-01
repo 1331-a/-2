@@ -322,6 +322,29 @@ except Exception:
 # 2 / 18 直接返回，不走这里。
 BIG_CALL_LIMIT = 3000          # 大额跟注线（翻后）：超过它跟注需 ≥ 三条
 BIG_MONEY_GUARD_ON = True      # 总开关（调参入口）
+# 【规则20 豁免·2026-10-01 用户规则】「顶两对」允许跟 > BIG_CALL_LIMIT 的大注。
+#   用户原话：「自己有场上最大和第二大的两对时允许超过 3000 跟」。
+#   口径见 _is_top_two_pair()（比"顶两对"三个字更严一档，理由写在函数注释里）。
+#   评估开关：WB_NO_BIGMONEY_TOPTWO=1 → 关掉该豁免（回到 09-24 的纯金额闸门）。
+BIG_MONEY_TOPTWO_ON = True
+try:
+    import os as _os_tp
+    if _os_tp.environ.get("WB_NO_BIGMONEY_TOPTWO") == "1":
+        BIG_MONEY_TOPTWO_ON = False
+except Exception:
+    pass
+# 同上，但作用于**出口最后一层 `_doom_call_upgrade`**（规则2 跟注侧）。
+# 为什么必须单独一个开关：那一条是 2026-09-28 的硬规则（「跟注即锁赢 → 不放行
+# 便宜跟注」），与顶两对放行**在取舍上冲突**，所以要能分开关、分开评。
+# 【实测为何必须改这里】10-01 21:51 那局手35：豁免只开到 `_normalize` 与规则20
+# 时 **变化 0 点** —— 最后一层 `_doom_call_upgrade` 又把 call 改回 fold 了。
+DOOM_TOPTWO_CALL_ON = True
+try:
+    import os as _os_tp2
+    if _os_tp2.environ.get("WB_NO_DOOM_TOPTWO_CALL") == "1":
+        DOOM_TOPTWO_CALL_ON = False
+except Exception:
+    pass
 
 # ── 方案A（2026-09-24 用户规则）：跟注门槛计入「后续投入」（future cost）──
 # 背景（4 局真实日志定量）：vs 外部对手的输局里，前中期亏损几乎全部是同一种
@@ -1010,6 +1033,20 @@ def _doom_call_upgrade(state, action):
             return action
         if _strong_for_big_money(state) or DOOM_UPGRADE_FORCE_ALLIN:
             return {"act": "allin", "lk": 1}
+        # 【2026-10-01 用户规则】顶两对豁免：见 _is_top_two_pair 的说明。
+        # ⚠️ **与 2026-09-28「不做便宜跟注」直接冲突**，务必知悉：
+        #   · 09-28 规则：跟注即锁赢 → 强牌 allin / 弱牌 fold，**不放行 call**；
+        #     且 docstring 明确写过「两者不可能同时成立」。
+        #   · 10-01 用户新指示：「顶两对允许超过 3000 跟」。实测那局（手35）
+        #     我方是**顶两对 TT+77、对手只有一对 6**，但出口链到此为止
+        #     前面三层豁免全部白做 —— 因为本层把它 fold 了
+        #     （lead +2588、跟注口径 doom 成立、_strong_for_big_money=False）。
+        #   · 取舍说明：本层的 doom 判定是**最坏情况**（假设跟注必输）。
+        #     顶两对在这种面上通常是领先的，所以这里按用户 10-01 的指示放行 call。
+        #   · 隔离开关 DOOM_TOPTWO_CALL_ON（env `WB_NO_DOOM_TOPTWO_CALL=1` 可关），
+        #     关掉即逐字回到 09-28 行为。
+        if DOOM_TOPTWO_CALL_ON and _is_top_two_pair(state):
+            return action
         return {"act": "fold"}
     except Exception:
         return action
@@ -1053,6 +1090,61 @@ def _strong_for_big_money(state):
         return False
 
 
+def _is_top_two_pair(state):
+    """【规则20 豁免·2026-10-01 用户规则】是否「顶两对」——可跟 >3000 的大注。
+
+    用户原话：「自己有场上最大和第二大的两对时允许超过 3000 跟」。
+
+    实现口径（三个条件同时满足）：
+      ① 有效牌型 == 两对（`_effective_category` 已做过「公共牌拼出的 ≥三条降级」
+         净化，所以只用公共牌凑出的"两对"不会走到这里）；
+      ② 我方两个对子正好是**场上点数最大的两档**（公共牌点数集合的前二）；
+      ③ ★ 这两个点数**都必须由我方底牌补成**（各至少用到一张底牌）。
+
+    ★ ③ 是我加的（比用户的字面更严一档），理由是 2026-10-01 那局的实测对照：
+      · 手35（口径内）：公共牌 6s3c7c2dTd，我 Ts-7d → 两对 **TT+77**，
+        底牌同时持有 T 与 7 → 通过。对手实际只有一对 6（6d+6s）⇒ **我们领先**，
+        这一手该跟（当时弃了，白送 −2125）。
+      · 手44（被③排除）：公共牌 Ts2d3d**Td**，我 Kc-3h → 看着也是"两对 TT+33"，
+        但 **T 对完全由公共牌组成、我们没拿 T** ⇒ 不通过。
+        对手实际是 Jd-5d —— 公共牌 2d/3d/Td 三张方块 + 手上两张 = **同花**。
+        若按字面口径放行，这一手会多输 6400。
+      差别在于风险结构：公共牌那一档我们没拿，**对手只要拿着它就是三条**，
+      "顶两对"的成色完全不同。所以要求"两档都自己持有"。
+
+    另外两手的对照（都不在口径内，两个条件就挡住了）：
+      · 手3（公共牌 Qs5h6s4c3c，我 9d-9h）：只有一对 9 → ① 不过；
+      · 手48（公共牌 2sAdJh，我 9d-9c）：只有一对 9 → ① 不过。
+
+    ⚠️ 剩余风险（未加额外护栏，已知）：本口径**不检查公共牌是否成三同花/顺子面**。
+      手35 的公共牌其实有顺子可能，只是对手恰好没有；若要更保守可再加
+      「公共牌无三同花 + 无明三顺」的门控——但会同时挡掉手35，故暂不加。
+    """
+    try:
+        if _effective_category(state) != TWO_PAIR:
+            return False
+        hole = list(state.hole or [])
+        board = list(state.board or [])
+        if len(hole) != 2 or len(board) < 3:
+            return False
+        board_ranks = sorted({c // 4 for c in board}, reverse=True)
+        if len(board_ranks) < 2:
+            return False
+        top2 = board_ranks[:2]                 # 场上点数最大的两档
+        allc = {}
+        for c in hole + board:
+            allc[c // 4] = allc.get(c // 4, 0) + 1
+        pairs = sorted((r for r, n in allc.items() if n >= 2), reverse=True)
+        if len(pairs) < 2 or pairs[:2] != top2:
+            return False                       # ② 我们的两对必须是场上最大两档
+        hc = {}
+        for c in hole:
+            hc[c // 4] = hc.get(c // 4, 0) + 1
+        return hc.get(top2[0], 0) >= 1 and hc.get(top2[1], 0) >= 1   # ③ 两档都自己持有
+    except Exception:
+        return False
+
+
 def _big_money_guard(state, action):
     """【规则20·2026-09-24 用户规则】大额投入闸门（出口硬规则）。
 
@@ -1086,10 +1178,22 @@ def _big_money_guard(state, action):
                 return action                   # ≥三条 / 翻前超强牌 → 允许推光
             if to_call <= 0:
                 return {"act": "check"}         # 免费过牌：不主动送筹码
+            # 【2026-10-01 用户规则】顶两对豁免：见 _is_top_two_pair 的说明。
+            # 这一支在实测里是**必经之路**：`_endgame_arbitrate` 会把上游刚合法化的
+            # `call` 再升级成 `allin`（终局效用最优），而本层的 R2 又禁止弱牌主动
+            # 全押 → 原实现直接 fold，等于把豁免刚救回来的 call 又推回弃牌。
+            # 这里改为**降级为 call**（跟得起、且 call 是合法动作），而不是弃牌。
+            if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
+                return {"act": "call"}
             if to_call > BIG_CALL_LIMIT:
                 return {"act": "fold"}
             return {"act": "call"}
         if act == "call" and to_call > BIG_CALL_LIMIT and not strong:
+            # 【2026-10-01 用户规则】顶两对豁免：见 _is_top_two_pair 的说明。
+            # 用户实测（10-01 21:51 那局）「有三手因为对手下注超 3000 没敢跟」；
+            # 我逐街核对后只有手35 是真该跟（顶两对 TT+77 领先对手一对 6）。
+            if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
+                return action
             return {"act": "fold"}
     except Exception:
         pass
@@ -5200,14 +5304,28 @@ def _normalize(state, action):
             # 与牌力判定）→ 原「翻前金额 >1000 → 弃」「翻后超牌型上限 → 弃」
             # 两条限制废止，此处不再二次设限。 主动动作仅主动全下（见上）。
             return {"act": "allin"}
-        # 【用户规则 2026-08-24】翻前跟注额 > 1000 且非 doomed → 弃。
-        # 翻前手牌最多一对（< 三条），无法支撑大额跟注（与翻后大注同逻辑）。
+        # ★★ 大额跟注闸门（**真正生效**的那一处）
+        # 【用户规则 2026-08-24】翻前跟注额 > 1000 且非 doomed → 弃；
+        # 【用户规则 2026-08-25】翻后跟注额 > 牌型上限（小两对 2000 / 其余<三条
+        #   3000 / ≥三条 不限）→ 弃。
+        # 【2026-10-01 排查·重要】这两条其实是**同一个** `_over_limit`：
+        #   它翻前看 PREFLOP_MAX_BET(1000)、翻后看 `_bet_limit` ⇒ 下面那条
+        #   只判 `state.stage != "preflop"` 的重复闸门**永远走不到**（死代码）。
+        #   实测 10-01 21:51 那局手35（河牌两对 TT+77 面对 7113）就卡在**这一行**：
+        #   出口链轨迹 `_bet_cap_guard: allin→call` → **`_normalize: call→fold`**，
+        #   规则20（第 8 层）拿到手时已经是 fold，无事可做。
+        #   ⇒ 所以 ≥3000 跟注的放宽**必须改在这里**，只改规则20 无效。
         if _over_limit(state, to_call):
+            # 【2026-10-01 用户规则】顶两对豁免：见 _is_top_two_pair 的说明。
+            # （翻前 `_over_limit` 也走这一行，但 `_is_top_two_pair` 要求
+            #   公共牌 ≥3 张 ⇒ 翻前恒为 False，不会误放行。）
+            if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
+                return {"act": "call"}
             return {"act": "fold"}
-        # 【用户规则 2026-08-25】翻后跟注额超当前牌型上限 → 弃
-        # （分级上限：小两对 2000 / 其余<三条 3000；≥三条/doomed 不限）。
-        # 第 12 手教训：A 一对弱踢脚 call 3223 是假投入——假强牌不应跟大注。
+        # 保险：万一 _over_limit 的语义将来被改动，这条仍能兜住翻后金额闸门。
         if state.stage != "preflop" and to_call > _bet_limit(state):
+            if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
+                return {"act": "call"}
             return {"act": "fold"}
         return {"act": "call"}
 

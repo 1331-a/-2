@@ -66,6 +66,27 @@ if _p:
 
 random.seed(0)   # 占位；每局在 run_match 里按 seed 重新播种
 
+# ---- 诊断：统计 _stability_mode（求稳）触发次数 ----
+# 【2026-10-01 为什么需要】`_stability_guard` 只在**我方领先达标**或**对手频繁
+# allin**时才触发。若某个 A/B 实验里两臂结果一字不差，**无法区分**「改动无效果」
+# 与「改动根本没被触发」—— 必须报触发次数，否则空结果不可解读。
+# 运行时包装（不动生产代码）；每局重置，逐 seed 输出。
+_stab_orig = strategy._stability_mode
+_stab_cnt = [0]
+
+
+def _stab_wrap(st, m):
+    try:
+        r = _stab_orig(st, m)
+    except Exception:
+        return False
+    if r:
+        _stab_cnt[0] += 1
+    return r
+
+
+strategy._stability_mode = _stab_wrap
+
 
 class CloudStyle:
     """翻前小开池 → 翻牌小注 → 弱牌遇阻即弃。"""
@@ -378,16 +399,19 @@ def run_match(seed, hands):
 
 
 for sd in [int(x) for x in sys.argv[3:]]:
+    _stab_cnt[0] = 0
     e, t, w = run_match(sd, HANDS)
-    print("%d|%d|%d|%.1f" % (sd, e, t, w))
+    print("%d|%d|%d|%.1f|%d" % (sd, e, t, w, _stab_cnt[0]))
 '''
 
 def run_batch(seeds, opp, hands, old, pct=None, off_a=None, off_b=None,
-              no_bigbet_a=None):
+              no_bigbet_a=None, stab_off=None):
     """一次子进程跑一批 seed（省启动开销），返回 {seed: (early, total, wr)}。
 
     old=True  → 关 A + 关 B（旧基准）
     off_a/off_b  → 单独关掉其中一项，用于**拆分归因**（是谁把结果拉差）。
+    stab_off=True → 置 WB_NO_STAB_PREFLOP=1（求稳**不**压制翻前开池 = 候选新行为）。
+                    None = 不动该环境变量（保持调用方环境原样）。
     """
     env = dict(os.environ)
     if old:
@@ -401,6 +425,10 @@ def run_batch(seeds, opp, hands, old, pct=None, off_a=None, off_b=None,
             env[k] = "1"
         else:
             env.pop(k, None)
+    if stab_off is None:
+        env.pop("WB_NO_STAB_PREFLOP", None)
+    else:
+        env["WB_NO_STAB_PREFLOP"] = "1" if stab_off else "0"
     if pct:
         env["WB_OPEN_PCT"] = str(pct)
     else:
@@ -416,10 +444,11 @@ def run_batch(seeds, opp, hands, old, pct=None, off_a=None, off_b=None,
     out = {}
     for line in r.stdout.strip().splitlines():
         p = line.split("|")
-        if len(p) != 4:
+        if len(p) < 4:                 # 第 5 项（诊断计数）可选，见 CHILD 里的说明
             continue
         sd = int(p[0])
-        out[sd] = (int(p[1]), int(p[2]), float(p[3]))
+        out[sd] = (int(p[1]), int(p[2]), float(p[3]),
+                   int(p[4]) if len(p) > 4 else 0)
     missing = [s for s in seeds if s not in out]
     if missing:
         print("!! 子进程缺少 %d 个 seed: %s" % (len(missing), missing))
@@ -559,11 +588,47 @@ def sweep():
         summarize(label, d, base_v, [arm[s][0] for s in seeds])
 
 
+def stab():
+    """【2026-10-01】A/B：求稳是否压制翻前开池（待裁决事项 ①）。
+
+    两臂**只在** WB_NO_STAB_PREFLOP 上不同，其余保持线上配置
+    （不碰 A/B/尺寸，也不用 OLD_ALL —— 避免把别的改动混进来）。
+
+    调用：`python sim_early.py --stab [对手] [手数] [组数]`
+    ⚠️ `_stability_guard` 只在**我方领先**达标时才触发，短局可能几乎不触发
+       → 手数建议用真实赛制的 70，并报「触发率」以便判断该臂是否真的动过。
+    """
+    opp = sys.argv[1] if len(sys.argv) > 1 else "cloud"
+    hands = int(sys.argv[2]) if len(sys.argv) > 2 else 70
+    groups = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+    seeds = [20260924 + g * 977 for g in range(groups)]
+
+    print("=" * 108)
+    print("A/B：求稳是否压制翻前开池   对手=%s  %d手/组  %d组" % (opp, hands, groups))
+    print("现状臂 = 求稳也压翻前（线上，STABILITY_PREFLOP_ON=True）")
+    print("候选臂 = 求稳只压翻后（WB_NO_STAB_PREFLOP=1，对齐 v50 口径）")
+    print("两臂只在 WB_NO_STAB_PREFLOP 上不同；其余全部保持线上配置。")
+    print("=" * 108)
+
+    now = run_batch(seeds, opp, hands, old=False, stab_off=False)
+    cand = run_batch(seeds, opp, hands, old=False, stab_off=True)
+    now_t = [now[s][1] for s in seeds]
+    cand_t = [cand[s][1] for s in seeds]
+    d_all = [c - n for c, n in zip(cand_t, now_t)]
+    summarize("全场（总净额）候选 − 现状", d_all, now_t, cand_t)
+
+    now_e = [now[s][0] for s in seeds]
+    cand_e = [cand[s][0] for s in seeds]
+    summarize("前 20 手累积 候选 − 现状", [c - n for c, n in zip(cand_e, now_e)],
+              now_e, cand_e)
+
+
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("--sweep", "--decomp"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("--sweep", "--decomp", "--stab"):
         mode = sys.argv[1]
         sys.argv = [sys.argv[0]] + sys.argv[2:]
-        (sweep if mode == "--sweep" else decomp)()
+        (sweep if mode == "--sweep" else
+         (stab if mode == "--stab" else decomp))()
         return
     groups = int(sys.argv[1]) if len(sys.argv) > 1 else 8
     opp = sys.argv[2] if len(sys.argv) > 2 else "cloudturn"
