@@ -593,11 +593,19 @@ a = decide(stg5, OpponentModel())
 check("全下下限:端到端落后仍全下搏翻盘", a.get("act") in ("allin", "fold"), str(a))
 
 # ---------- 7. 耗时 ----------
-t0 = time.time()
+# 【2026-09-30】平台已确认 Holdem 为**单步 60 秒**（botarena，原 botbattle）。
+# 阈值从旧的 0.5s（Botzone「每步 1 秒」口径）放宽；同时保留 40s 硬保护线
+# （= DECISION_TIMEOUT，超过就会强制回保守动作）。
+_t0 = time.time()
+_worst = 0.0
 for _ in range(10):
+    _t = time.time()
     act(air_flop, station())
-dt = (time.time() - t0) / 10
-check("单步耗时<0.5s", dt < 0.5, "%.0fms" % (dt * 1000))
+    _worst = max(_worst, time.time() - _t)
+dt = (time.time() - _t0) / 10
+check("单步耗时<20s（平台预算 60s）", dt < 20.0, "%.0fms" % (dt * 1000))
+check("最慢单步耗时<40s（= DECISION_TIMEOUT 硬保护）", _worst < 40.0,
+      "%.0fms" % (_worst * 1000))
 
 # ---------- 6. 河牌超池下注（坚果价值最大化）----------
 # A♠K♠ + Q♠J♠T♠9♠2♥ = 皇家同花顺，河牌对手过牌给我 → 超池榨取

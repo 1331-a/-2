@@ -3,3 +3,12 @@
 内容/记录/*.txt
 *.pyc
 __pycache__/
+
+# v50 对拍中间产物（可从 测/poker_botv50 重新提取，见 项目交接说明.md）
+测/_v50_body.bin
+测/_v50_asm_out.txt
+
+# 二进制体积产物（由 GitHub Actions 构建，不入库）
+poker_bot
+poker_bot-linux-x86_64.zip
+BotBattle提交_poker_bot.zip

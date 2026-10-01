@@ -27,7 +27,7 @@ from game_state import INIT_CHIPS
 from evaluator import (CATEGORY_NAMES, TWO_PAIR, ONE_PAIR, STRAIGHT, THREE_OF_A_KIND,
                        FULL_HOUSE, FLUSH, STRAIGHT_FLUSH, HIGH_CARD,
                        evaluate_7, evaluate_5)
-from equity import monte_carlo_equity
+from equity import monte_carlo_equity, equity_best
 from ranges import hand_percentile
 from opponent import OpponentModel
 from itertools import combinations
@@ -127,6 +127,18 @@ DECISION_TIMEOUT = 40.0
 ALLIN_MC = 20000           # 全下决策蒙特卡洛抽样数（原 600）→ SE≈0.35%
 ALLIN_TIME_BUDGET = 4.0    # 全下决策软时限（秒）（原 0.30）
 ALLIN_BAND_PCT = 0.10      # 第四步：极端赔率带宽（必要胜率 ±10% 无条件跟/弃，防反向剥削）
+# 【2026-09-30】软尾巴**不适用于全下场景** —— 它的校准样本是常规动作
+# （小盲开池 / 平跟 / 大盲跟注 / 免费过牌，见 测/range_eval.py），测出的
+# 「模型范围偏窄约 2 倍」是**基准估计器**的系统偏差。而对手全下是极端动作，
+# 其范围已由 archetype 系数单独收紧（rock 0.35 / tag 0.60 / station 0.70 …）；
+# 再叠一层 2 倍放宽会抵消这层保护 —— 实测会让 KQs / ATs 从 fold 翻成 allin，
+# 直接违背「早期 + 保守对手不拿整条命去拼」的用户规则。
+# 设为 0.0 = 全下判定用硬截断；改回 None（或 1.0）即可让软尾巴重新生效。
+ALLIN_SOFT_TAIL = 0.0
+# 【2026-09-30】_eq_deadline 的宽限下限（秒）。它的作用是「已经超预算时
+# 仍给一点点时间」，避免抽样退化成 0 次、eq 直接返回 0.5（比不精确更糟）。
+# 但它必须有界 —— 见 _eq_deadline 里 2026-09-30 的修复说明。
+EQ_GRACE = 0.05
 ALLIN_LEAD_BB = 50         # 大幅领先/落后阈值（单位大盲，50BB=+5000）
 ALLIN_SMALL_BB = 10        # 小幅领先/落后阈值（10BB=+1000）
 # 各盈亏档位的跟注胜率门槛（0~1）：盈利越多越不跟（保收益），落后越多越敢跟（搏翻盘）
@@ -615,12 +627,32 @@ def _eq_deadline(per_call=None):
         return None
     per = TIME_BUDGET if per_call is None else float(per_call)
     limit = now + per
-    if _DECISION_STARTED_WALL > 0:
-        total = _DECISION_STARTED_WALL + EQ_TOTAL_BUDGET
+    started = _DECISION_STARTED_WALL
+    if started > 0:
+        total = started + EQ_TOTAL_BUDGET
         if total < limit:
             limit = total
-    # 至少给一点点时间，避免已经超预算时立刻退化成 0 次抽样（eq 返回 0.5）
-    return max(limit, now + 0.05)
+        # 【2026-09-30 修复】下限保护必须有界。
+        # 原实现是 `max(limit, now + 0.05)` —— 当决策已经超预算时，
+        # 它每次调用都返回「now + 0.05」，**永远比 now 晚**：
+        #   · 抽样永不主动停（只能靠 iterations 上限兜底）；
+        #   · 多路 eq（主 eq / 全下判定 / 落后兜底 / 日志）各拿到
+        #     一次新的 0.05s → 累加，且与 EQ_TOTAL_BUDGET 的意图相反。
+        # 实测后果：check_repro 里出现过单步 277 秒（60s 预算的 4.6 倍）。
+        # 修法：至少给 EQ_GRACE 秒（防退化成 0 次抽样返回 0.5），
+        #      但**不得越过「决策起点 + EQ_TOTAL_BUDGET + EQ_GRACE」**。
+        hard = started + EQ_TOTAL_BUDGET + EQ_GRACE
+        if limit > hard:
+            limit = hard                      # 已有界：最多多给 EQ_GRACE 秒
+        # 已超预算时 limit（= hard）可能仍 < now + EQ_GRACE —— 那就用 hard，
+        # 绝不允许再往后延。未超预算时 limit > now，直接用它。
+        if limit < now + EQ_GRACE:
+            limit = max(now, min(hard, now + EQ_GRACE))
+    else:
+        # 没有决策起点（离线调用）→ 只受单次软时限约束
+        if limit < now + EQ_GRACE:
+            limit = now + EQ_GRACE
+    return limit
 
 
 def _decision_seed(state):
@@ -2032,7 +2064,9 @@ def _risk_avoid_route(state, model):
 
     if pnl < RISK_BEHIND_LIMIT and hands_left < RISK_HANDS_LEFT:
         # 大幅落后且剩余局数少：允许跟全下，但胜率必须 > 25%（纯数学底线）
-        eq = monte_carlo_equity(
+        # 【2026-09-30 P0-B】equity_best：河牌/转牌走精确枚举（误差 0），
+        # 其余街回退 MC。河牌精确仅 0.05s，比 3 万次 MC（3.3s）还快。
+        eq = equity_best(
             state.hole, state.board, iterations=MC_ITERATIONS,
             opp_range_pct=_opp_range_pct(model, _opp_raised_preflop(state),
                                         _opp_street_raises(state)),
@@ -2385,7 +2419,8 @@ def _preflop_allin_decide(state, model):
     rp = _clamp(base_rp * factor, 0.02, 1.0)   # all-in 宣告 → 范围再收紧
     eq = monte_carlo_equity(
         state.hole, [], iterations=ALLIN_MC, opp_range_pct=rp,
-        deadline=_eq_deadline(ALLIN_TIME_BUDGET))
+        deadline=_eq_deadline(ALLIN_TIME_BUDGET),
+        soft_tail=ALLIN_SOFT_TAIL)
 
     # ---- 第二步：必要胜率（底池赔率）----
     call_amt = min(state.my_left, state.to_call)
@@ -2807,6 +2842,13 @@ def _opp_checked_this_round(state):
 CHECK_BET_EARLY_HANDS = 20    # 前期手数：此阶段无条件 100% 执行（无对手数据）
 CHECK_BET_EARLY_FREQ = 1.0    # 前期频率
 CHECK_BET_MIN_FREQ = 0.55     # 后期频率下限（被针对时保留一定偷池能力）
+# 【2026-09-30 接线 check_fold / check_raise】
+# 这两个统计量此前只进日志（opponent 里注释写明了用途就是规则12），
+# 从未参与决策。现在按贝叶斯可信度接进权重：
+CHECK_RESP_MIN_N = 6          # 样本下限（低于此只用尺寸桶学习值）
+CHECK_RESP_PRIOR_K = 6.0      # 与 opponent 里贝叶斯收缩的 k 一致
+CHECK_RAISE_DANGER = 0.20     # 过牌-加注率 ≥ 此值 = 对手在设陷阱
+CHECK_RAISE_PENALTY = 0.60    # 陷阱信号下对执行频率的乘性惩罚
 
 
 # ── 规则14（2026-09-14 用户规则）：我过牌后对手小注 → 假定诈唬 ──
@@ -2948,13 +2990,35 @@ def _check_bet_weight(state, model):
             fr = None
         if fr is None:
             fr = float(model.eff_fold_to_bet())
+        # 【2026-09-30】接线 check_fold_rate：`对手过牌 → 我下注 → 他弃牌`
+        # 正是规则12 的**同场景**实测（且不限尺寸，覆盖面更广），此前只进日志。
+        # 按贝叶斯可信度 w = n/(n+k) 与尺寸桶学习值融合，样本少时自动让位。
+        try:
+            n = int(getattr(model, "check_faces", 0) or 0)
+            if n >= CHECK_RESP_MIN_N:
+                cfr = float(model.check_fold_rate())
+                w = n / float(n + CHECK_RESP_PRIOR_K)
+                fr = w * cfr + (1.0 - w) * float(fr)
+        except Exception:
+            pass
         if fr >= 0.55:
-            return 1.00
-        if fr >= 0.45:
-            return 0.85
-        if fr >= 0.35:
-            return 0.70
-        return CHECK_BET_MIN_FREQ
+            base = 1.00
+        elif fr >= 0.45:
+            base = 0.85
+        elif fr >= 0.35:
+            base = 0.70
+        else:
+            base = CHECK_BET_MIN_FREQ
+        # 【2026-09-30】接线 check_raise_rate：过牌后**加注**率高 = 他在设陷阱，
+        # 我的偷池小注会被掀翻 → 乘性降频（opponent 注释：「应显著降频」）。
+        try:
+            n = int(getattr(model, "check_faces", 0) or 0)
+            if n >= CHECK_RESP_MIN_N and \
+                    float(model.check_raise_rate()) >= CHECK_RAISE_DANGER:
+                base = max(CHECK_BET_MIN_FREQ, base * CHECK_RAISE_PENALTY)
+        except Exception:
+            pass
+        return base
     except Exception:
         return 0.85
 
@@ -3909,7 +3973,7 @@ def _postflop_decide(state, model):
     # 【方向3·2026-09-28】本街对手加注次数 → 收窄范围（修复 eq 高估）
     range_pct = _opp_range_pct(model, opp_raised,
                                _opp_street_raises(state))
-    eq = monte_carlo_equity(
+    eq = equity_best(
         state.hole, state.board, iterations=MC_ITERATIONS,
         opp_range_pct=range_pct,
         deadline=_eq_deadline())
