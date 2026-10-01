@@ -472,6 +472,19 @@ RULE_LEARN_ON = True
 #   想回到「更早求稳」把它改回 0.60 即可。
 STABILITY_LINE_FACTOR = 0.70   # 求稳触发：lead ≥ 此比例 × 锁赢线
 STABILITY_ENDGAME_HANDS = 8    # 剩 ≤ 此手数且领先 → 也求稳
+# 【A/B 评估开关·2026-10-01】求稳是否也压制**翻前开池**。
+#   v50 的求稳只作用翻后（`_check_side_stable` 挂在翻后主动侧），本版 guard 在
+#   出口链上 → 翻前也会被压制。实测（`测/exit_chain_probe.py`，315 个真实决策点）
+#   这是出口链改写的第一大项：`_stability_guard` 26/49 = 53%，且 22/26 = 85% 在翻前。
+#   线上默认 True（= 用户 2026-09-14 规则原样，test_log_v2「0914规则10」固化）。
+#   评估用：`WB_NO_STAB_PREFLOP=1` → 翻前直接放行（相当于对齐 v50 的口径）。
+STABILITY_PREFLOP_ON = True
+try:
+    import os as _os_stab
+    if _os_stab.environ.get("WB_NO_STAB_PREFLOP") == "1":
+        STABILITY_PREFLOP_ON = False
+except Exception:
+    pass
 
 # ---- 钓鱼下注（对跟注型对手缩小价值注，钓更宽跟注范围）----
 # 【优化思路】对「爱跟注的对手」（跟注站/低弃牌率），0.65~0.75 池的大注
@@ -4129,6 +4142,10 @@ def _stability_guard(state, model, action):
         # → 这是「用户规则 vs v50 行为」的取向差异，**不是 bug**；是否放宽
         #   由用户决定。若要对齐 v50，在此加一行 `if state.stage == "preflop":
         #   return action`，并同步更新 test_log_v2 的两条断言。
+        # 【A/B 开关·2026-10-01】翻前放行开关（默认关掉放行 = 保持原行为）。
+        #   见文件头 STABILITY_PREFLOP_ON 的说明。
+        if not STABILITY_PREFLOP_ON and state.stage == "preflop":
+            return action
         if not _stability_mode(state, model):
             return action
         # ---- 强牌例外 ----

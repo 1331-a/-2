@@ -18,13 +18,17 @@ from game_state import parse_request
 from botbattle_log import load_botbattle
 
 
-def _run(path, seat, off):
-    """在一个干净的子进程语义里跑（通过重新 import 保证全局不串）。"""
+def _run(path, seat, off, off_env="WB_NO_FUTURE_COST"):
+    """在一个干净的子进程语义里跑（通过重新 import 保证全局不串）。
+
+    off_env : 用哪个环境变量代表「关掉待评估的改动」（默认 A 方案的
+              WB_NO_FUTURE_COST）。off=True → 置 1（关闭），False → 置 0。
+    """
     import importlib
     for m in list(sys.modules):
         if m in ("strategy",):
             del sys.modules[m]
-    os.environ["WB_NO_FUTURE_COST"] = "1" if off else "0"
+    os.environ[off_env] = "1" if off else "0"
     S = importlib.import_module("strategy")
     from opponent import OpponentModel, build_model_from_history
     from match_ctx import MatchContext
@@ -59,25 +63,35 @@ def main():
     ap.add_argument("log")
     ap.add_argument("--seat", type=int, default=0)
     ap.add_argument("--hand", nargs="*", type=int)
+    ap.add_argument("--off-env", default="WB_NO_FUTURE_COST",
+                    help="代表「关掉待评估改动」的环境变量名")
+    ap.add_argument("--labels", nargs=2, default=None,
+                    metavar=("OFF", "ON"), help="两臂的显示名（默认按 A 方案命名）")
     a = ap.parse_args()
+    if a.labels:
+        tag_off, tag_on = a.labels
+    elif a.off_env == "WB_NO_FUTURE_COST":
+        tag_off, tag_on = "旧(逐街独立)", "新(计入后续投入)"
+    else:
+        tag_off, tag_on = "关(改动off)", "开(改动on)"
     # 两个版本必须分进程跑（模块级全局）
     import subprocess
     here = os.path.dirname(os.path.abspath(__file__))
     res = {}
-    for tag, off in (("旧(逐街独立)", "1"), ("新(计入后续投入)", "0")):
+    for tag, off in ((tag_off, "1"), (tag_on, "0")):
         p = subprocess.run(
             [sys.executable, "-c",
              "import sys,json,os;sys.path.insert(0,%r);"
-             "import diff_ab as D;print(json.dumps(D._run(%r,%d,%s)))"
-             % (here, a.log, a.seat, off)],
+             "import diff_ab as D;print(json.dumps(D._run(%r,%d,%s,%r)))"
+             % (here, a.log, a.seat, off, a.off_env)],
             capture_output=True, text=True, cwd=here,
-            env=dict(os.environ, WB_NO_FUTURE_COST=off))
+            env=dict(os.environ, **{a.off_env: off}))
         try:
             res[tag] = json.loads(p.stdout.strip().splitlines()[-1])
         except Exception:
             print("跑失败:", tag, p.stdout[-500:], p.stderr[-800:])
             return 1
-    old, new = res["旧(逐街独立)"], res["新(计入后续投入)"]
+    old, new = res[tag_off], res[tag_on]
     n = min(len(old), len(new))
     diff = 0
     print("=" * 84)
