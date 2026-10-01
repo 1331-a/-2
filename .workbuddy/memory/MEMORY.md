@@ -61,12 +61,16 @@ strategy（决策+安全网）/ game_state（协议解析）/ opponent（画像+
 ## 对手画像与胜率（★ 本轮重点）
 - 【算力 09-30 落地】`MC_ITERATIONS=30000`、`TIME_BUDGET=5.0`、`ALLIN_MC=20000`、`ALLIN_TIME_BUDGET=4.0`、`DECISION_TIMEOUT=40.0`、`EQ_TOTAL_BUDGET=12.0`（各路共用截止时刻 `_eq_deadline()`）。
   **播种两处**：`equity._rng` **和全局 `random`**（只播前者一致率 52/60）。环境变量 `WB_MC_ITERS`/`WB_MC_BUDGET`/`WB_NO_SEED`。
-- 【精确枚举 09-30】`equity.exact_equity`：河牌 C(45,2)=990 组合 **0.05s**、转牌 87k 组合约 5s；误差归零。翻牌仍用 MC（精确需 ~232s）。
-- 【软尾巴 09-30，有数据支撑】实测模型范围**一律偏窄约 2 倍** → eq 被系统性低估 0.059。加 `RANGE_SOFT_TAIL`（核心不变、只补衰减尾）后与真实底牌差距 **+0.0012**。
-  校准工具：`测/range_eval.py`（覆盖率/反推真实宽度）、`测/tail_impact.py`、`测/tail_actions.py`。
+- 【精确枚举 09-30，提交 63e9c10】`equity.equity_best()` = 河牌/转牌走 `exact_equity`（误差 0）、翻牌及以前回退 MC。河牌 990 组合 **0.05s**（比 3 万次 MC 快 65 倍）；转牌 ≈4.4 万约 2.6s；翻牌 ≈214 万 ≈63s 超预算不做。策略层 2 处调用点已换成 `equity_best`。
+- 【★ 软尾巴 09-30，有数据支撑】无偏校准发现模型范围**系统性偏窄约 2 倍**（覆盖率仅 50~67%）→ eq 被低估 0.0589。`RANGE_SOFT_TAIL`（超范围部分指数衰减）修正后与真实底牌差距 **+0.0012**。
+  ★ **全下场景禁用**：`ALLIN_SOFT_TAIL = 0.0` —— 全下范围已由 archetype 系数单独收紧，再叠 2 倍放宽会抵消保护（KQs/ATs 会从 fold 翻成 allin）。
+  校准工具：`测/range_eval.py`（无偏覆盖率）、`测/tail_impact.py`（eq 影响）、`测/tail_actions.py`（决策影响）。全部支持 `soft_tail=` 逐次覆盖。
+- 【★ 软时限陷阱 09-30 修复】`_eq_deadline` 的兜底下限**不能无界**。原 `max(limit, now+0.05)` 在超预算后每次调用都返回 `now+0.05`（永远比 now 晚）→ 抽样永不主动停、多路 eq 各拿一份新 0.05s 累加 → 实测**单步 277.46s**（60s 预算 462%，平台判负）。已改为封顶 `决策起点 + EQ_TOTAL_BUDGET + EQ_GRACE(0.05)`。
+- 【规则12 统计量已接线 09-30】`_check_bet_weight()` 融合 `check_fold_rate`（贝叶斯 `w=n/(n+6)`，n ≥ `CHECK_RESP_MIN_N`=6）+ `check_raise_rate ≥ 0.20` → 频率 ×0.6。回退 `CHECK_RESP_MIN_N=9999`。
 - 【09-28】`_opp_range_pct` 计入**本街加注**：`_opp_street_raises` 数当前街对手 raise/allin/bet（≤3），每次按 `per=0.45−0.30×agg`（clamp 0.20~0.40）收窄。
 - 【翻前尺寸】`OPEN_SIZE_BB=3.5`/`VS_STATION=3.0`/`ISO=4.0`/`STEAL=3.0`；★**只改 `OPEN_SIZE_BB` 无效**——`_learned_size` 用 `bucket_to_frac`(2.5/3.5/4.5) 覆盖。条件化再乘 `clamp((0.80−eff_vpip)/0.25,0,1)` × `min(1,hands_seen/8)` → 实际 [2.5,3.5]，**前 8 手不生效**。
 - 【默认关闭】`BIG_BET_FOLD_A_ON=False`（隔离检验未通过）；`WB_FORCE_BIGBET_A=1` 可启用。
+- combo 级 1326 权重**暂缓**（70 手 ≈130 个翻后点，识别 1326 参数严重欠定）。已建好 `opp_weights` 接口（`_build_range`/`monte_carlo_equity`/`exact_equity`/`equity_best` 全支持），可表达任意非均匀范围；实际体积仅 1326×4B ≈ 5KB（原估 2MB 错）。
 
 ## 工具 / 测试陷阱
 - 对手 all-in 在 history 里写**真实金额**；写 `-2` 会让 `to_call` 塌缩。
