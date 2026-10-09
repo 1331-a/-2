@@ -265,19 +265,20 @@ class MyBot:
 
 
 class MyBotNoCross(MyBot):
-    """【2026-10-09】自对弈 A/B 的候选臂：决策期间临时旁路 `UA_CROSS_CHECK`。
+    """【2026-10-09】自对弈 A/B 的**对照臂**：关掉「已确保优势」豁免
+    （= 2026-09-15 旧行为：不论牌力，只要「投入即 doom」就一律过牌）。
 
     只在 `act()` 内翻转模块级开关、决策结束立刻还原 —— 不修改生产代码，
     也不影响同进程里另一个实例的决策（两边交替调用，互不重叠）。
     """
 
     def act(self, st):
-        old = strategy.UA_CROSS_CHECK
-        strategy.UA_CROSS_CHECK = False
+        old = strategy.CROSS_CHECK_STRONG_PASS
+        strategy.CROSS_CHECK_STRONG_PASS = False
         try:
             return MyBot.act(self, st)
         finally:
-            strategy.UA_CROSS_CHECK = old
+            strategy.CROSS_CHECK_STRONG_PASS = old
 
 
 FACT = {"cloud": CloudStyle, "cloudturn": CloudTurn, "quiet": Quiet,
@@ -732,15 +733,15 @@ def cross():
 
 
 def selfab():
-    """【2026-10-09】自对弈 A/B：本 bot（现状） vs 本 bot（旁路 UA_CROSS_CHECK）。
+    """【2026-10-09】自对弈 A/B：**默认行为（已确保优势放行）** vs **旧行为（一律拦）**。
 
     ★ 为什么必须自对弈：`UA_CROSS_CHECK` 只在**贴近 doom 线**（落后 ≈150×剩余手数）
     时才触发。对内置对手（cloud/station）我方基本全程领先 → 实测 **0 次触发**，
     配对模拟必然得出假阴性。只有自对弈才会出现「一方大幅落后」的局面。
 
-    每个 seed 跑 **parity=0 / parity=1 两次**（同一副牌、候选互换座位），
-    净额相加 = 候选在这对镜像局里的总净额（>0 = 候选更优；无效应时对称于 0，
-    且自动抵掉先/后手不对称与发牌运气）。
+    每个 seed 跑 **parity=0 / parity=1 两次**（同一副牌、两臂互换座位），
+    净额相加 = **旧行为那一方**在这对镜像局里的总净额
+    （>0 = 旧行为更好；无差异时对称于 0，且自动抵掉先/后手不对称与发牌运气）。
 
     调用：`python sim_early.py --selfab [占位对手名] [手数] [组数]`
     """
@@ -749,8 +750,9 @@ def selfab():
     seeds = [20260924 + g * 977 for g in range(groups)]
 
     print("=" * 108)
-    print("自对弈 A/B（镜像配对）：UA_CROSS_CHECK 保留 vs 旁路    %d手/组  %d组" % (hands, groups))
-    print("指标 = **候选那一方**在「候选坐两边」两次对局中的净额之和（>0 即候选更优）。")
+    print("自对弈 A/B（镜像配对）：旧行为(牌力无关一律拦) vs 默认(已确保优势放行)")
+    print("    %d手/组  %d组" % (hands, groups))
+    print("指标 = **旧行为那一方**在「两臂互换座位」两次对局中的净额之和（>0 即旧行为更好）。")
     print("=" * 108)
 
     res0 = run_batch(seeds, "selfnocross", hands, old=False,
@@ -767,15 +769,15 @@ def selfab():
         e1 = res1[s][4] if len(res1[s]) > 4 else ()
         cc.append((e0[1] if len(e0) > 1 else 0) + (e1[1] if len(e1) > 1 else 0))
     print("-" * 108)
-    print("★ 触发诊断  现状侧被 UA_CROSS_CHECK 拦下 = %d 次（%d 组镜像对）"
+    print("★ 触发诊断  两臂合计被 UA_CROSS_CHECK 拦下 = %d 次（%d 组镜像对）"
           % (sum(cc), groups))
     if sum(cc) == 0:
         print("  ⚠️ 一次都没触发 ⇒ 该对局形态下规则不起作用，结果不可解读。")
     else:
         print("  平均每组镜像对 %.2f 次" % (sum(cc) / max(1, groups)))
 
-    summarize("自对弈镜像对：候选净额（>0 = 候选更优）", cand, [0] * len(seeds), cand)
-    summarize("自对弈镜像对：候选前 20 手累积", early, [0] * len(seeds), early)
+    summarize("自对弈镜像对：旧行为净额（>0 = 旧行为更好）", cand, [0] * len(seeds), cand)
+    summarize("自对弈镜像对：旧行为前 20 手累积", early, [0] * len(seeds), early)
 
 
 def main():

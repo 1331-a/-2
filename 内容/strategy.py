@@ -244,6 +244,24 @@ try:
         UA_CROSS_CHECK = False
 except Exception:
     pass
+
+# ── 【2026-10-09 用户原则】「看牌的目的是为了确保优势；都已经确保优势了，还留着干嘛」──
+# 用户原话（2026-10-09）：「是有免费过牌多看不跟，但是看牌的目的是为了确保优势，
+#   我都确保优势了还不跟留着干嘛」。
+# 含义：**「免费过牌」的唯一价值是「便宜地多看一张牌」，而那是「还没成牌」时才有意义。**
+#   一旦已经拿到优势牌，过牌就是把优势闲置 —— 此时应该下注。
+# ⇒ 因此 `UA_CROSS_CHECK` 这条硬约束**只在「我方尚未拿到优势牌」时才允许生效**。
+# 判定口径与规则10 求稳的「强牌例外」**完全一致**：翻后有效牌型 ≥ 两对 / 翻前超强牌。
+# 实测依据（10-09 自博弈）：被拦的 11 个决策点里，5 个是三条/两对（EU 差距最大，
+#   手11 三条 0.7663 vs 0.4340），其余的牌型才是一对或高牌。
+# 开关：`WB_NO_CROSS_STRONG_PASS=1` → 回到旧的「不论牌力一律拦」行为。
+CROSS_CHECK_STRONG_PASS = True
+try:
+    import os as _os_cs
+    if _os_cs.environ.get("WB_NO_CROSS_STRONG_PASS") == "1":
+        CROSS_CHECK_STRONG_PASS = False
+except Exception:
+    pass
 # 用户硬规则（09-14 / 09-24）：「对方快锁赢时 all-in」——
 # 即「再投这笔、输掉就把胜局送给对手」（跟注口径 doom）时，直接把全部押上，
 # 不再只跟一点（慢慢被锁死）。用户实战第32手：河牌一对 9 面对加注 1,765
@@ -1216,6 +1234,47 @@ def _big_money_guard(state, action):
     return action
 
 
+def _cross_check_exempt(state):
+    """【2026-10-09 用户原则】已「确保优势」→ 不适用 `UA_CROSS_CHECK` 的过牌硬约束。
+
+    用户原话：「是有免费过牌多看不跟，但是看牌的目的是为了确保优势，
+      我都确保优势了还不跟留着干嘛」。
+
+    「免费过牌」的价值只在于**便宜地多看一张牌**，而那是**还没成牌**时才有意义；
+    已经拿到优势牌还过牌，等于把优势闲置。
+
+    返回 True = 豁免（放行下注）。**分街判定**，因为「优势」的含义不同：
+      · 翻后（公共牌 ≥ 3 张）：已拿到成牌优势
+          a) 有效牌型 ≥ 两对；或
+          b) `_pair_is_top` = 顶对 / 超对（口袋对且不低于公面最大点数，
+             或手里持有公面最大点数那张）
+        ★ 用 b) 而不是「翻前超强牌」名单：后者会把**翻后打空的 AKs（只有 A 高）**
+          也判成优势，那恰恰是这条规则该拦的场景。用 `_pair_is_top` 时
+          最大=A 的**公共对**（如公面 QQ8 我们持 AK）不算我们的优势 —— 正确。
+      · 翻前（无公共牌）：底牌档次 `_is_super_hand`（AA/KK/QQ/JJ/AKs）。
+
+    开关 `CROSS_CHECK_STRONG_PASS`（env `WB_NO_CROSS_STRONG_PASS=1`）可关掉本豁免。
+    """
+    if not CROSS_CHECK_STRONG_PASS:
+        return False
+    try:
+        if len(list(getattr(state, "board", None) or [])) >= 3:
+            try:
+                if _effective_category(state) >= TWO_PAIR:
+                    return True
+            except Exception:
+                pass
+            try:
+                if _pair_is_top(state):
+                    return True
+            except Exception:
+                pass
+            return False
+        return bool(_is_super_hand(state.hole))
+    except Exception:
+        return False
+
+
 def _endgame_arbitrate(state, model, chip_action, eq, adj):
     """【2026-09-24 用户规则】终局仲裁：把「弃牌 / 过牌 / 跟注 / 加注 / 全押」
     放在同一个终局效用尺度上比较，取最优。
@@ -1234,7 +1293,8 @@ def _endgame_arbitrate(state, model, chip_action, eq, adj):
         #    【2026-09-28】`lk` 标记（锁赢/搏命硬规则）豁免本条——那些场景的语义
         #    正是「必须搏」，不能用「投入会 doom」把它改成过牌。
         if UA_CROSS_CHECK and chip_action.get("act") in ("raise", "allin") \
-                and not chip_action.get("lk"):
+                and not chip_action.get("lk") \
+                and not _cross_check_exempt(state):   # ★ 10-09 用户原则：已确保优势 → 不拦
             if int(state.to_call) <= 0:
                 my_round = max(0, int(getattr(state, "my_round_bet", 0) or 0))
                 if chip_action.get("act") == "raise":

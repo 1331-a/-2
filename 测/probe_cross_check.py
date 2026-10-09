@@ -113,7 +113,16 @@ def run(log, seat, oc):
     print("座位 %d：`_endgame_arbitrate` 收到「to_call<=0 且动作是 raise/allin」的调用 = %d 次"
           % (seat + 1, len(rows)))
     fire = [r for r in rows if r[5]]
-    print("  ★ 其中 `_doom_risk(extra=add)` 成立 → 被 UA_CROSS_CHECK 强行改成 check = %d 次" % len(fire))
+    # ★ 实际是否被拦 = doom 成立 **且** 没有命中「已确保优势」豁免（2026-10-09 用户原则）
+    def _blocked(r):
+        try:
+            return r[5] and not S._cross_check_exempt(r[2])
+        except Exception:
+            return r[5]
+    real = [r for r in rows if _blocked(r)]
+    print("  `_doom_risk(extra=add)` 成立（硬约束的判据命中）= %d 次" % len(fire))
+    print("  ★ 其中**实际被改成 check**（扣除「已确保优势」豁免）= %d 次；被豁免放行 = %d 次"
+          % (len(real), len(fire) - len(real)))
     if fire:
         print()
         print("  手 街      我底牌     公面                  牌型  想下注 池     lead    追回线  EU(check) EU(raise) 规则否决了EU?")
@@ -127,11 +136,16 @@ def run(log, seat, oc):
             veto = ""
             if ec is not None and er is not None:
                 veto = "★是（EU 偏好 raise）" if er > ec else "否"
-            print("  %-3d %-8s %-10s %-21s %-5s %-6d %-5s %-7d %-6d %-9s %-9s %s"
+            # 标出这次是被豁免还是仍被拦
+            try:
+                mark = "豁免" if S._cross_check_exempt(st2) else "**仍拦**"
+            except Exception:
+                mark = "?"
+            print("  %-3d %-8s %-10s %-21s %-5s %-6d %-5s %-7d %-6d %-9s %-9s %-4s %s"
                   % (h, stg, hole_s, board_s, cat_of(st2.hole, st2.board), add,
                      st2.pot, lead, line,
                      "%.4f" % ec if ec is not None else "-",
-                     "%.4f" % er if er is not None else "-", veto))
+                     "%.4f" % er if er is not None else "-", mark, veto))
         nv = sum(1 for r in fire if r[7].get("check") is not None
                  and r[7].get("raise") is not None
                  and r[7]["raise"] > r[7]["check"])

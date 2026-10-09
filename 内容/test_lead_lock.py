@@ -109,8 +109,12 @@ a = decide(st4, OpponentModel())
 # 【2026-09-28 方向1】doom 三道门控之一：to_call==0（可免费过牌）且非强牌
 # → 规则2 不接管，交回常规策略过牌（旧实现无条件 allin，实战三局因此亏
 # −23,500：局2 手43 在 to_call=0 时推 19,500 输 20,000）。
-check("规则2:深投入+可免费过牌→不接管(过牌)",
-      a.get("act") == "check", str(a))
+# 【2026-10-09 更新】本用例我方底牌是 **AA**、公面 K32 ⇒ 超对 = 「已确保优势」。
+# 出口层的 `UA_CROSS_CHECK` 不再把它的下注改成过牌（见 `strategy._cross_check_exempt`）。
+# 本用例的**契约不变**：规则2 不接管（输出不是 allin），动作交回常规策略；
+# 变的只是常规策略的落点由「被出口层抹成 check」恢复成它本来的 raise。
+check("规则2:深投入+可免费过牌→不接管(交回常规策略，非 allin)",
+      a.get("act") != "allin" and a.get("act") in ("check", "raise"), str(a))
 # 对照：关闭门控 → 旧行为（无条件 allin）
 import strategy as _SG  # noqa: E402
 _SG.DOOM_ALLIN_ON, _old4 = False, _SG.DOOM_ALLIN_ON
@@ -256,6 +260,42 @@ _a_force = decide(st_h10, OpponentModel())
 check("模式:FORCE_ALLIN 下端到端输出 allin",
       _a_force.get("act") == "allin", str(_a_force))
 S.DOOM_UPGRADE_FORCE_ALLIN = False
+
+# ---------- 6. 【2026-10-09 用户原则】UA_CROSS_CHECK 的「已确保优势」豁免口径 ----------
+# 纯逻辑断言、不走 MC ⇒ 确定性。说明见 strategy._cross_check_exempt 的 docstring。
+# 含义：用户「看牌的目的是为了确保优势，我都确保优势了还不跟留着干嘛」
+#   ⇒ 该硬约束只在「尚未拿到优势牌」时才生效。
+#   翻后 = 已成牌优势（≥两对，或 顶对/超对）；翻前 = 底牌档次（AA/KK/QQ/JJ/AKs）。
+_CASES = [
+    ("超对 AA on K32",        [48, 50], [46, 6, 1],  True),
+    ("顶对 AK on K32",        [48, 44], [46, 6, 1],  True),
+    ("超对 QQ on J93",        [40, 41], [36, 20, 4],  True),
+    ("小口袋对 77 on K32（K 更大，不是超对）", [12, 13], [46, 6, 1], False),
+    ("三条 555 on K53",       [12, 13], [12, 46, 6], True),
+    ("底对 3x on K32",        [6, 13],  [46, 6, 1],  False),
+    ("公对 QQ 面持 AK（非我方优势）", [48, 44], [40, 41, 16], False),
+    ("无对 A5 on KQJ（A 高）", [48, 13], [44, 40, 36], False),
+]
+for _name, _mc, _pc, _want in _CASES:
+    _st_c = parse_request(req(my_cards=_mc, public_cards=_pc))
+    _got = S._cross_check_exempt(_st_c)
+    check("豁免口径:%s → %s" % (_name, "放行" if _want else "仍拦"),
+          _got is _want, str(_got))
+
+# 翻前：看底牌档次
+check("豁免口径:翻前 AA → 放行",
+      S._cross_check_exempt(parse_request(req(my_cards=[48, 50]))) is True, "")
+check("豁免口径:翻前 A7s → 仍拦",
+      S._cross_check_exempt(parse_request(req(my_cards=[48, 20]))) is False, "")
+# 总开关：关掉豁免后，一律回到旧行为（不豁免）
+_old_cs = S.CROSS_CHECK_STRONG_PASS
+try:
+    S.CROSS_CHECK_STRONG_PASS = False
+    check("豁免开关:关闭后强牌也不再放行",
+          S._cross_check_exempt(
+              parse_request(req(my_cards=[48, 50], public_cards=[46, 6, 1]))) is False, "")
+finally:
+    S.CROSS_CHECK_STRONG_PASS = _old_cs
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
