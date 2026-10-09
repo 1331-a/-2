@@ -31,6 +31,15 @@
    ★ `_doom_plan` = 「弃牌是否立死」+ 牌力分流：`line≤0`→allin；`to_call>0`→**一律 allin**；`to_call≤0` 牌烂→allin（过 `_shove_fold_ok`）、牌好→None「再看看」、牌好且河牌→收网 allin。开关 `DOOM_ALLIN_ON` / `DBG_NO_DOOM_ALLIN=1`。
    ★ **A 被拒后必须 return None**（C 用同一不等式，继续走会绕过：局2 #43 推出 19,500）。
 2. **`_endgame_arbitrate`**（09-24）：五动作同尺度比 EU（`_win_utility` logistic，锚点 ±2×追回线）。护栏 `UA_CROSS_CHECK` / `UA_SEALED_ALLIN`(0.15) / 只往保守修正 / 硬性弃牌不翻案。
+   ★★ **10-09 定位：`UA_CROSS_CHECK` 是「好牌也消极」的元凶**（strategy.py:230 声明、1236–1245 生效）：
+     用户 09-15「方案B」= *有免费过牌、但投入这笔就会让 doom 成立 → 直接过牌*，在 **EU 比较之前**硬 return check。
+     判据 `_doom_risk(extra=add)` 是**最坏情况（假设这笔必输）**，不看 f / eq / 投入规模。
+     **实测（10-09 自博弈）：座位2 被改 11/107 点(10%)、座位1 2/122 点(2%)，全 raise→check；
+     能比较 EU 的 10/10 次里 EU 都偏好下注**（手11 三条 0.7663 vs 0.4340；手35 三条 0.2061 vs 0.1735）。 
+     机制：**越贴 doom 线越禁止下注 → 落后方无法追回**（赢家被拦 2 次 vs 输家 11 次）。
+     它其实就是被 `_endgame_arbitrate` 取代的旧补丁 `_doom_bet_downgrade` 的复活。
+     开关 `WB_NO_CROSS_CHECK=1`（默认不设=现状）。**推荐旁路、交回 `_endgame_eu`；待用户拍板。**
+     详见 `复盘_20261009_自博弈消极打法.md`。
 3. **规则10 求稳**：`lead ≥ 0.70×锁赢线` 或剩 ≤8 手且领先 → 主动侧 check、被动只跟；强牌（翻后 ≥两对 / 翻前 AA·KK·QQ·JJ·AKs）例外。开关 `STABILITY_PREFLOP_ON`（10-01 加，默认 True）。
 4. **规则16/17**：跟全下门槛按剩局/对手 allin 频率下调（≤0.09）；翻后按盈利档叠加（>+50BB +0.12 / >+10BB +0.07 / ±10BB +0.02 / <−10BB −0.03 / <−50BB −0.08）。
 5. **规则18 搏命区**：`lead ≤ −0.95×2×追回线` → 牌烂 allin、牌好慢打；推前过 `_shove_fold_ok`（`eff_fold_to_bet ≥ 0.45`，样本 ≥6 才门控）。
@@ -76,6 +85,12 @@
 
 ## 工具 / 测试陷阱
 > 完整版（含 11 条血泪陷阱与判读顺序）见技能 `~/.workbuddy/skills/poker-strategy-ab/SKILL.md`。
+- ★ **`diff_ab.py --off-env <VAR>` 的列方向**：它把 VAR 设为 1 = **关掉改动**，
+  所以输出**第一列（"旧"）其实是候选臂**。对 `WB_NO_XXX`（设 1 即关闭）这类变量，
+  `--labels` 必须反着命名，否则把结论读反。
+- ★★ **「只在被逼到落后时才生效」的规则，用内置对手做配对模拟必然假阴性**：
+  `UA_CROSS_CHECK` 对 cloud 跑 3 局**触发 0 次**（我方全程领先，够不到 doom 线）。
+  这类要用 `sim_early.py --selfab`（自对弈镜像配对：同副牌让候选坐两边各跑一次、净额相加）。
 - ★★ **跨进程重放自带 ~0.5~1% 噪声下限**（2026-10-01，`测/repro_noise.py`）：两臂配置**完全相同**、
   只换进程，同一份 140 决策点日志的对照差异是 1/0/1 点；固定 `PYTHONHASHSEED=0` 无效。
   ⇒ **凡报「幅度」必须同时跑对照组臂，结论写「净效应 = 实验组差异 − 对照组差异」**；
@@ -105,7 +120,7 @@ strategy（决策+安全网）/ game_state（协议）/ opponent（画像+尺寸
 - 43 秒 / 7 手、第 7 手零响应。**`ended_at` 只记最后事件时间，60s 超时不计入** ⇒ 真故障 = 最后一步没响应。已加固 `bot.py`（utf-8 reconfigure、`_handle_line` 全包 try/except、异常也输出合法响应、**循环永不中断** —— 进程退出＝立即判负，比回保守动作严重得多）。**根因未定位。**
 
 ## 调参入口
-`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`·`UA_SEALED_ALLIN`·`UA_SEALED_MARGIN` / `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON`·`BIG_MONEY_TOPTWO_ON` / `DOOM_ALLIN_ON`·`DOOM_TOPTWO_CALL_ON` / `GAMBLE_SHOVE_FOLD_MIN(0.45)`·`GAMBLE_SHOVE_FORCE_HANDS(8)`·`GAMBLE_LINE_FACTOR(0.95)` / `RANGE_NARROW_*`·`RANGE_SOFT_TAIL` / `STABILITY_LINE_FACTOR(0.70)`·`STABILITY_ENDGAME_HANDS(8)`·`STABILITY_PREFLOP_ON` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON` / `OPEN_SIZE_BB(3.5)`。
+`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`（env `WB_NO_CROSS_CHECK=1` 旁路）·`UA_SEALED_ALLIN`·`UA_SEALED_MARGIN` / `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON`·`BIG_MONEY_TOPTWO_ON` / `DOOM_ALLIN_ON`·`DOOM_TOPTWO_CALL_ON` / `GAMBLE_SHOVE_FOLD_MIN(0.45)`·`GAMBLE_SHOVE_FORCE_HANDS(8)`·`GAMBLE_LINE_FACTOR(0.95)` / `RANGE_NARROW_*`·`RANGE_SOFT_TAIL` / `STABILITY_LINE_FACTOR(0.70)`·`STABILITY_ENDGAME_HANDS(8)`·`STABILITY_PREFLOP_ON` / `LEAD_ALLIN_SHIFT` / `SMALL_BET_FOLD_MIN` / `RULE_MIN_SAMPLES`·`RULE_BAD_WR`·`RULE_GOOD_WR`·`RULE_LEARN_ON` / `OPEN_SIZE_BB(3.5)`。
 
 ## 待办 / 已知瑕疵
 - **待用户裁决**：① ~~求稳是否只作用翻后~~ **已结案（10-01）**：配对模拟证伪观察性估计 ⇒ 保持「求稳也压翻前」；② 强牌加注尺寸是否调大；③ `to_call==0` 且未见翻牌时是否先过牌看翻牌（手58 那种情况）。

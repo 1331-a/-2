@@ -87,6 +87,29 @@ def _stab_wrap(st, m):
 
 strategy._stability_mode = _stab_wrap
 
+# ---- 诊断 2：统计 UA_CROSS_CHECK（09-15 方案B「投入即 doom → 过牌」）实际拦截次数 ----
+# 【2026-10-09 为什么需要】同为「空结果不可解读」问题。这条规则只在**贴近 doom 线**
+# 时触发，短局/顺风局可能一次都不触发；不报计数就无法区分「关掉它没效果」与
+# 「它根本没被触发」。
+_cc_orig = strategy._endgame_arbitrate
+_cc_cnt = [0]
+
+
+def _cc_wrap(*args, **kw):
+    ca = next((x for x in args if isinstance(x, dict) and "act" in x), None)
+    r = _cc_orig(*args, **kw)
+    try:
+        if (getattr(strategy, "UA_CROSS_CHECK", False) and ca
+                and ca.get("act") in ("raise", "allin")
+                and isinstance(r, dict) and r.get("act") == "check"):
+            _cc_cnt[0] += 1
+    except Exception:
+        pass
+    return r
+
+
+strategy._endgame_arbitrate = _cc_wrap
+
 
 class CloudStyle:
     """翻前小开池 → 翻牌小注 → 弱牌遇阻即弃。"""
@@ -241,8 +264,25 @@ class MyBot:
         return a
 
 
+class MyBotNoCross(MyBot):
+    """【2026-10-09】自对弈 A/B 的候选臂：决策期间临时旁路 `UA_CROSS_CHECK`。
+
+    只在 `act()` 内翻转模块级开关、决策结束立刻还原 —— 不修改生产代码，
+    也不影响同进程里另一个实例的决策（两边交替调用，互不重叠）。
+    """
+
+    def act(self, st):
+        old = strategy.UA_CROSS_CHECK
+        strategy.UA_CROSS_CHECK = False
+        try:
+            return MyBot.act(self, st)
+        finally:
+            strategy.UA_CROSS_CHECK = old
+
+
 FACT = {"cloud": CloudStyle, "cloudturn": CloudTurn, "quiet": Quiet,
-        "aggro": Aggro, "station": Station}[OPP]
+        "aggro": Aggro, "station": Station,
+        "selfnocross": MyBotNoCross}[OPP]
 
 
 def play_hand(hand_no, dealer, bot0, bot1, twc, holes, board_cards):
@@ -380,6 +420,16 @@ def run_match(seed, hands):
     # （equity._rng 默认是未播种的 random.Random() → 每次进程启动都不同，
     #   导致同 seed 重跑结果漂移、实测结论无法复核。必须显式播种。）
     my_bot = MyBot(); opp = FACT()
+    # 【2026-10-09】自对弈 A/B：`selfnocross` 模式下按 seed 奇偶轮换「候选坐哪一边」，
+    # 并把返回的净额统一换算成**候选那一方**的净额（>0 即候选更优），
+    # 这样奇偶两组可以直接合并统计，同时抵掉「先手/后手」的位置不对称。
+    selfab = (OPP == "selfnocross")
+    # 【配对关键】候选坐哪一边由环境变量 `SELFAB_PARITY` 决定（默认 0 = 候选当对手）。
+    # 同一 seed 跑 parity=0 与 parity=1 两次 → 同一副牌、互换角色 → 可做**配对差**，
+    # 把自对弈里 ±20000 的巨额方差抵掉。
+    cand_is_me = (os.environ.get("SELFAB_PARITY") == "1")
+    if selfab and cand_is_me:
+        my_bot = MyBotNoCross(); opp = MyBot()
     curves = []; tot = 0; wins = 0; twc = [0, 0]
     for i in range(hands):
         dealer = i % 2
@@ -395,23 +445,30 @@ def run_match(seed, hands):
             wins += 1
         curves.append(tot)
     early = curves[19] if len(curves) >= 20 else curves[-1]
+    if selfab and not cand_is_me:
+        # 候选坐在对面 → 换算成「候选那一方」的净额
+        tot = -tot
+        early = -early
     return early, tot, wins / hands * 100.0
 
 
 for sd in [int(x) for x in sys.argv[3:]]:
     _stab_cnt[0] = 0
+    _cc_cnt[0] = 0
     e, t, w = run_match(sd, HANDS)
-    print("%d|%d|%d|%.1f|%d" % (sd, e, t, w, _stab_cnt[0]))
+    print("%d|%d|%d|%.1f|%d|%d" % (sd, e, t, w, _stab_cnt[0], _cc_cnt[0]))
 '''
 
 def run_batch(seeds, opp, hands, old, pct=None, off_a=None, off_b=None,
-              no_bigbet_a=None, stab_off=None):
-    """一次子进程跑一批 seed（省启动开销），返回 {seed: (early, total, wr)}。
+              no_bigbet_a=None, stab_off=None, cross_off=None, extra_env=None):
+    """一次子进程跑一批 seed（省启动开销），返回 {seed: (early, total, wr, stab, extras)}。
 
     old=True  → 关 A + 关 B（旧基准）
     off_a/off_b  → 单独关掉其中一项，用于**拆分归因**（是谁把结果拉差）。
     stab_off=True → 置 WB_NO_STAB_PREFLOP=1（求稳**不**压制翻前开池 = 候选新行为）。
                     None = 不动该环境变量（保持调用方环境原样）。
+    cross_off=True → 置 WB_NO_CROSS_CHECK=1（旁路 UA_CROSS_CHECK 硬约束 = 候选新行为）。
+    extra_env    → 额外注入的环境变量（如自对弈的 SELFAB_PARITY）。
     """
     env = dict(os.environ)
     if old:
@@ -429,6 +486,12 @@ def run_batch(seeds, opp, hands, old, pct=None, off_a=None, off_b=None,
         env.pop("WB_NO_STAB_PREFLOP", None)
     else:
         env["WB_NO_STAB_PREFLOP"] = "1" if stab_off else "0"
+    if cross_off is None:
+        env.pop("WB_NO_CROSS_CHECK", None)
+    else:
+        env["WB_NO_CROSS_CHECK"] = "1" if cross_off else "0"
+    for k, v in (extra_env or {}).items():
+        env[k] = str(v)
     if pct:
         env["WB_OPEN_PCT"] = str(pct)
     else:
@@ -444,11 +507,13 @@ def run_batch(seeds, opp, hands, old, pct=None, off_a=None, off_b=None,
     out = {}
     for line in r.stdout.strip().splitlines():
         p = line.split("|")
-        if len(p) < 4:                 # 第 5 项（诊断计数）可选，见 CHILD 里的说明
+        if len(p) < 4:                 # 第 5 项起（诊断计数）可选，见 CHILD 里的说明
             continue
         sd = int(p[0])
+        # [3] = _stability_mode 触发数；[4] = 全部诊断计数的元组（含前者 + CROSS_CHECK 拦截数）
         out[sd] = (int(p[1]), int(p[2]), float(p[3]),
-                   int(p[4]) if len(p) > 4 else 0)
+                   int(p[4]) if len(p) > 4 else 0,
+                   tuple(int(x) for x in p[4:]))
     missing = [s for s in seeds if s not in out]
     if missing:
         print("!! 子进程缺少 %d 个 seed: %s" % (len(missing), missing))
@@ -588,15 +653,11 @@ def sweep():
         summarize(label, d, base_v, [arm[s][0] for s in seeds])
 
 
-def stab():
-    """【2026-10-01】A/B：求稳是否压制翻前开池（待裁决事项 ①）。
+def _ab_env(name, env_key, desc_now, desc_cand, cnt_idx, hint):
+    """通用「单一环境变量」A/B：两臂只在 `env_key` 上不同，其余保持线上配置。
 
-    两臂**只在** WB_NO_STAB_PREFLOP 上不同，其余保持线上配置
-    （不碰 A/B/尺寸，也不用 OLD_ALL —— 避免把别的改动混进来）。
-
-    调用：`python sim_early.py --stab [对手] [手数] [组数]`
-    ⚠️ `_stability_guard` 只在**我方领先**达标时才触发，短局可能几乎不触发
-       → 手数建议用真实赛制的 70，并报「触发率」以便判断该臂是否真的动过。
+    cnt_idx：诊断计数器在子进程输出 extras 元组里的下标
+             （0 = `_stability_mode` 触发数；1 = `UA_CROSS_CHECK` 拦截数）。
     """
     opp = sys.argv[1] if len(sys.argv) > 1 else "cloud"
     hands = int(sys.argv[2]) if len(sys.argv) > 2 else 70
@@ -604,51 +665,128 @@ def stab():
     seeds = [20260924 + g * 977 for g in range(groups)]
 
     print("=" * 108)
-    print("A/B：求稳是否压制翻前开池   对手=%s  %d手/组  %d组" % (opp, hands, groups))
-    print("现状臂 = 求稳也压翻前（线上，STABILITY_PREFLOP_ON=True）")
-    print("候选臂 = 求稳只压翻后（WB_NO_STAB_PREFLOP=1，对齐 v50 口径）")
-    print("两臂只在 WB_NO_STAB_PREFLOP 上不同；其余全部保持线上配置。")
+    print("A/B：%s   对手=%s  %d手/组  %d组" % (name, opp, hands, groups))
+    print("现状臂 = %s" % desc_now)
+    print("候选臂 = %s" % desc_cand)
+    print("两臂只在 %s 上不同；其余全部保持线上配置。" % env_key)
     print("=" * 108)
 
-    now = run_batch(seeds, opp, hands, old=False, stab_off=False)
-    cand = run_batch(seeds, opp, hands, old=False, stab_off=True)
+    kw = {("cross_off" if env_key == "WB_NO_CROSS_CHECK" else "stab_off"): False}
+    now = run_batch(seeds, opp, hands, old=False, **kw)
+    kw2 = {("cross_off" if env_key == "WB_NO_CROSS_CHECK" else "stab_off"): True}
+    cand = run_batch(seeds, opp, hands, old=False, **kw2)
 
-    # ---- 诊断：求稳触发次数（★ 必需，否则「两臂一字不差」无法解读）----
-    # 触发 = `_stability_mode()` 返回 True 的次数（每条街的每个决策点最多 1 次）。
-    # 候选臂里翻前那一段被 `STABILITY_PREFLOP_ON` 拦在 `_stability_mode` 之前，
-    # 所以「现状 − 候选」= 被翻前拦下的触发次数 = 本 A/B 真正作用到的决策点上限。
-    nt = [now[s][3] for s in seeds]
-    ct = [cand[s][3] for s in seeds]
+    # ---- 诊断计数（★ 必需，否则「两臂一字不差」无法解读）----
+    def cnt(arm):
+        out = []
+        for s in seeds:
+            ex = arm[s][4] if len(arm[s]) > 4 else ()
+            out.append(ex[cnt_idx] if len(ex) > cnt_idx else 0)
+        return out
+
+    nt, ct = cnt(now), cnt(cand)
     zero = sum(1 for v in nt if v == 0)
     print("-" * 108)
-    print("★ 求稳触发次数（诊断）  现状臂 %d 次 = %.2f 次/局 | 候选臂 %d 次 = %.2f 次/局"
+    print("★ 触发诊断  现状臂 %d 次 = %.2f 次/局 | 候选臂 %d 次 = %.2f 次/局"
           % (sum(nt), sum(nt) / max(1, groups), sum(ct), sum(ct) / max(1, groups)))
-    print("  被翻前拦下的触发（现状−候选）= %d 次 = %.2f 次/局   （真实日志基准 ≈ 11 次/局）"
-          % (sum(nt) - sum(ct), (sum(nt) - sum(ct)) / max(1, groups)))
+    print("  被该改动拦下（现状−候选）= %d 次 = %.2f 次/局   %s"
+          % (sum(nt) - sum(ct), (sum(nt) - sum(ct)) / max(1, groups), hint))
     print("  现状臂「零触发」的组数 = %d/%d" % (zero, groups))
     if sum(nt) == 0:
-        print("  ⚠️ 现状臂一次都没触发 ⇒ 这一臂根本没被作用，结果必为假阴性。"
-              "需加长局数或改用「构造领先开局」的方式。")
+        print("  ⚠️ 现状臂一次都没触发 ⇒ 这一臂根本没被作用，结果必为假阴性。")
     elif zero > groups * 0.5:
         print("  ⚠️ 过半组零触发 ⇒ 信噪比低，需要更多组数才能出信号。")
 
     now_t = [now[s][1] for s in seeds]
     cand_t = [cand[s][1] for s in seeds]
-    d_all = [c - n for c, n in zip(cand_t, now_t)]
-    summarize("全场（总净额）候选 − 现状", d_all, now_t, cand_t)
-
+    summarize("全场（总净额）候选 − 现状", [c - n for c, n in zip(cand_t, now_t)],
+              now_t, cand_t)
     now_e = [now[s][0] for s in seeds]
     cand_e = [cand[s][0] for s in seeds]
     summarize("前 20 手累积 候选 − 现状", [c - n for c, n in zip(cand_e, now_e)],
               now_e, cand_e)
 
 
+def stab():
+    """【2026-10-01】A/B：求稳是否压制翻前开池（待裁决事项 ①，已结案=保持现状）。
+
+    调用：`python sim_early.py --stab [对手] [手数] [组数]`
+    """
+    _ab_env("求稳是否压制翻前开池", "WB_NO_STAB_PREFLOP",
+            "求稳也压翻前（线上，STABILITY_PREFLOP_ON=True）",
+            "求稳只压翻后（WB_NO_STAB_PREFLOP=1，对齐 v50 口径）",
+            0, "（真实日志基准 ≈ 11 次/局）")
+
+
+def cross():
+    """【2026-10-09】A/B：`UA_CROSS_CHECK`（09-15 方案B「投入即 doom → 过牌」）是否该保留。
+
+    调用：`python sim_early.py --cross [对手] [手数] [组数]`
+    ⚠️ 该规则只在**贴近 doom 线**（落后 ≈ 150×剩余手数）时才触发，
+       顺风局/短局可能一次都不触发 → 必须看「触发诊断」行才能解读结果。
+    """
+    _ab_env("UA_CROSS_CHECK 硬拦是否该保留", "WB_NO_CROSS_CHECK",
+            "保留硬拦（线上，UA_CROSS_CHECK=True）",
+            "旁路硬拦、交给 _endgame_eu（WB_NO_CROSS_CHECK=1）",
+            1, "（10-09 自博弈基准：座位2 11 次/107 点、座位1 2 次/122 点）")
+
+
+def selfab():
+    """【2026-10-09】自对弈 A/B：本 bot（现状） vs 本 bot（旁路 UA_CROSS_CHECK）。
+
+    ★ 为什么必须自对弈：`UA_CROSS_CHECK` 只在**贴近 doom 线**（落后 ≈150×剩余手数）
+    时才触发。对内置对手（cloud/station）我方基本全程领先 → 实测 **0 次触发**，
+    配对模拟必然得出假阴性。只有自对弈才会出现「一方大幅落后」的局面。
+
+    每个 seed 跑 **parity=0 / parity=1 两次**（同一副牌、候选互换座位），
+    净额相加 = 候选在这对镜像局里的总净额（>0 = 候选更优；无效应时对称于 0，
+    且自动抵掉先/后手不对称与发牌运气）。
+
+    调用：`python sim_early.py --selfab [占位对手名] [手数] [组数]`
+    """
+    hands = int(sys.argv[2]) if len(sys.argv) > 2 else 70
+    groups = int(sys.argv[3]) if len(sys.argv) > 3 else 120
+    seeds = [20260924 + g * 977 for g in range(groups)]
+
+    print("=" * 108)
+    print("自对弈 A/B（镜像配对）：UA_CROSS_CHECK 保留 vs 旁路    %d手/组  %d组" % (hands, groups))
+    print("指标 = **候选那一方**在「候选坐两边」两次对局中的净额之和（>0 即候选更优）。")
+    print("=" * 108)
+
+    res0 = run_batch(seeds, "selfnocross", hands, old=False,
+                     extra_env={"SELFAB_PARITY": "0"})
+    res1 = run_batch(seeds, "selfnocross", hands, old=False,
+                     extra_env={"SELFAB_PARITY": "1"})
+    cand = [res0[s][1] + res1[s][1] for s in seeds]
+    early = [res0[s][0] + res1[s][0] for s in seeds]
+
+    # 诊断：现状那一侧被硬拦的次数（两次跑之和）
+    cc = []
+    for s in seeds:
+        e0 = res0[s][4] if len(res0[s]) > 4 else ()
+        e1 = res1[s][4] if len(res1[s]) > 4 else ()
+        cc.append((e0[1] if len(e0) > 1 else 0) + (e1[1] if len(e1) > 1 else 0))
+    print("-" * 108)
+    print("★ 触发诊断  现状侧被 UA_CROSS_CHECK 拦下 = %d 次（%d 组镜像对）"
+          % (sum(cc), groups))
+    if sum(cc) == 0:
+        print("  ⚠️ 一次都没触发 ⇒ 该对局形态下规则不起作用，结果不可解读。")
+    else:
+        print("  平均每组镜像对 %.2f 次" % (sum(cc) / max(1, groups)))
+
+    summarize("自对弈镜像对：候选净额（>0 = 候选更优）", cand, [0] * len(seeds), cand)
+    summarize("自对弈镜像对：候选前 20 手累积", early, [0] * len(seeds), early)
+
+
 def main():
-    if len(sys.argv) > 1 and sys.argv[1] in ("--sweep", "--decomp", "--stab"):
+    if len(sys.argv) > 1 and sys.argv[1] in ("--sweep", "--decomp", "--stab",
+                                             "--cross", "--selfab"):
         mode = sys.argv[1]
         sys.argv = [sys.argv[0]] + sys.argv[2:]
         (sweep if mode == "--sweep" else
-         (stab if mode == "--stab" else decomp))()
+         stab if mode == "--stab" else
+         cross if mode == "--cross" else
+         selfab if mode == "--selfab" else decomp)()
         return
     groups = int(sys.argv[1]) if len(sys.argv) > 1 else 8
     opp = sys.argv[2] if len(sys.argv) > 2 else "cloudturn"
