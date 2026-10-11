@@ -2213,6 +2213,55 @@ try:
         BIG_MONEY_TOPTWO_ON = False
 except Exception:
     pass
+
+# ── 【2026-10-11 方案·「已成牌遇同花威胁」三处豁免】A/B 用，默认全部关闭 ──
+# 起因：用户看 10-11 14:24 那局（vs mc_v1_lock）的第 5、6 手 ——
+#   两手都是**我方已成两对、面对仅 pot-sized 的河牌下注**，却被连弃两次；
+#   逐层追踪后发现是**三条硬规则串联**（改一条没用）：
+#     ① `_flush_threat`（用户 09-07 规则11）——公面 ≥3 同花 + 对手 >3000 →
+#        除非我手持该花色 ≥K，**一律弃**。它**完全不看我方已成牌**，
+#        实测还把 手42 的**百老汇顺子**和 手2 的三条 AA 也判成"该弃"。
+#     ② `_river_paired_trap`（08-23 合并规则）——河牌公对 + 大对 <Q 的两对 → 弃。
+#        手5 就算过了①也会死在这。
+#     ③ `_big_money_guard` 规则20（09-24 用户规则）——需跟 >3000 且 <三条 → 弃。
+#        手6 就算过了①②也会死在这。
+# ★ 共同缺陷：三条都只判「牌面纹理 / 牌型类别 / 绝对金额」，
+#   **不看「我方已成牌有多强」也不看赔率**；而同花威胁的概率其实已由
+#   `eq`（MC 从对手范围抽牌，天然含同花组合）承担 —— 二值硬弃把这份信息丢了。
+# 处置：三个开关分开，便于逐臂隔离测量。默认 False = 线上行为逐字不变。
+FLUSH_MADE_PASS = False        # ① 已成牌（≥两对）→ 不再被同花威胁硬弃
+PAIRED_TRAP_MADE_PASS = False  # ② 已成牌（≥两对）→ 不再被河牌公对陷阱硬弃
+BIGMONEY_TWOPAIR_PASS = False  # ③ 普通两对 → 允许跟 >3000（09-24 规则的边界）
+FLUSH_MADE_NO_RAISE = True     # ①生效时：同花威胁下**只跟不推**（防拿两对梭哈）
+# 豁免阈值：≥ 此牌型才算「已成牌」。TWO_PAIR(2)=连顺子/三条一起放行；
+# 抬到 THREE_OF_A_KIND(3) 则只放行三条及以上（更保守，顺子仍会被硬弃）。
+# env WB_FLUSH_MADE_CAT=3 → 用三条。
+FLUSH_MADE_MIN_CAT = TWO_PAIR
+# 豁免是否也适用于「对手全下 / 需跟 ≥ 剩余筹码」：默认 False（不适用）。
+# 理由：对手全下属于**定向决策**，`_face_bet` 后面本就有专门的赔率分支
+#   （`state.opp_is_allin or to_call >= my_left` → 用 eq 与门槛比），
+#   规则11 在那里硬弃的代价与"面对一个 pot-sized 下注被硬弃"不同量级；
+#   而用户 09-07 定规则11 的原始场景正是"面对对手大注"。
+#   ⇒ 保守起见：只对**非全下**的下注豁免（10-11 手5/手6 都是 pot-sized 下注）。
+# env WB_FLUSH_MADE_ALLIN=1 → 全下场景也豁免（会把 09-10 手42 的百老汇顺子
+#   从 fold 改成 allin，属单独的一次判断，默认不做）。
+FLUSH_MADE_NO_ALLIN = True
+try:
+    import os as _os_fm
+    if _os_fm.environ.get("WB_FLUSH_MADE") == "1":
+        FLUSH_MADE_PASS = True
+    if _os_fm.environ.get("WB_PAIRED_MADE") == "1":
+        PAIRED_TRAP_MADE_PASS = True
+    if _os_fm.environ.get("WB_BIGMONEY_TWOPAIR") == "1":
+        BIGMONEY_TWOPAIR_PASS = True
+    if _os_fm.environ.get("WB_FLUSH_MADE_RAISE") == "1":
+        FLUSH_MADE_NO_RAISE = False
+    if _os_fm.environ.get("WB_FLUSH_MADE_CAT") == "3":
+        FLUSH_MADE_MIN_CAT = THREE_OF_A_KIND
+    if _os_fm.environ.get("WB_FLUSH_MADE_ALLIN") == "1":
+        FLUSH_MADE_NO_ALLIN = False
+except Exception:
+    pass
 # 同上，但作用于**出口最后一层 `_doom_call_upgrade`**（规则2 跟注侧）。
 # 为什么必须单独一个开关：那一条是 2026-09-28 的硬规则（「跟注即锁赢 → 不放行
 # 便宜跟注」），与顶两对放行**在取舍上冲突**，所以要能分开关、分开评。
@@ -2925,6 +2974,12 @@ def _doom_call_upgrade(state, action):
         #     关掉即逐字回到 09-28 行为。
         if DOOM_TOPTWO_CALL_ON and _is_top_two_pair(state):
             return action
+        # 【2026-10-11 方案③（第 4 处实现点）· 默认关闭】普通两对同样放行 call。
+        # 实测：10-11 14:24 手5/手6 的「两对」即使把前面三处（规则11 / 河牌公对陷阱 /
+        # 规则20 + _normalize）全部豁免，**最终仍死在这一层**——出口链轨迹
+        # `_doom_call_upgrade: call→fold`。与 10-01 顶两对那次完全同构。
+        if BIGMONEY_TWOPAIR_PASS and _effective_category(state) >= FLUSH_MADE_MIN_CAT:
+            return action
         return {"act": "fold"}
     except Exception:
         return action
@@ -3063,6 +3118,9 @@ def _big_money_guard(state, action):
             # 这里改为**降级为 call**（跟得起、且 call 是合法动作），而不是弃牌。
             if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
                 return {"act": "call"}
+            # 【2026-10-11 方案③】普通两对同样降级为 call（默认关闭）
+            if BIGMONEY_TWOPAIR_PASS and _effective_category(state) >= FLUSH_MADE_MIN_CAT:
+                return {"act": "call"}
             if to_call > BIG_CALL_LIMIT:
                 return {"act": "fold"}
             return {"act": "call"}
@@ -3071,6 +3129,10 @@ def _big_money_guard(state, action):
             # 用户实测（10-01 21:51 那局）「有三手因为对手下注超 3000 没敢跟」；
             # 我逐街核对后只有手35 是真该跟（顶两对 TT+77 领先对手一对 6）。
             if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
+                return action
+            # 【2026-10-11 方案③】普通两对（非顶两对）也允许跟 >3000 ——
+            # 手6 的两对 K+8（K 为场上最大牌）就是被这一支弃掉的。默认关闭。
+            if BIGMONEY_TWOPAIR_PASS and _effective_category(state) >= FLUSH_MADE_MIN_CAT:
                 return action
             return {"act": "fold"}
     except Exception:
@@ -6049,8 +6111,42 @@ def _postflop_decide(state, model):
                            big_draw, draw, tex, arch, adj, is_river,
                            i_aggressor)
     # 面对下注时求稳模式 → 只跟不 raise（除非强牌）由 _face_bet 内部处理
-    return _face_bet(state, model, eq, category, strong, good, medium,
-                     big_draw, draw, arch, adj, is_river, i_aggressor)
+    _fb = _face_bet(state, model, eq, category, strong, good, medium,
+                    big_draw, draw, arch, adj, is_river, i_aggressor)
+    return _flush_made_guard(state, eq, _fb)
+
+
+def _flush_made_guard(state, eq, action):
+    """【2026-10-11 方案①配套】同花威胁下的「已成牌」只当抓诈唬打 —— 禁止主动推。
+
+    背景：方案① 让「公面 ≥3 同花 + 对手 >3000」时，**已成两对及以上**不再被
+    规则11 硬弃、交回 EU 比较。但 `_face_bet` 的强牌分支在 eq ≥0.82 且
+    spr ≤3 时会 **raise all-in**（10-11 手6 实测 eq=0.91 → 想推 18,500 进 6,760 的池）。
+    同花威胁下拿"两对"去梭哈显然不是本意 ⇒ 本护栏把动作**降级为跟注/过牌**：
+      · to_call > 0 且赔率支持（eq ≥ to_call/(pot+to_call)）→ call
+      · 否则 → check（to_call==0）或 fold（赔率不够，不硬跟）
+    仅在 FLUSH_MADE_PASS 打开且 `_flush_threat` 成立且已成两对及以上时生效。
+    FLUSH_MADE_NO_RAISE=False（env WB_FLUSH_MADE_RAISE=1）可关掉本护栏，做隔离对照。
+    """
+    if not (FLUSH_MADE_PASS and FLUSH_MADE_NO_RAISE):
+        return action
+    try:
+        if action.get("act") not in ("raise", "allin"):
+            return action
+        if not _flush_threat(state):
+            return action
+        if _effective_category(state) < TWO_PAIR:
+            return action
+        to_call = int(state.to_call)
+        pot = int(state.pot)
+        if to_call <= 0:
+            return {"act": "check"}                     # 免费：不主动送筹码
+        need = to_call / float(pot + to_call) if (pot + to_call) > 0 else 1.0
+        if float(eq) >= need:
+            return {"act": "call"}                      # 赔率够 → 抓诈唬
+        return {"act": "fold"}                          # 赔率不够 → 不硬跟
+    except Exception:
+        return action
 
 
 def _fold_equity(model, adj):
@@ -6593,6 +6689,22 @@ def _flush_threat(state):
     except Exception: return False
 
 
+def _flush_made_exempt_ok(state):
+    """【2026-10-11 方案①②的门控】已成牌豁免是否适用于**本决策点**。
+
+    默认排除「对手全下 / 需跟 ≥ 我方剩余筹码」：那是**定向决策**，
+    `_face_bet` 后面本来就有专门的赔率分支（拿 eq 与全下门槛比），
+    而用户 09-07 定规则11 的原始场景正是「面对对手大注/全下」。
+    开关 `FLUSH_MADE_NO_ALLIN`（env `WB_FLUSH_MADE_ALLIN=1` → 全下也豁免）。
+    """
+    if not FLUSH_MADE_NO_ALLIN:
+        return True
+    try:
+        return not (state.any_allin or int(state.to_call) >= int(state.my_left))
+    except Exception:
+        return True
+
+
 def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
               arch, adj, is_river, i_aggressor):
     """面对下注：底池赔率（隐含修正）+ 原型/街级修正 + 加注/跟注/弃牌。"""
@@ -6609,7 +6721,20 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         my_same = [c >> 2 for c in state.hole if (c & 3) == flush_suit]
         my_best = max(my_same) if my_same else -1
         if my_best < 11:      # 无同花色手牌 或 手牌同花牌 < K
-            return {"act": "fold"}
+            # 【2026-10-11 方案①】例外：我方**已成两对及以上**时，我们并不是在
+            # 「比同花大小」——这条启发式（原意仅针对"听花/顶对"那手）不该硬弃。
+            # 交回正常 EU 比较（eq 从对手范围抽样，已含"对手有同花"的概率），
+            # 并由调用点的 `_flush_made_guard` 保证**只跟不推**。
+            # 持 2 张该花色（真同花）时不豁免 —— 保留 09-07 的原始判据。
+            _made = False
+            try:
+                _made = (len(my_same) < 2) and \
+                    (_effective_category(state) >= FLUSH_MADE_MIN_CAT) and \
+                    _flush_made_exempt_ok(state)
+            except Exception:
+                _made = False
+            if not (FLUSH_MADE_PASS and _made):
+                return {"act": "fold"}
     # 【规则14·2026-09-14 用户规则】我过牌后对手小注 → 假定诈唬 → 跟注/反加小注。
     # 必须排在下面「大注(>0.6 池)弃牌」之前：否则小底池里的小注会被那条
     # 规则当大注丢掉（用户反馈的核心场景）。本规则不弃牌。
@@ -6800,7 +6925,18 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     # 【硬性风险规避】河牌裸公对陷阱：直接弃牌，不做任何数学计算——
     # 对手全下 range 里两对/三条占比极高，裸公对几乎必输（第 49 手教训）。
     if is_river and _river_paired_trap(state):
-        return {"act": "fold"}
+        # 【2026-10-11 方案②】已成两对及以上时不硬弃（原判据只看"大对 <Q"，
+        # 手5 的两对 9+8 就是这样被弃的，而对手实际只有两对 9+4）。
+        # 交回 EU 比较；同花威胁的"只跟不推"护栏在调用点统一施加。
+        _pt_pass = False
+        try:
+            _pt_pass = PAIRED_TRAP_MADE_PASS and \
+                (_effective_category(state) >= FLUSH_MADE_MIN_CAT) and \
+                _flush_made_exempt_ok(state)
+        except Exception:
+            _pt_pass = False
+        if not _pt_pass:
+            return {"act": "fold"}
     if state.opp_is_allin or to_call >= state.my_left:
         # ICM 压力/劣势追分：放宽跟注（对手范围更紧或我们需要赌博）
         if adj == "pressure":
@@ -7243,10 +7379,18 @@ def _normalize(state, action):
             #   公共牌 ≥3 张 ⇒ 翻前恒为 False，不会误放行。）
             if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
                 return {"act": "call"}
+            # 【2026-10-11 方案③】普通两对同样放行（默认关闭；同 10-01 的经验：
+            #   ≥3000 跟注必须**同时**改这里与规则20，否则规则20 拿到的是 fold）。
+            if BIGMONEY_TWOPAIR_PASS and \
+                    _effective_category(state) >= FLUSH_MADE_MIN_CAT:
+                return {"act": "call"}
             return {"act": "fold"}
         # 保险：万一 _over_limit 的语义将来被改动，这条仍能兜住翻后金额闸门。
         if state.stage != "preflop" and to_call > _bet_limit(state):
             if BIG_MONEY_TOPTWO_ON and _is_top_two_pair(state):
+                return {"act": "call"}
+            if BIGMONEY_TWOPAIR_PASS and \
+                    _effective_category(state) >= FLUSH_MADE_MIN_CAT:
                 return {"act": "call"}
             return {"act": "fold"}
         return {"act": "call"}
