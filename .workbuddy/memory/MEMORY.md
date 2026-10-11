@@ -1,105 +1,59 @@
 # 项目长期约定（德扑双人机器人）
-
-> 完整背景见根目录 `项目交接说明.md`、`代码逐行详解.md`；逐日细节见本目录 `YYYY-MM-DD.md`；
-> A/B 方法论与陷阱见技能 `~/.workbuddy/skills/poker-strategy-ab/SKILL.md`。
-> **本文件按「重要性递减」排列** —— 注入被截断时砍掉的是最不关键的尾部。
+> 详情：`项目交接说明.md`/`代码逐行详解.md`/`文献调研_可借鉴方案.md`；逐日 `YYYY-MM-DD.md`；A/B 方法与陷阱见技能 `poker-strategy-ab`。按重要性递减排列。
 
 ## 工作流
-- 收尾：`cd 内容 && python bundle.py` → `cp 内容/botzone_submit.py botbattle/poker_bot.py`（`cmp` 校验）→ 长消息写 `.git/COMMIT_MSG_TMP.txt` + `git commit -F` → `git push`。
-- 交付前：13 个测试全量回归 → 同步 `代码逐行详解.md` → 更新记忆。
-- 冒烟 history **必须是 dict 列表**（player_id/action_type/amount/round）；扁平 list → GameState 抛错、bot 静默返回 0。
+收尾：`cd 内容 && python bundle.py` → `cp 内容/botzone_submit.py botbattle/poker_bot.py`(cmp) → `git commit -F .git/COMMIT_MSG_TMP.txt` → push。交付前 13 测试全量回归 + 同步详解文档。冒烟 history 必须 dict 列表，否则 bot 静默返回 0。
 
-## 平台与协议
-- BotBattle HU：70 手、按 `total_win_chips` 定胜负；盲注 50/100、初始 20000；**每步 60s**（`holdem_per_decision_60s_v1`）。★ 竞赛平台未定（指南写 Botzone 1s/50 手，实测 BotBattle 60s/70 手）⇒ 未发布前按 60s。
-- 牌号 `n = rank*4 + suit`（T=32..35,J=36..39,Q=40..43,K=44..47,A=48..51），suit 0♠1♥2♦3♣。**内部编码 = 平台 + 8** ⇒ 从原始日志取牌要 +8。response 单整数（-1 fold/-2 allin/0 call·check/>0 raise-to）。
-- **history 不含 blind**；`hand` 0-based，但 `load_botbattle` 的 `meta["hand"]` 与平台界面是 **1-based** ⇒ 混用会看错手。`_hands_left = max_hand − hand − 1`；`hand_start.chips` 已扣盲注。
-- 只在我方行动时收 request；对手弃牌不可见 ⇒ 按 globaldata 增量推断（+50 对手 SB 弃 / +100 对手 BB 弃）。单挑：翻前 dealer(SB) 先、翻后非 dealer(BB) 先。
-- **原始 replay 字段**：action 用 `player`/`action`/`amount`；deal_hole 用 `holes:[[座0],[座1]]`；settle 的 net 是累计；有 `time_used` 事件可拿每步耗时。
-- ★ **尺寸/底池口径**：`hand_start.sb/.bb` 是**座位号**（盲注固定 50/100）；`action.amount` 对 raise/allin 是**本街 raise-to**、对 call 是**本次增量** ⇒ 尺寸 = `amount − 本街累计`。**重建底池要跨街累计**（按街清零会把满池注错判成 1.00 倍池）—— 更稳的做法是直接用 `GameState`。
+## 平台协议
+BotBattle HU 70 手/盲注 50-100/初始 20000/**60s 每步**/按总筹码定胜负（★竞赛平台未定，指南写 Botzone 1s/50 手）。牌号 n=rank*4+suit，**内部编码=平台+8**。response：-1fold/-2allin/0call-check/>0raise-to。history 不含 blind；hand 0-based（`load_botbattle` meta 是 1-based）。**action.amount：raise/allin=本街 raise-to，call=本次增量** ⇒ 尺寸=amount−本街累计；**重建底池用 GameState**。对手弃牌不可见→按 globaldata 增量推断。单挑：翻前 dealer(SB) 先、翻后 BB 先。
 
-## 锁赢 / doom 数学（用户硬规则）
-- `lead = 我方net − 对手net`；**筹码损失让 lead 变化 2 倍**，`×2` 只用一次。
-- 追回线 `_blind_line(hands_left, own=False)` 固定 SB=50/BB=100，**勿用 `state.big_blind`**。**追回线 ≈ 75×剩余手数** ⇒ **doom 阈值 ≈ 落后 150×剩余手数**。
-- fold_out 锁胜：`lead > 2×(盲注线 + invested)` → fold。doom：`lead − 2×敞口 ≤ −2×追回线`；弃牌口径 `_invested`、跟注口径 `_invested + to_call`。只用**原始 lead**。
-- **★ 10-01 裁决：「doom 成立 → 无条件 allin」不动；`to_call>0` 无 `_shove_fold_ok` 门控 = 有意设计。勿再提收紧 doom。** 我的异议已被数据否定（全量 **107 次 allin**：对手弃 96 次 90% 累计 +23,807、被跟 11 次 +20,000 ⇒ **合计 +43,807，均 +409/次**）⇒ **已撤回**（错因：n=4 过度概括）。
-- 仍待用户定：`to_call==0` 且未见翻牌时先过牌看翻牌（手58）。候选（未验证）：我方可能**「全下不足」**；需按画像分臂 A/B。
+## 锁赢/doom（用户硬规则）
+lead=我方 net−对手 net；筹码损失让 lead 变 2 倍，×2 只用一次。追回线≈75×剩余手数（固定 SB50/BB100，勿用 `state.big_blind`）⇒ doom 阈值≈落后 150×剩余手数。fold_out：`lead>2×(盲注线+invested)`→fold。doom：`lead−2×敞口≤−2×追回线`（弃牌口径 `_invested`／跟注 `+to_call`），只用原始 lead。
+★**10-01 裁决：「doom 成立→无条件 allin」不动，`to_call>0` 无门控=有意设计，勿再提收紧**（异议已被 107 次 allin 数据否定：对手弃 90%、合计 +43,807）。
 
-## 规则清单（生效顺序）
-1. **规则2 `_lock_win_unified`**（入口）：B fold_out→fold（`to_call==0` 用 check）；A doomed / C `_profit_lock_allin` → `_doom_plan`（`line≤0`→allin；`to_call>0`→**一律 allin**；`to_call≤0` 牌烂→allin（过 `_shove_fold_ok`）、牌好→None、牌好且河牌→allin）。★ **A 被拒后必须 return None**（否则 C 绕过）。开关 `DOOM_ALLIN_ON`。
-2. **`_endgame_arbitrate`**（09-24）：五动作同尺度比 EU（`_win_utility` logistic，锚点 ±2×追回线）。护栏 `UA_CROSS_CHECK` / `UA_SEALED_ALLIN`(0.15) / 只往保守修正 / 硬性弃牌不翻案。
-   ★★ **10-09：`UA_CROSS_CHECK` = 「好牌也消极」元凶**（L1236，EU 比较**之前**硬 return check；判据是最坏情况、不看 f/eq/规模）。**已按用户原则修复并设为默认**（「看牌的目的就是为了确保优势，我都确保优势了还不跟留着干嘛」）：`_cross_check_exempt` **分街** —— 翻后 = 有效牌型 ≥ 两对 **或** `_pair_is_top`；翻前 = `_is_super_hand`。★ **不可用「翻前超强牌名单」判翻后优势**（AKs 翻后打空会被误判）。实测命中 11 次 → **5 放行 / 6 仍拦**。开关 `WB_NO_CROSS_STRONG_PASS=1` / 整体旁路 `WB_NO_CROSS_CHECK=1`。
-3. **规则10 求稳**：`lead ≥ 0.70×锁赢线` 或剩 ≤8 手且领先 → 主动侧 check、被动只跟；强牌（翻后 ≥两对 / 翻前 AA·KK·QQ·JJ·AKs）例外。开关 `STABILITY_PREFLOP_ON`（默认 True）。★ 10-01 配对模拟**证伪**「应放行翻前」⇒ 保持现状。
-4. **规则16/17**：跟全下门槛按剩局/对手 allin 频率下调（≤0.09）；翻后按盈利档叠加（>+50BB +0.12 / >+10BB +0.07 / ±10BB +0.02 / <−10BB −0.03 / <−50BB −0.08）。
-5. **规则18 搏命区**：`lead ≤ −0.95×2×追回线` → 牌烂 allin、牌好慢打；推前过 `_shove_fold_ok`（`eff_fold_to_bet ≥ 0.45`，样本 ≥6 才门控）。
-6. **规则19 小注作废**：对手面对 ≤40% 池小注弃牌率 <0.35（样本 ≥4）→ 停用小注线。**规则学习**：样本 ≥4 且胜率 <0.35 → raise 降级为跟/过；>0.60 优先复用。
-7. **注额上限**：翻前 ≤1000；翻后 <三条 ≤3000（小两对 ≤2000）；≥三条不限。**只约束主动下注/shove**。
-8. **规则20 `_big_money_guard`**：R1 `to_call>3000` 且 <三条 → fold；R2 主动全押只允许 ≥三条 / 翻前 AA·KK·QQ·JJ·AKs。★**故意不给 lk 开免检口**（改则 test_log_v2 FAIL）。
-   ★ **10-01「顶两对」豁免**：`_is_top_two_pair()` = 两对 + 两个对子正好是场上最大两档 + **两档都必须由我方底牌补成**（手44 反例：T 对纯公共牌时对手是同花）。**需同时改 4 处**：`_normalize._over_limit`、`_normalize` 的 `to_call>_bet_limit`、`_big_money_guard` 的 `allin` 分支（降级 call）、`_doom_call_upgrade`。开关 `BIG_MONEY_TOPTWO_ON` / `DOOM_TOPTWO_CALL_ON`。
-   ★ 死代码：`_over_limit` 内部翻后看 `_bet_limit` ⇒ `_normalize` 里只判 `stage!="preflop"` 的重复闸门**永远走不到**。
-9. **`_doom_call_upgrade`**（最后一层）：跟注口径 doom → 强牌 allin、弱牌 fold。安全网 `_normalize` + `_allin_floor_guard`。
-10. **★ 规则11「公面同花威胁」**（用户 09-07）：公面 3+ 同花 + 对手 >3000 → 视作对手有坚果同花。★ **缺陷：只看牌面纹理，不看已成牌也不看赔率**（实测把百老汇顺子、三条也判"该弃"）；`my_best>=11` 把「阻断牌」和「我的同花够不够大」混为一谈。
-    **全量 895 点命中 7 次：5 次是对手全下（弃对）、只有 2 次是普通下注（10-11 手5/手6，两次都错）。**
-    ⇒ **已实现豁免（默认关闭，共 7 处落点）**：`FLUSH_MADE_PASS`(`WB_FLUSH_MADE=1`) / `PAIRED_TRAP_MADE_PASS`(`WB_PAIRED_MADE=1`) / `BIGMONEY_TWOPAIR_PASS`(`WB_BIGMONEY_TWOPAIR=1`) + 阈值 `FLUSH_MADE_MIN_CAT`(`WB_FLUSH_MADE_CAT=3`) + **★非全下门控 `FLUSH_MADE_NO_ALLIN`**(`WB_FLUSH_MADE_ALLIN=1`) + 护栏 `_flush_made_guard`（已成牌时**只跟不推**）。**只改 2 点**（手5/手6 fold→call）。详见 `复盘_20261011_同花威胁连弃.md`。
+## 规则清单（生效顺序，除注明外默认开）
+1. 规则2 `_lock_win_unified`（入口）：fold_out→fold；doomed/`_profit_lock_allin`→`_doom_plan`。★A 被拒后必须 return None（否则 C 绕过）。
+2. `_endgame_arbitrate`：五动作同尺度比 EU（`_win_utility` logistic）。★10-09：`UA_CROSS_CHECK`=「好牌也消极」元凶，已按用户原则修——`_cross_check_exempt` 分街（翻后≥两对 或 `_pair_is_top`；翻前 `_is_super_hand`）；★不可用翻前名单判翻后。回退 `WB_NO_CROSS_STRONG_PASS=1`。
+3. 规则10 求稳：lead≥0.70×锁赢线 或剩≤8 手领先→主动 check/被动只跟；强牌例外（★10-01 配对模拟证伪「放行翻前」⇒保持）。
+4. 规则16/17：跟全下门槛按剩局/对手频率下调至 ≤0.09；翻后按盈利档 ±。
+5. 规则18 搏命区：lead≤−0.95×2×追回线→牌烂 allin、牌好慢打；过 `_shove_fold_ok`(eff_fold≥0.45)。
+6. 规则19/学习：小注作废 + 样本≥4 胜率<0.35→raise 降级。
+7. 注额上限：翻前≤1000；翻后<三条≤3000（小两对≤2000）；≥三条不限（只约束主动）。
+8. 规则20 `_big_money_guard`：to_call>3000 且<三条→fold；主动全押只允许≥三条/翻前 AA·KK·QQ·JJ·AKs（★故意不给 lk 免检口）。★顶两对豁免 `_is_top_two_pair()`（两档都须我方底牌补成）**需同时改 4 处**。
+9. `_doom_call_upgrade`：跟注口径 doom→强牌 allin、弱牌 fold。
+10. ★规则11 公面同花威胁（只对 3+ 同花 + 对手>3000；★缺陷：不看已成牌/赔率）：全量 895 命中 7 次（5 次对手全下弃对、2 次普通下注，10-11 手5/6 都错）。豁免已实现但**默认关**：`FLUSH_MADE_PASS`/`PAIRED_TRAP_MADE_PASS`/`BIGMONEY_TWOPAIR_PASS`+阈值+非全下门控。只改 2 点。
 
-## ★ 「3000 悬崖」（10-11 普查，`测/cliff_3000.py`）
-**口径：用 `GameState` 直接解析决策点，不要手工重建底池。**
-668 个「面对下注」决策点：`to_call>3000` **41 次(6.1%)** = **36 次对手推光**（定向决策，弃对）+ **仅 5 次普通下注**，且这 5 次全在 **0.98×~1.30× 池**、**没有一次刻意压线**（2900~3000 样本 0 次）。
-★ **手21（一对, 6318, 1.14×池）正是规则20 的原始案例** ⇒ 真正的问题是**牌力**，不是金额。
-⇒ 现行语义 = 「**底池 >3000 后，对手下满池我们只能拿三条+去接**」；而底池过 3000 是**常规场景**；且是**悬崖**（3000→eq≥0.33；3001→必须≥三条）⇒ **对手多下 1 个筹码即可压死我们**（主动侧有 `_dynamic_cap` 防 read，**跟注侧没有**）。
-**★ 建议3 已于 10-11 实现并默认启用（用户拍板）**：`BIG_CALL_RAMP_ON=True`；`_big_call_ramp()` = `加价=BASE+(MAX−BASE)×max((to_call−3000)/3000, to_call/剩余)`（BASE 0.06/MAX 0.20）；`_big_call_ramp_applies()` = **唯一判据**（开关 + `to_call>3000` + 牌型 ≥ `BIG_CALL_RAMP_MIN_CAT`=两对）。落点：`_face_bet`（`eff_req += ramp`）+ `_normalize`×2 + `_big_money_guard` 的 `call` 分支。回退 `WB_NO_BIGCALL_RAMP=1`。
-  ★★ **两条必须记住的实测结论**：
-  ① **ramp 单独启用 = 0 变化 / 895** —— 手5/手6 在 `_face_bet` 之前就被**规则11**弃了 ⇒ **ramp 与 §5（规则11 豁免）是配套的，只做一个看不到变化**。
-  ② **「弱牌交给 eq 挡」在这条线上不成立**：去掉牌型下限后 `test_log_v2` 的「0924第21手:规则20 —— 大额跟注降级为弃牌」变成 `call`，而**手21 正是规则20 立规原始案例（一对 6）**，出错原因就是「对手判很松 → 范围 ~70% → 一对胜率被抬到 0.46」⇒ **`eq` 本身就是被高估的量**。故设牌型下限（口径同 10-09）。同理 `_big_money_guard` 的 **`allin` 分支（R2）不加 ramp 豁免**。`ramp+§5` = **2/895**；13/13 回归全绿。工具 `测/ramp_ab.py`、`测/ramp_control.py`。
-**尚未做**：① 4 处金额闸门收敛成 `_big_call_gate()`（ramp 已让 3 处共用判据，算做了一半）；② 主判据换成「对手是否推光」；④ `opp_threshold_bets` 防 read。**这 5 个样本不足以做统计 A/B**（±1 点=20%）。
+## ★3000 悬崖（10-11）
+668 个面对下注点：to_call>3000 仅 41 次=36 次对手推光+5 次普通下注（全 0.98~1.30×池，无压线）。手21（一对 6318=1.14×池）正是规则20 原始案例 ⇒ **真问题是牌力非金额**。悬崖：3000→eq≥0.33；3001→须≥三条 ⇒ 对手多下 1 筹码即可压死。
+★建议3 已默认启用：`BIG_CALL_RAMP_ON`，`_big_call_ramp()` 加价=BASE+(MAX−BASE)×max((to_call−3000)/3000, to_call/剩余)（0.06→0.20），`_big_call_ramp_applies()` 唯一判据（开关+to_call>3000+牌型≥两对）；落点 `_face_bet`/`_normalize`×2/`_big_money_guard` call。回退 `WB_NO_BIGCALL_RAMP=1`。
+★①ramp 单独=0/895（手5/6 在 `_face_bet` 前已被规则11 弃）⇒ 与 §5 规则11 豁免配套；②「弱牌交给 eq 挡」不成立（手21 一对 eq 被抬到 0.46）⇒ 必须设牌型下限。
 
-## 出口链（★ 最大结构问题）
-`decide` → 入口短路 `_lock_win_unified`(规则2) / `_gamble_plan`(规则18)，≈7% **不走出口链** → 决策层 → **出口 10 层**：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`（v50 只有 `_normalize`）。
-实测（10-01，315 点）：`_stability_guard` 26/49=53%（22/26 在翻前，全降级 raise）；`_bet_cap_guard` 9；`_aggressive_strong_bet` 7；`_lock_win_tail_guard`/`_bluff_cap_guard` **292 次调用 0 翻转**；净翻转 13.3%、被改写 ≥2 次 1.9%、打架 **1 次**（手53）。
-⇒ ① **「层间打架」不是主要风险**：`我加注→对加注→我再加注→我弃牌` 来自**决策层自身**（同街每次轮到我都是独立决策点），**别用它当出口链证据**；② 收敛收益调低（只 2 个死层）；③ `LIMIT` **静默截断** ⇒ **重放前先确认决策点总数**。
-★ **规律（两次踩到）**：**同一条「金额/阈值」规则在出口链上通常有 3~5 个实现点** ⇒ **只改一处 = diff 报 0 变化**。
+## 出口链（★最大结构问题）
+入口短路 `_lock_win_unified`/`_gamble_plan`——★**实测 33.9%（几乎全是 `_fold_out_active` 锁赢弃牌），不是旧记的 ~7%**（`测/owner_probe.py`，948 点）→决策层→出口 10 层：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`（v50 只有 `_normalize`）。
+实测 315 点：`_stability_guard` 占 53%（多为翻前降 raise）；`_lock_win_tail_guard`/`_bluff_cap_guard` 292 次 0 翻转；打架仅 1 次。
+⇒①层间打架不是主要风险（"我加注→对加注→我再弃"来自决策层自身）；②LIMIT 静默截断，重放前确认决策点数；③★**同一金额/阈值规则在出口链常有多达 3~5 个实现点，只改一处=diff 报 0**。
+★ **归因实测（948 点）**：翻前 35.2% / 入口短路 33.9% / 主动侧 17.8% / 面对下注·牌型尺寸 5.7% / 面对下注·硬规则 5.4% / **面对下注·eq 门槛仅 2.0%**；出口链净改写 10.3%，其中 **eq 门槛的结论 36.8% 被出口链盖掉**。⇒ **`eq` 权重低是规则堆出来的**，不是 bug。详见 `复盘_20261011_决策归因与eq话语权.md`。
+★ **出口链逐层实测（948 点，改写 116 次 / 98 点）**：**更保守 77 : 更激进 5 = 单向保守机器**。逐层改写：`_stability_guard` **39**（36 在翻前）/ `_bet_cap_guard` **32** / `_aggressive_strong_bet` 12 / `_doom_call_upgrade` 11 / `_cheap_call_guard` 7 / `_endgame_arbitrate` 6（唯一主要"更激进"）/ `_normalize` 5 / `_big_money_guard` 3 / `_bluff_cap_guard` 1 / **`_lock_win_tail_guard` 0（627 调用 0 改写；冗余候选但**不建议删**——锁赢安全网）**。
+★★ **「好牌也消极」的量化证据**：77 次保守改写里 **26 次（33.8%）落在 `eq 超门槛 ≥ +0.10`** 的点上（中间地带 0~+0.10 **为 0**，分布两极）——最刺眼 `eq0.901 → allin→call→fold`、`eq0.896 → raise→call→fold`。按层：`_bet_cap_guard` 11 / `_cheap_call_guard` 7 / `_doom_call_upgrade` 3 / `_normalize` 2 / `_endgame_arbitrate` 2 / `_big_money_guard` 1。详见 `复盘_20261011_出口链普查与eq否决权.md`。
 
-## 对手画像与胜率
-- 【算力 09-30】`MC_ITERATIONS=30000`/`TIME_BUDGET=5.0`/`ALLIN_MC=20000`/`ALLIN_TIME_BUDGET=4.0`/`DECISION_TIMEOUT=40.0`/`EQ_TOTAL_BUDGET=12.0`（共用 `_eq_deadline()`）。**播种两处**：`equity._rng` **和全局 `random`**。env `WB_MC_ITERS`/`WB_MC_BUDGET`。
-- 【09-30 三条】① `equity_best()` 河牌/转牌走**精确枚举**（误差 0；河牌 990 组合 0.05s、转牌 ≈4.4 万 2.6s），翻牌及以前 MC；② 模型范围**系统性偏窄约 2 倍** → eq 低估 0.0589，`RANGE_SOFT_TAIL` 修正后差 **+0.0012**（★**全下禁用** `ALLIN_SOFT_TAIL=0.0`）；③ ★ `_eq_deadline` 兜底下限**不能无界**（原 `max(limit, now+0.05)` ⇒ 永不主动停 ⇒ 单步 **277.46s 判负**），已封顶。工具 `测/range_eval.py`·`tail_impact.py`·`tail_actions.py`。
-- 【规则12 已接线】`_check_bet_weight()` 融合 `check_fold_rate`（贝叶斯 `w=n/(n+6)`，n ≥ 6）+ `check_raise_rate ≥ 0.20` → 频率 ×0.6。
-- 【翻前尺寸】`OPEN_SIZE_BB=3.5`/`VS_STATION=3.0`/`ISO=4.0`/`STEAL=3.0`；★**只改 `OPEN_SIZE_BB` 无效**（`_learned_size` 用 `bucket_to_frac` 覆盖）。条件化乘 `clamp((0.80−eff_vpip)/0.25,0,1)` × `min(1,hands_seen/8)` ⇒ 实际 [2.5,3.5]，**前 8 手不生效**。
-- 【默认关闭】`BIG_BET_FOLD_A_ON=False`；条件化 A（`_future_aggr_factor`）/B（`_open_size_bb`）**早已实现**，对 code A 自动退化为中性 ⇒「看不出变化」是预期行为。
-- combo 级 1326 权重**暂缓**（70 手 ≈130 翻后点，参数严重欠定）；`opp_weights` 接口已建好，体积仅 ≈**5KB**。
-- 【10-01 尺寸结论】「对手过牌→我方下注」全量 85 次：**25~45%（现用）与 45~70% 两档均值完全相同（+243/手）** ⇒ **加大尺寸不是杠杆**。
-- 【10-01 模拟算力】生产口径 **70 手/场 ≈4 分钟**（不可行）。**两臂同口径降抽样** `WB_MC_ITERS=1500 WB_MC_BUDGET=0.3` → **≈7 秒/场（~35×）**；**必须加触发计数器**才能区分「无效果」与「没触发」。
-- 【10-01 求稳翻前 A/B】240 组配对：**观察性估计 +3,450/场 被证伪**（cloud +422 CI −556~+1467 符号 36:36；station −468）⇒ 无一致证据，**保持现状**。
-- 【对手 code A 画像】`eff_vpip` 0.70→**0.89**、`bets/hand` 0→1.08~1.17 ⇒ **「翻前松、翻后 fit-or-fold」**。全量：靠逼对手弃牌是主要收入（过牌线 +24k、全下线 +24k），摊牌是方差来源。
+## 对手/胜率
+算力 MC=30000/预算 5.0s/全下 20000·4.0s/EQ_TOTAL 12.0s；播种 `equity._rng`+全局 random 两处。`equity_best()` 河/转牌精确枚举。对手范围系统性偏窄 2 倍→`RANGE_SOFT_TAIL` 修正（★全下禁用）。★`_eq_deadline` 兜底不能无界（曾致单步 277s 判负）。翻前尺寸 `OPEN_SIZE_BB`（只改它无效，前 8 手不生效）。对手 code A：eff_vpip 0.89、翻前松翻后 fit-or-fold。**内置对手强于本 bot；打不过 v50 是首要问题**。
 
-## 牌型判定
-- `_effective_category`：**≥三条不能只由公共牌组成**。`_is_super_hand` = AA/KK/QQ/JJ/AKs；`_is_sub_strong` = AQ/AK/KQ。
-- `hand_percentile`：AA 0.015 / 77 0.151 / 66 0.210 / KQs 0.275 / AKo 0.121。状态机：normal/protect/pressure/desperate/doomed/steal。
-- 类别序：高牌<一对<两对<三条<顺子<同花<葫芦<四条<同花顺（★ **顺子 > 三条** —— 影响阈值取值）。
+## 工具陷阱
+★规则标签≠真凶（逐层 monkey-patch 看 before→after）。★★报「变化 N 点」必须重跑+对照臂（跨进程噪声 0.5~1%）。★`diff_ab.py --off-env` 列方向反。★自对弈双方 owner 同一 id，先确认座位。★★「只落后才生效」的规则用内置对手配对必然假阴性 ⇒ 用 `sim_early.py --selfab`。`duel.py` 不可用。
+★★ **改一条硬规则后 diff 报 0 —— 三步排查**：①加触发计数器(区分没触发/没翻) → ②找"下一个接走者"(同人群常被多条**串联**规则覆盖；用标记位定位，如「大注/突袭」族 15 点里 14 点 `_OPP_JUMPED=True`) → ③查出口链(决策层判对了也可能被盖回去)。★还要检查作用域诚实：不排除"全下点位"会**绕过规则16/17**。
 
-## 工具 / 测试陷阱
-> 完整版（含判读顺序）见技能 `~/.workbuddy/skills/poker-strategy-ab/SKILL.md`。
-- ★ **规则标签 ≠ 真凶**：`_winning_rule()`/`_candidate_rules` 只报「该局面会不会命中」，**不等于真正返回的那一行** ⇒ 定位要逐层 monkey-patch 看 `before→after`，或行级 `sys.settrace`。
-- ★★ **凡报「变化 N 点」必须重跑一次确认 + 配对照臂**：跨进程重放有噪声下限（**高负载**下 30 个子进程会抢占 0.3s MC 预算；生产口径实测 ~0.5~1%）；「同 seed 连跑两次逐字节一致」**只在同进程内成立**。
-- ★ **`diff_ab.py --off-env <VAR>` 的列方向**：它把 VAR 设为 1 = **关掉改动** ⇒ 输出**第一列（"旧"）其实是候选臂**。
-- ★ **自对弈日志双方 owner 都是 `j1331`** ⇒ `mine` 判定有歧义（脚本取最后一个匹配 = bot_b），报数前先确认座位。
-- ★★ **「只在被逼到落后时才生效」的规则，用内置对手做配对模拟必然假阴性**（`UA_CROSS_CHECK` 对 cloud 跑 3 局**触发 0 次**）⇒ 用 `sim_early.py --selfab`（自对弈镜像配对）。
-- 对手 all-in 在 history 里写**真实金额**（写 `-2` 会让 `to_call` 塌缩）；翻后公牌张数要对（3/4/5）。
-- 复盘：界面「底池」常是结果态 → 回到决策前；`DecisionLogger`：`decide(debug=False)` 会关日志，分析器需 `enable(True)+_quiet=True`。
-- **★ 行为指纹判座位**：日志双方元数据可能完全相同 ⇒ 把同一批决策点喂给两版、一致率高者为该座位。工具 `测/_py311/{fingerprint,verify_hands,diag_shove}.py`。
-- **`duel.py` 不可用**（模块级全局/RNG 无法隔离）⇒ 只能子进程隔离或真实日志回放。
-- 花色标号**只用于相等比较** ⇒ 重标号不影响决策（以 `botbattle_log._SUIT` 为权威，docstring 不一致属文档瑕疵）。
-- **v50 对拍（39 场景）**：翻前 0 差异；翻后主动仅尺寸有别；本版更保守（`_stability_guard` 翻前也压制、强牌加注偏小）。v50 ELF 指纹 `547e4a6`。
+## 构建/平台
+单文件 `内容/botzone_submit.py`；Linux ELF 由 GitHub Actions（仓库 1331-a/-2，workflow build-elf）产出；artifact 常下成 22 字节空 zip。★平台 1 核/512MiB/无网络/60s ⇒ **纯 Python 不引 numpy**。`测/学习升级版/poker_bot` 是用户 ELF，勿动。★技术判负(09-28)根因未定位。
 
-## 构建发布 / 模块 / 判负
-- 单文件 `内容/botzone_submit.py`；Linux ELF 由 GitHub Actions（仓库 `1331-a/-2`，workflow `build-elf`）产出，artifact `poker_bot-linux-x86-64`（~7MB）。本地无 Docker ⇒ Actions 是唯一发布路径。PyInstaller 锁 `<6.22`；【陷阱】artifact 常下成 **22 字节空 zip** ⇒ 解压后核对字节数。
-- **★ 平台资源**：1 核 / 512MiB / `/tmp` 256MiB / 无网络 / 60s 每步 ⇒ **保持纯 Python，不引 numpy**。`测/学习升级版/poker_bot` 是用户下载的 ELF，**不要动**。
-- 模块：strategy（决策+安全网）/ game_state（协议）/ opponent（画像）/ equity（胜率）/ ranges（百分位）/ match_ctx（赛制+规则账本）/ evaluator（牌型）/ bot（I/O）。
-- 【技术判负 09-28】43s / 7 手、第 7 手零响应。**`ended_at` 只记最后事件时间，60s 超时不计入** ⇒ 真故障 = 最后一步没响应。已加固 `bot.py`（循环永不中断）。**根因未定位。**
-
-## 调参入口
-`UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`(`WB_NO_CROSS_CHECK=1`)·`UA_SEALED_ALLIN`·`UA_SEALED_MARGIN` / `CROSS_CHECK_STRONG_PASS`(`WB_NO_CROSS_STRONG_PASS=1`) / `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON`·`BIG_MONEY_TOPTWO_ON` / **`BIG_CALL_RAMP_ON`(`WB_NO_BIGCALL_RAMP=1`)·`BIG_CALL_RAMP_BASE/MAX`·`BIG_CALL_RAMP_MIN_CAT`·`BIG_CALL_RAMP_SHOVE`** / **`FLUSH_MADE_PASS`·`PAIRED_TRAP_MADE_PASS`·`BIGMONEY_TWOPAIR_PASS`·`FLUSH_MADE_MIN_CAT`·`FLUSH_MADE_NO_ALLIN`** / `DOOM_ALLIN_ON`·`DOOM_TOPTWO_CALL_ON` / `GAMBLE_SHOVE_FOLD_MIN(0.45)`·`GAMBLE_LINE_FACTOR(0.95)` / `RANGE_NARROW_*`·`RANGE_SOFT_TAIL` / `STABILITY_LINE_FACTOR(0.70)`·`STABILITY_PREFLOP_ON` / `LEAD_ALLIN_SHIFT` / `RULE_LEARN_ON` / `OPEN_SIZE_BB(3.5)`。
-
-## 待办 / 已知瑕疵
-- **待用户裁决**：① ~~求稳是否只作用翻后~~ **已结案（10-01）**；② 强牌加注尺寸是否调大；③ `to_call==0` 且未见翻牌时是否先过牌看翻牌（手58）；④ **§5 的规则11 豁免是否启用**（实测只改 2/895，是手5/手6 的必要条件）；⑤ ramp 是否放开到「顺子遇全下」与「4/5 张才触发」。
-- ★ **内置对手（cloud / station）强于本 bot**（240 组里两臂全场均值都是负的）—— 新暴露的待查项。
-- `STABILITY_LINE_FACTOR` 实为 **0.70**（注释陈旧已修）。**打不过 v50** 是首要问题，唯一可信验证 = 用户提供 vs v50 的真实日志。
-- `测/学习升级版/poker_bot` 有一处非本轮改动未提交。任务 #38（出口链 KL 锚重构）依据 #37 实测**建议不做**。
+## 待办
+①强牌加注尺寸是否调大；②`to_call==0` 未见翻牌是否先过牌（手58）；③§5 规则11 豁免是否启用；④ramp 是否放开到「顺子遇全下」「4/5 张激活」。建议3 需与 §5 三开关配套。
+★**「提高 eq 权重」方向已试到尽头**（归因：eq 直接决定仅 2.0%；选项B 试点净 0/948，三重封锁）⇒
+**先解出口链再谈 eq**。`BIGBET_THRESH_ON`（选项B，默认关）已实现未打包；`内容/strategy.py` 与
+`botbattle/poker_bot.py` 暂不一致。
+★★ **`EQ_VETO` 已按用户拍板实现（选项②、δ=0.10，默认关 `WB_EQ_VETO=1`）**：逐层否决
+`_bet_cap_guard`/`_normalize`/`_big_money_guard`/`_cheap_call_guard` 的"更保守"改写
+（判据 `eq ≥ eff_req+margin+0.10`，数据由 `_face_bet` 曝露的 `_LAST_REQ_INFO` 提供）。
+实测 **18/948（1.9%）**、对照臂 0、13/13 回归全绿；方向全为更激进（`fold→allin` 两例即 eq0.901/0.896 那两个点）。
+★ 固有含义：7 次 `call→raise` 里 4 次注额 >3000 = **确实越过规则20 上限**（选项②的批准内容）。
+★ 待用户定夺：① 是否 bundle/提交；② `EQ_VETO_ON` 是否改成默认 True。详见 `复盘_20261011_EQ_VETO实现与AB.md`。

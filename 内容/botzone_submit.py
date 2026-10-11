@@ -2435,6 +2435,97 @@ try:
 except Exception:
     pass
 
+# 【2026-10-11 选项B试点】「大注+无坚果」由**硬弃**改为**抬高门槛后交回 eq**。
+# 现状：`to_call > 0.6×池` 且 无坚果/强听牌（判据 = `_effective_category < 两对`）
+#       → **直接 fold，完全不咨询 eq**。实测（`测/owner_probe.py`，948 点）：
+#       该硬规则命中 **12 次**，全部直接 fold，是「排除 eq 说话」的第 2 大块。
+# 问题：即使 eq 明显够（例如顶对面对对手超池，eq 0.7+）也照弃 ——
+#       与用户原则「已确保优势就该继续」矛盾。
+# 改法：不再硬弃 → `eff_req += bump`，仍由 **eq** 决定 call/fold，且
+#       **绝不允许加注/全下**（避免老问题：弱牌被"强牌分支"推出去，参见
+#       `_flush_made_guard` 的由来）。⇒ 只会 fold→call，永不 fold→raise。
+# bump 随「实际下注倍池」连续上升（同建议3 消除台阶的思路）：
+#     bump = BASE + SLOPE × max(commit/pot − BIG_BET_FOLD_FRAC, 0)，上限 MAX
+#   · 0.6×池 → +0.04 ；1.0× → +0.08 ；1.5× → +0.13 ；≥2.2× → +0.20（封顶）
+# ★★ 默认 False —— 这是**用户 2026-08-30 的编号硬规则**，动之前必须由用户拍板。
+#    默认下 `_bb_gate` 恒为 False ⇒ **逐字等价原规则**。env `WB_BIGBET_THRESH=1` 启用。
+BIGBET_THRESH_ON = False
+BIGBET_REQ_BUMP_BASE = 0.04
+BIGBET_REQ_BUMP_SLOPE = 0.10
+BIGBET_REQ_BUMP_MAX = 0.20
+try:
+    import os as _os4
+    if _os4.environ.get("WB_BIGBET_THRESH") == "1":
+        BIGBET_THRESH_ON = True
+except Exception:
+    pass
+
+# 【2026-10-11 用户拍板·选项②】`EQ_VETO` —— 「eq 确信区否决权」。
+# 背景（`复盘_20261011_出口链普查与eq否决权.md`，948 点实测）：
+#   出口链是一台**单向保守机器**（更保守 77 : 更激进 5）；
+#   77 次保守改写里 **26 次发生在 eq 大幅领先**（超门槛 ≥ +0.10）的点上，
+#   最极端 `eq 0.901 → allin→call→fold`、`eq 0.896 → raise→call→fold`。
+#   分布**两极**：中间地带（超门槛 0~+0.10）**为 0** —— 说明这些层不是在
+#   做边际权衡，而是**无视 eq 一刀切**。
+# 语义：**逐层否决** —— 在下面这四层的调用点包一层：若该层把动作改得
+#   "更保守"（act 档位下降）**且**决策层处于 eq 确信区，则**保持改前的动作**。
+#   · 只影响这四层，其余层（含 `_stability_guard` 求稳 / `_doom_call_upgrade`）
+#     行为**完全不变** —— 这是选项②与"链尾统一否决"的关键区别。
+#   · 作用范围（用户选的 ②）：
+#       `_bet_cap_guard` / `_normalize` / `_big_money_guard` / `_cheap_call_guard`
+#     ★ **不含** `_doom_call_upgrade`（规则2 跟注侧 doom —— 用户已裁决两次，不动）。
+#     ★ **不含** `_endgame_arbitrate`（EU 仲裁）/ `_stability_guard`（规则10 求稳）。
+#   · δ = 0.10：实测 0.05 与 0.10 结果完全相同（中间地带为 0），取大者更保守。
+# ★★ 默认 False —— 它会**局部越过规则20（注额上限）**，属用户编号规则，
+#    必须由用户显式启用。env `WB_EQ_VETO=1`。
+EQ_VETO_ON = False
+EQ_VETO_DELTA = 0.10
+try:
+    import os as _os5
+    if _os5.environ.get("WB_EQ_VETO") == "1":
+        EQ_VETO_ON = True
+except Exception:
+    pass
+
+# 动作激进度序（与 `测/owner_probe.py` 的 _ORDER 一致）：
+#   fold < check < call < raise < allin
+_ACT_RANK = {"fold": 0, "check": 1, "call": 2, "raise": 3, "allin": 4}
+
+# 决策层（`_face_bet`）最近一次用的 (eq, eff_req, margin)；
+# 由 `_face_bet` 在"门槛全部修正完"处写入，供 `_eq_veto_keep` 判定"eq 确信区"。
+# 口径**必须与 `WB_FACE_LOG` 的落点一致**（26 次那个测量就是在那里取的）。
+_LAST_REQ_INFO = None
+
+
+def _eq_confident():
+    """【EQ_VETO】决策层是否处于「eq 确信区」：eq ≥ 门槛 + margin + δ。"""
+    info = _LAST_REQ_INFO
+    if not info:
+        return False
+    try:
+        eq, eff_req, margin = info
+        return float(eq) >= float(eff_req) + float(margin) + EQ_VETO_DELTA
+    except Exception:
+        return False
+
+
+def _eq_veto_keep(state, before, after):
+    """【2026-10-11 选项②】出口链**单层**否决：eq 确信区不许把动作改得更保守。
+
+    只在 `_decide_impl` 里包住那四层调用点；其余层不受影响。
+    `before`/`after` 都是动作 dict；`after` 是"这一层原本想返回的动作"。
+    """
+    if not EQ_VETO_ON:
+        return after
+    try:
+        rb = _ACT_RANK.get(str((before or {}).get("act")), 9)
+        ra = _ACT_RANK.get(str((after or {}).get("act")), 9)
+        if rb > ra and _eq_confident():
+            return before           # 保持改前动作（否决本层的"更保守"改写）
+    except Exception:
+        pass
+    return after
+
 # 【调试】WB_FC_DEBUG=1 → WB_FC_LOG 收集 future_cost 折算记录（probe_gap.py 用）
 WB_FC_DEBUG = False
 WB_FC_LOG = []
@@ -2443,6 +2534,10 @@ WB_FC_LOG = []
 # 决策」——即区分「门槛不够高」与「eq 本身被高估」这两个完全不同的病因。
 WB_FACE_DEBUG = False
 WB_FACE_LOG = []
+# 【调试·2026-10-11】WB_FACE_DEBUG=1 时，额外收集「大注+无坚果」闸门(选项B)的
+# 逐点数据：eq / eff_req / margin / bump / 最终判定 —— 用于回答"闸门触发了多少次、
+# 每次都为什么没翻"（0 变化时区分"没触发"与"触发了但 eq 不够"）。
+WB_BIGBET_LOG = []
 try:
     import os as _os2
     if _os2.environ.get("WB_FC_DEBUG") == "1":
@@ -3814,7 +3909,7 @@ def _prepare_globals(state, model, ctx, reset_clock=True):
     """
     global _CTX, _OPP_JUMPED, _OPP_BETS_PER_HAND, \
         _DECISION_STARTED_AT, _MODEL_REF, _LAST_EQ, _LAST_ADJ, \
-        _DECISION_STARTED_WALL
+        _DECISION_STARTED_WALL, _LAST_REQ_INFO
     if reset_clock:
         _DECISION_STARTED_AT = time.perf_counter()
         _DECISION_STARTED_WALL = time.time()
@@ -3839,6 +3934,9 @@ def _prepare_globals(state, model, ctx, reset_clock=True):
     # 【2026-09-24】终局效用仲裁要用的胜率/档位：每次决策先清空（翻前没算 eq）
     _LAST_EQ = None
     _LAST_ADJ = "normal"
+    # 【2026-10-11 EQ_VETO】决策层门槛快照也每次清空（翻前/硬规则提前 return
+    # 时不会有值 → `_eq_confident()` 返回 False → 否决不生效，天然保守）。
+    _LAST_REQ_INFO = None
     # 【对手突袭大注】全局标志（翻前/翻后共享，决策一开始就要生效）
     _OPP_JUMPED = _opp_bet_jumped(state)
     # 【2026-08-25 用户规则】对手每局下注数量 → 跟注门槛微调
@@ -3931,7 +4029,8 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 两者本质亦为防对手锁赢，统一归入规则2 模块（原分散两处已合并）。
     action = _lock_win_tail_guard(state, action)
     # 【规则3】下注额限制（第三优先级）：注额分级上限由 _normalize 统一执行
-    action = _bet_cap_guard(state, action)
+    # 【2026-10-11 EQ_VETO·选项②】包一层：eq 确信区时本层不得把动作改得更保守
+    action = _eq_veto_keep(state, action, _bet_cap_guard(state, action))
     # 【规则13·2026-09-10 用户规则】好牌激进打法：主动下注 ≥2000（不超 3000）。
     # 动机：我方有「对手下注 >3000 且无坚果 → 弃牌」的限制，若好牌只下小注，
     # 对手 raise 到 3000+ 我方反而弃牌错失价值；主动打 2000~3000 把底池做大，
@@ -3945,7 +4044,7 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 【规则10·2026-09-14 用户规则】求稳模式：靠近锁赢线/终局领先时禁止
     # 主动加注与主动全下（降级为跟注 / 过牌；强牌例外，见函数注释）。
     action = _stability_guard(state, model, action)
-    action = _normalize(state, action)
+    action = _eq_veto_keep(state, action, _normalize(state, action))   # EQ_VETO·选项②
     # 【2026-09-24 用户规则】终局效用仲裁（放在 _normalize 之后：这样比较的是
     # 最终合法注额；仲裁若判全押会带 `lk` 标记，不再被牌型/金额上限降级）。
     # 取代原来的 `_doom_bet_downgrade` + `_doom_call_upgrade` 两个单向补丁。
@@ -3953,7 +4052,7 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 【规则20·2026-09-24 用户规则】大额投入闸门：需跟 > 3000 要 ≥ 三条，
     # 主动全押要 ≥ 三条（防锁赢/搏命区已在入口返回）。必须放在仲裁**之后**——
     # 仲裁的 `UA_SEALED_ALLIN` 会带 `lk` 免检标记直接推光，这里再收紧。
-    action = _big_money_guard(state, action)
+    action = _eq_veto_keep(state, action, _big_money_guard(state, action))   # EQ_VETO·选项②
     # 【方案A·2026-09-24 用户规则】便宜跟注封顶：必须放在仲裁**之后**。
     # 实战第32手（一对 9 面对河牌 1,765）在旧结构下的链路是：
     #   决策层按「便宜跟注」→ call（注额上限不约束便宜跟注）
@@ -3964,7 +4063,7 @@ def _decide_impl(state, model, ctx=None, debug=False, _lw=_LW_UNSET,
     # 带 lk 的全押降级为普通 call，`lk` 标记随之丢失；若本闸门先跑，就会把
     # 「规则2 锁赢体系」刚定下的 call 再翻成 fold（第32手实测冲突）。
     # 配合 `_lock_win_engaged` 判定：规则2/20 已介入时本闸门一律让位。
-    action = _cheap_call_guard(state, action)
+    action = _eq_veto_keep(state, action, _cheap_call_guard(state, action))   # EQ_VETO·选项②
     # 【规则2 补漏·2026-09-28 用户规则】跟注即锁赢 → 不允许「便宜跟注」，改全押。
     # 必须放在**最后一步**（在 `_big_money_guard` / `_cheap_call_guard` 之后）：
     # 规则20 会把带 lk 的主动全押降级为 call，而本规则是用户硬规则、优先级更高。
@@ -6881,6 +6980,14 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     #   · 对手被动（不继续开火）或河牌 → 折算额为 0 → **逐字等价于原规则**
     #     （0.6×池），不会反过来过度弃牌。
     # 关掉 A（`FUTURE_COST_ON=False`）时也逐字等价于原规则 → A/B 对照可隔离。
+    _bb_gate = False    # 【2026-10-11 选项B】大注+无坚果 → 改为交回 eq（在 eff_req 之后生效）
+    _bb_ratio = 0.0
+    # ★ 全下/需跟 ≥ 剩余筹码：**不纳入本试点**。这类点有专门分支（规则16/17 的
+    #   `_call_allin_relax` / `_lead_allin_shift` + 各自门槛），本试点只用
+    #   "赔率门槛"近似它 ⇒ 会绕过那些用户规则。实测不加这条限定，4 个翻转点
+    #   全是 pot≈to_call≈20000 的全下对拼（eq 只赢 0.02 边际）—— 那不是本意。
+    _bb_allin_spot = (bool(getattr(state, "opp_is_allin", False))
+                      or to_call >= state.my_left)
     if to_call > 0 and not _has_nuts_or_strong_draw(state):
         _bb_commit = to_call
         if FUTURE_COST_ON and BIG_BET_FOLD_A_ON:
@@ -6892,13 +6999,20 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             except Exception:
                 pass
         if _bb_commit > BIG_BET_FOLD_FRAC * pot:
-            return {"act": "fold"}
+            if (not BIGBET_THRESH_ON) or _bb_allin_spot:
+                return {"act": "fold"}
+            # 【选项B】不硬弃：记下门槛，稍后由 eq 决定（只允许 call/fold，绝不加注）
+            _bb_gate = True
+            _bb_ratio = (_bb_commit / pot) if pot > 0 else 99.0
     # 【用户规则 2026-08-30】4 倍突袭 + wet 公面 + 无坚果 → 直接弃
     # 截图4：turn 4 倍加注 + 公面 4♣ 听花密集 + 自己无坚果 → 弃
     if to_call > 0:
         try:
             if _OPP_JUMPED and _board_wet(state) and not _has_nuts_or_strong_draw(state):
-                return {"act": "fold"}
+                if (not BIGBET_THRESH_ON) or _bb_allin_spot:
+                    return {"act": "fold"}
+                _bb_gate = True
+                _bb_ratio = max(_bb_ratio, 1.0)      # 突袭 → 至少按 1× 池计加价
         except Exception:
             pass
 
@@ -6906,10 +7020,17 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     # 加注） + 我方有效牌型 < 三条（含纯公对三条 _effective_category 已降级）
     # → 直接弃牌：对手突袭大注说明成牌/听牌成型，反诈唬/半诈唬被识破后
     # 止损；弱于三条的牌（一对/两对/公对三条）面对 4 倍增量无继续价值
+    # ★【2026-10-11 选项B 实测】这条与上面「大注+无坚果」是**同一人群的两道锁**：
+    #   实测 15 个「翻后弱牌面对 >0.6×池」的点里 **14 个 `_OPP_JUMPED=True`**
+    #   ⇒ 只把「大注+无坚果」改成门槛 = **0 变化**（全被这条接走）。
+    #   要在这群点上给 eq 话语权，必须**一起改**。
     if to_call > 0:
         try:
             if _OPP_JUMPED and _effective_category(state) < THREE_OF_A_KIND:
-                return {"act": "fold"}
+                if (not BIGBET_THRESH_ON) or _bb_allin_spot:
+                    return {"act": "fold"}
+                _bb_gate = True
+                _bb_ratio = max(_bb_ratio, 1.0)
         except Exception:
             pass
 
@@ -7011,6 +7132,15 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     elif adj in ("desperate", "doomed"):
         margin -= 0.06       # 劣势追分：跟注门槛大幅放宽（多看牌搏翻盘）
 
+    # 【2026-10-11 EQ_VETO】把「决策层用的 eq / 门槛 / 边际」暴露给出口链的
+    # 「eq 确信区否决权」。★ 落点必须与下面 `WB_FACE_LOG` **完全一致**
+    # （26 次那个实测就是在这个口径下取的）。
+    global _LAST_REQ_INFO
+    try:
+        _LAST_REQ_INFO = (float(eq), float(eff_req), float(margin))
+    except Exception:
+        _LAST_REQ_INFO = None
+
     # 【调试钩子·2026-09-26】记录跟注点全景（WB_FACE_DEBUG=1）
     if WB_FACE_DEBUG:
         try:
@@ -7045,6 +7175,32 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     if adj not in ("pressure", "desperate", "doomed") and _OPP_JUMPED:
         eff_req += OPP_JUMP_FAC_MARGIN
         eq -= OPP_JUMP_EQ_PENALTY   # 突袭大注=对手范围大幅收紧，eq 高估需打折
+
+    # 【2026-10-11 选项B】「大注+无坚果」交回 eq（只允许 call/fold，绝不加注）。
+    # 放在此处 = 用**全部**修正后的 eff_req（未来成本/隐含/原型/街级/ramp/突袭都算过），
+    # 但绕开后面的「强牌加注」分支 ⇒ 不会把弱牌推成全下；且只会 fold→call。
+    if _bb_gate:
+        _bb_bump = BIGBET_REQ_BUMP_BASE + BIGBET_REQ_BUMP_SLOPE * max(
+            _bb_ratio - BIG_BET_FOLD_FRAC, 0.0)
+        _bb_bump = min(_bb_bump, BIGBET_REQ_BUMP_MAX)
+        _bb_thr = eff_req + margin + _bb_bump
+        _bb_out = ({"act": "call"} if eq >= _bb_thr else {"act": "fold"})
+        if WB_FACE_DEBUG:
+            try:
+                WB_BIGBET_LOG.append({
+                    "stage": str(state.stage), "pot": int(pot),
+                    "to_call": int(to_call), "ratio": round(float(_bb_ratio), 3),
+                    "eq": round(float(eq), 4), "eff_req": round(float(eff_req), 4),
+                    "margin": round(float(margin), 4),
+                    "bump": round(float(_bb_bump), 4),
+                    "thr": round(float(_bb_thr), 4),
+                    "out": str(_bb_out.get("act")), "adj": str(adj),
+                    "hole": list(state.hole), "board": list(state.board),
+                })
+            except Exception:
+                pass
+        return _bb_out
+
     # ---- 对手全下 / 需跟注额 ≥ 剩余筹码：纯赔率决策 ----
     # 【硬性风险规避】河牌裸公对陷阱：直接弃牌，不做任何数学计算——
     # 对手全下 range 里两对/三条占比极高，裸公对几乎必输（第 49 手教训）。
