@@ -49,7 +49,12 @@
 ★ **其中 手21(20260924154120, 一对, 6318, 1.14×池) 正是规则20 的原始案例** ⇒ 真正的问题是**牌力**，不是金额。
 ⇒ 现行语义 = 「**底池 >3000 后，对手下满池我们只能拿三条+去接**」；而底池过 3000 是**常规场景**；
 且是**悬崖**（3000→eq≥0.33；3001→必须≥三条）⇒ **对手多下 1 个筹码即可压死我们**（主动侧有 `_dynamic_cap` 防 read，**跟注侧没有**）。
-**建议（未实施）**：① 把 4 处金额闸门收敛成 `_big_call_gate()`（纯工程、行为不变）；② 主判据换成「对手是否推光」；③ **闸门从「筛牌力」改成「抬门槛」**（连续加价，由 `eq` 决定）⇒ 消悬崖、弱牌仍被挡；④ `opp_threshold_bets` 防 read。**这 5 个样本不足以做统计 A/B**（±1 点=20%）。
+**★ 建议3 已于 10-11 实现并**默认启用**（用户拍板）**：`BIG_CALL_RAMP_ON=True`，`_big_call_ramp()`（`加价=BASE+(MAX−BASE)×max((to_call−3000)/3000, to_call/剩余)`，BASE 0.06/MAX 0.20）+ `_big_call_ramp_applies()`（**唯一判据**：开关 + `to_call>3000` + 牌型 ≥ `BIG_CALL_RAMP_MIN_CAT`=两对）。落点：`_face_bet`（`eff_req += ramp`）+ `_normalize`×2 + `_big_money_guard` 的 `call` 分支。回退 `WB_NO_BIGCALL_RAMP=1`。
+  ★★ **两个必须记住的实测结论**：
+  ① **ramp 单独启用 = 0 变化 / 895** —— 手5/手6 在 `_face_bet` 之前就被**规则11**弃了；其余压线点被规则2/18 入口短路或弱牌加价后仍够不到。⇒ **ramp 与 §5（规则11 豁免）是配套的，只做一个看不到变化**。
+  ② **「弱牌交给 eq 挡」在这条线上不成立**：去掉牌型下限后 `test_log_v2` 的「0924第21手:规则20 —— 大额跟注降级为弃牌」变成 `call`，而**手21 正是规则20 立规的原始案例（一对 6）**，其出错原因就是「对手判很松 → 范围 ~70% → 一对胜率被抬到 0.46」⇒ **`eq` 本身就是被高估的量**。故设牌型下限（口径同 10-09 `_cross_check_exempt`）。同理 `_big_money_guard` 的 **`allin` 分支（R2 弱牌不许推光）不加 ramp 豁免**。
+  ★ `ramp+§5` = **2/895**（手5、手6 → call）；13/13 回归全绿。工具 `测/ramp_ab.py`、`测/ramp_control.py`。
+**尚未做**：① 把 4 处金额闸门收敛成 `_big_call_gate()`（ramp 已让 3 处共用判据，算做了一半）；② 主判据换成「对手是否推光」；④ `opp_threshold_bets` 防 read。**这 5 个样本不足以做统计 A/B**（±1 点=20%）。
 
 ## 出口链（★ 最大结构问题）
 `decide` → 入口短路 `_lock_win_unified`(规则2 A/B/C，≈7%) 与 `_gamble_plan`(规则18) → 决策层 → **出口 10 层**（`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`）。v50 出口只有 `_normalize`。

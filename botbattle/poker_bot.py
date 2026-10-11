@@ -2275,6 +2275,56 @@ try:
 except Exception:
     pass
 
+# ── 【2026-10-11 建议3·「金额闸门 → 连续抬门槛」】用户 2026-10-11 拍板 ──
+# 起因：用户问「对手刚好下注超过 3000 压住我们怎么办」。
+# 全量普查（10 份日志 / 668 个「面对下注」决策点，工具 `测/cliff_3000.py`）：
+#   · `to_call > 3000` 共 41 次 —— **36 次是对手推光**（定向决策，弃牌正确），
+#     **只有 5 次是普通下注**，而这 5 次的下注额全在 **0.98×~1.30× 池**（满池/超池），
+#     **没有一次是"刻意压线"**（2900~3000 样本 0 次）。
+#   · ★ 这 5 次金额几乎相同，**唯一能区分"该跟/该弃"的是牌型**
+#     （一对=该弃、两对/三条=该跟；其中 手21 正是规则20 的原始案例：一对 6318）。
+#   ⇒ 结论：**绝对金额 3000 是「大注=危险」的糟糕代理**，它实际代理成了「满池注=危险」；
+#     而底池涨过 3000 在本赛制（20000 起始/盲注 50/100/70 手）里是**常规场景**。
+#   还带来一个**悬崖**：`to_call=3000` 时门槛是「eq ≥ 约 0.33」，`to_call=3001` 时
+#     直接跳到「必须 ≥三条」⇒ **对手多下 1 个筹码就能把我们的跟注范围压成"只有三条+"**。
+#     （主动下注侧早已用 `_dynamic_cap` 做过防 read，**跟注侧从来没有**。）
+#
+# 改法（本块）：`to_call > BIG_CALL_LIMIT` 时**不再硬弃**，改为**连续抬高所需胜率**
+#   （`_big_call_ramp`），最终**仍由 `eq` 决定** ——
+#   · 弱牌依然过不去（一对的 eq 远低于抬高后的门槛）⇒ 2026-09-24 的保护**不丢**；
+#   · 强牌不再被一刀切（两对能按赔率跟）；
+#   · **台阶消失** ⇒ 对手无法靠「下 3001」获利。
+# 回退：`WB_NO_BIGCALL_RAMP=1` → 逐字回到「>3000 且 <三条 → 弃」。
+BIG_CALL_RAMP_ON = True        # 总开关
+BIG_CALL_RAMP_BASE = 0.06      # 刚超线时的基础加价（门槛 +6% 胜率）
+BIG_CALL_RAMP_MAX = 0.20       # 加价上限
+# ★★ 牌型下限：**只有 ≥ 两对才走「抬门槛」**，弱牌（一对/高牌）仍按原规则弃。
+#   为什么不能纯靠 `eq` 挡弱牌（这是实测逼出来的，务必知悉）：
+#     规则20（09-24）立规的原始案例（手21：**一对 6** 面对 6,318）之所以出事，
+#     正是因为**对手被判很松 → 范围 ~70% → 一对的 MC 胜率被抬到 0.46**。
+#     也就是说在这条线上 `eq` 本身就是被高估的那个量 —— 拿它当唯一裁判会重演旧事故。
+#   实测证据：去掉这个下限后 `test_log_v2` 的
+#     「0924第21手:规则20 —— 大额跟注（6,318 > 3,000）也降级为弃牌」变成 `call`。
+#   ⇒ 保护弱牌改用**牌型下限**（与 10-09 `_cross_check_exempt`、10-01 顶两对同一套口径），
+#     而"消除 3000/3001 悬崖"只对**已成牌**生效（弱牌在两边都是弃，本来就没有悬崖可钻）。
+BIG_CALL_RAMP_MIN_CAT = TWO_PAIR
+# 是否也作用于「对手推光 / 需跟 ≥ 剩余筹码」：默认 **否**。
+#   理由：推光本就有专门的赔率分支，且普查显示 36 次推光里弃 89% 是对的
+#   —— 不动它 = 零新增风险。要更激进可置 True。
+BIG_CALL_RAMP_SHOVE = False
+try:
+    import os as _os_br
+    if _os_br.environ.get("WB_NO_BIGCALL_RAMP") == "1":
+        BIG_CALL_RAMP_ON = False
+    if _os_br.environ.get("WB_BIGCALL_RAMP_SHOVE") == "1":
+        BIG_CALL_RAMP_SHOVE = True
+    if _os_br.environ.get("WB_BIGCALL_RAMP_BASE"):
+        BIG_CALL_RAMP_BASE = float(_os_br.environ["WB_BIGCALL_RAMP_BASE"])
+    if _os_br.environ.get("WB_BIGCALL_RAMP_MAX"):
+        BIG_CALL_RAMP_MAX = float(_os_br.environ["WB_BIGCALL_RAMP_MAX"])
+except Exception:
+    pass
+
 # ── 方案A（2026-09-24 用户规则）：跟注门槛计入「后续投入」（future cost）──
 # 背景（4 局真实日志定量）：vs 外部对手的输局里，前中期亏损几乎全部是同一种
 # 形态 ——「翻前开池 300 → 翻后小注 188~222 或被跟 519~565 → 转牌被
@@ -3121,6 +3171,13 @@ def _big_money_guard(state, action):
             # 【2026-10-11 方案③】普通两对同样降级为 call（默认关闭）
             if BIGMONEY_TWOPAIR_PASS and _effective_category(state) >= FLUSH_MADE_MIN_CAT:
                 return {"act": "call"}
+            # ★ 【2026-10-11 建议3】**这里不加 ramp 豁免** ——
+            #   本支是规则20 的 **R2（弱牌不许主动推光）**，与 R1（大额跟注闸门）
+            #   是两条不同的规则；ramp 修的是 **R1 的跟注门槛**。
+            #   实测：给这里加豁免会让 `test_log_v2` 的「0924第21手:规则20 ——
+            #   弱牌主动全押被降级为弃牌（需跟 6,318 > 3,000）」变成 `call`
+            #   —— 那正是 2026-09-24 规则20 立规的原始案例（一对 6），不能放。
+            #   两对之类要走这一支时，用 `BIGMONEY_TWOPAIR_PASS`（方案③）单独开。
             if to_call > BIG_CALL_LIMIT:
                 return {"act": "fold"}
             return {"act": "call"}
@@ -3133,6 +3190,10 @@ def _big_money_guard(state, action):
             # 【2026-10-11 方案③】普通两对（非顶两对）也允许跟 >3000 ——
             # 手6 的两对 K+8（K 为场上最大牌）就是被这一支弃掉的。默认关闭。
             if BIGMONEY_TWOPAIR_PASS and _effective_category(state) >= FLUSH_MADE_MIN_CAT:
+                return action
+            # 【2026-10-11 建议3】已成牌（≥两对）时超 3000 不再硬弃：
+            # 门槛已由决策层的 `_big_call_ramp` 抬过。弱牌不适用，照旧弃。
+            if _big_call_ramp_applies(state):
                 return action
             return {"act": "fold"}
     except Exception:
@@ -3567,6 +3628,59 @@ def _bet_limit(state):
         return HIGH_BET_LIMIT
     except Exception:
         return HIGH_BET_LIMIT
+
+
+def _big_call_ramp_applies(state):
+    """【建议3 的门槛】本决策点是否适用「金额闸门 → 抬门槛」而不是硬弃。
+
+    条件：开关开 + `to_call > BIG_CALL_LIMIT` + 我方**已成牌**
+          （`_effective_category ≥ BIG_CALL_RAMP_MIN_CAT` = 两对）。
+    弱牌（一对/高牌）**不适用** ⇒ 出口层照旧弃 —— 保住规则20 的原始保护
+    （理由见 `BIG_CALL_RAMP_MIN_CAT` 上方注释：那条线上 `eq` 本身可能被高估）。
+    `_big_call_ramp` 与出口层的 `_normalize` / `_big_money_guard` 共用本函数，
+    保证"抬了多少价"与"允不允许放过"永远是同一个判据。
+    """
+    if not BIG_CALL_RAMP_ON:
+        return False
+    try:
+        if int(state.to_call) <= BIG_CALL_LIMIT:
+            return False
+        return _effective_category(state) >= BIG_CALL_RAMP_MIN_CAT
+    except Exception:
+        return False
+
+
+def _big_call_ramp(state):
+    """【2026-10-11 建议3】`to_call > BIG_CALL_LIMIT` 时要**额外**抬高的胜率门槛。
+
+    返回 0.0 = 不加价（不触发 / 开关关闭 / 推光且未开启 RAMP_SHOVE）。
+    加价公式（两个维度取较大者，再线性映射到 [BASE, MAX]）：
+
+        超线程度 x = (to_call − 3000) / 3000            （3000→6000 走满）
+        筹码占比 y = to_call / 我方剩余筹码
+        加价 = BASE + (MAX − BASE) × max(x, y)
+
+    · 只用「金额»一个维度不够（3001 与 6000 风险不同）；
+    · 加「占我剩余筹码」是因为同样 4000 的注，剩余 20000 与剩余 8000 完全不是一回事。
+
+    ★ 为什么是"加价"而不是"硬弃"：弱牌**依然过不去**（由 `eq` 挡），
+      但台阶没了 —— 对手无法通过"正好下 3001"把我们的跟注范围压成"只有三条+"。
+      依据见 `BIG_CALL_RAMP_ON` 上方的大段说明与 `测/cliff_3000.py`。
+    """
+    if not _big_call_ramp_applies(state):
+        return 0.0
+    try:
+        to_call = int(state.to_call)
+        if not BIG_CALL_RAMP_SHOVE:
+            # 推光 / 需跟 ≥ 剩余筹码：交给 `_face_bet` 既有的赔率分支（不动 = 零新增风险）
+            if state.any_allin or to_call >= int(state.my_left):
+                return 0.0
+        x = min(1.0, (to_call - BIG_CALL_LIMIT) / float(BIG_CALL_LIMIT))
+        y = min(1.0, to_call / float(max(1, int(state.my_left))))
+        k = max(x, y)
+        return BIG_CALL_RAMP_BASE + (BIG_CALL_RAMP_MAX - BIG_CALL_RAMP_BASE) * k
+    except Exception:
+        return 0.0
 
 
 def _over_limit(state, amount):
@@ -6882,6 +6996,16 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         eff_req += 0.03
     elif opp_hand_bets <= 0.7:
         eff_req -= 0.02
+    # 【2026-10-11 建议3】金额闸门 → 连续抬门槛。
+    # 替代原来的「to_call > 3000 且 <三条 → 直接弃」（用户 09-24 规则）：
+    # 弱牌仍被 `eq` 挡掉（保护不丢），但不再有 3000/3001 的悬崖。
+    # 加价后 `eff_req` 参与后面所有分支（含全下档），即"加价"而非"禁跟"。
+    try:
+        _ramp = _big_call_ramp(state)
+        if _ramp > 0.0:
+            eff_req += _ramp
+    except Exception:
+        pass
     if adj == "protect":
         margin += 0.06       # 领先时只打好赔率
     elif adj in ("desperate", "doomed"):
@@ -7384,6 +7508,12 @@ def _normalize(state, action):
             if BIGMONEY_TWOPAIR_PASS and \
                     _effective_category(state) >= FLUSH_MADE_MIN_CAT:
                 return {"act": "call"}
+            # 【2026-10-11 建议3】已成牌（≥两对）时 `to_call > 3000` 不再硬弃 ——
+            # 决策层（`_face_bet`）已用 `_big_call_ramp` 抬过门槛，
+            # 它能给出 call 就代表"按赔率值得跟" ⇒ 出口层不许再翻案。
+            # 弱牌不适用（`_big_call_ramp_applies` 内含牌型下限），照旧弃。
+            if _big_call_ramp_applies(state):
+                return {"act": "call"}
             return {"act": "fold"}
         # 保险：万一 _over_limit 的语义将来被改动，这条仍能兜住翻后金额闸门。
         if state.stage != "preflop" and to_call > _bet_limit(state):
@@ -7391,6 +7521,8 @@ def _normalize(state, action):
                 return {"act": "call"}
             if BIGMONEY_TWOPAIR_PASS and \
                     _effective_category(state) >= FLUSH_MADE_MIN_CAT:
+                return {"act": "call"}
+            if _big_call_ramp_applies(state):                       # 建议3，同上
                 return {"act": "call"}
             return {"act": "fold"}
         return {"act": "call"}
