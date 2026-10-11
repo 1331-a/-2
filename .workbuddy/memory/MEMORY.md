@@ -42,6 +42,15 @@
     ⇒ **已实现豁免（默认关闭）**：`FLUSH_MADE_PASS`(env `WB_FLUSH_MADE=1`) / `PAIRED_TRAP_MADE_PASS`(`WB_PAIRED_MADE=1`) / `BIGMONEY_TWOPAIR_PASS`(`WB_BIGMONEY_TWOPAIR=1`) + 阈值 `FLUSH_MADE_MIN_CAT`(`WB_FLUSH_MADE_CAT=3`) + **★非全下门控 `FLUSH_MADE_NO_ALLIN`**(`WB_FLUSH_MADE_ALLIN=1` 放开) + 护栏 `_flush_made_guard`（已成牌时**只跟不推**）。
     **共 7 处落点**；实测最终方案 895 点**只改 2 点**（只有手5/手6 fold→call）。详见 `复盘_20261011_同花威胁连弃.md`。
 
+## ★ 「3000 悬崖」（10-11 全量普查，`测/cliff_3000.py`）
+**口径：必须用 `GameState` 直接解析决策点，不要手工重建底池**（按街清零会漏前面街筹码 ⇒ 把满池注错判成 1.00 倍池；`sb/.bb` 是座位号；`action.amount` 对 raise 是本街 raise-to）。
+668 个「面对下注」决策点：`to_call>3000` 共 **41 次(6.1%)** = **36 次对手推光**（定向决策，弃对）+ **仅 5 次普通下注**。
+这 5 次全在 **0.98×~1.30× 池**（满池/超池），**没有一次是刻意压线**（2900~3000 样本 0 次）。
+★ **其中 手21(20260924154120, 一对, 6318, 1.14×池) 正是规则20 的原始案例** ⇒ 真正的问题是**牌力**，不是金额。
+⇒ 现行语义 = 「**底池 >3000 后，对手下满池我们只能拿三条+去接**」；而底池过 3000 是**常规场景**；
+且是**悬崖**（3000→eq≥0.33；3001→必须≥三条）⇒ **对手多下 1 个筹码即可压死我们**（主动侧有 `_dynamic_cap` 防 read，**跟注侧没有**）。
+**建议（未实施）**：① 把 4 处金额闸门收敛成 `_big_call_gate()`（纯工程、行为不变）；② 主判据换成「对手是否推光」；③ **闸门从「筛牌力」改成「抬门槛」**（连续加价，由 `eq` 决定）⇒ 消悬崖、弱牌仍被挡；④ `opp_threshold_bets` 防 read。**这 5 个样本不足以做统计 A/B**（±1 点=20%）。
+
 ## 出口链（★ 最大结构问题）
 `decide` → 入口短路 `_lock_win_unified`(规则2 A/B/C，≈7%) 与 `_gamble_plan`(规则18) → 决策层 → **出口 10 层**（`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`）。v50 出口只有 `_normalize`。
 **实测（10-01 `测/exit_chain_probe.py`，315 真实点）**：`_stability_guard` **26/49=53%（22/26 在翻前，全把 raise 降 call/check）**；`_bet_cap_guard` 9；`_aggressive_strong_bet` 7（全放大）；其余各 1~2；**`_lock_win_tail_guard`/`_bluff_cap_guard` 各调用 292 次、0 翻转**。净翻转 13.3%、被改写 ≥2 次仅 1.9%、打架仅 1 次。
