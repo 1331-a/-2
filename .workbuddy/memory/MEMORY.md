@@ -57,16 +57,14 @@
 **尚未做**：① 把 4 处金额闸门收敛成 `_big_call_gate()`（ramp 已让 3 处共用判据，算做了一半）；② 主判据换成「对手是否推光」；④ `opp_threshold_bets` 防 read。**这 5 个样本不足以做统计 A/B**（±1 点=20%）。
 
 ## 出口链（★ 最大结构问题）
-`decide` → 入口短路 `_lock_win_unified`(规则2 A/B/C，≈7%) 与 `_gamble_plan`(规则18) → 决策层 → **出口 10 层**（`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`）。v50 出口只有 `_normalize`。
-**实测（10-01 `测/exit_chain_probe.py`，315 真实点）**：`_stability_guard` **26/49=53%（22/26 在翻前，全把 raise 降 call/check）**；`_bet_cap_guard` 9；`_aggressive_strong_bet` 7（全放大）；其余各 1~2；**`_lock_win_tail_guard`/`_bluff_cap_guard` 各调用 292 次、0 翻转**。净翻转 13.3%、被改写 ≥2 次仅 1.9%、打架仅 1 次。
-⇒ ① **「层间打架」不是主要风险**（原假设被否定）——`我加注→对加注→我再加注→我弃牌` 来自**决策层自身**（同街每次轮到我都是独立决策点），**别再用它当出口链证据**；② 收敛收益调低预期（只 2 个死层）；③ `_stability_guard` 翻前压制是唯一大项（A/B 已结案，见下）；④ **`LIMIT` 会静默截断** ⇒ **重放前先确认决策点总数**。
-★ **规律（两次踩到）**：**同一条「金额/阈值」规则通常在出口链上有 3~5 个实现点**（10-01 顶两对 4 处、10-11 规则11 4 处）⇒ **只改一处 = diff 报 0 变化**。
+`decide` → 入口短路 `_lock_win_unified`(规则2) 与 `_gamble_plan`(规则18)，≈7% **不走出口链** → 决策层 → **出口 10 层**：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`（v50 只有 `_normalize`）。
+实测（10-01，315 点）：`_stability_guard` 26/49=53%（22/26 在翻前，全降级 raise）；`_bet_cap_guard` 9；`_aggressive_strong_bet` 7；其余各 1~2；`_lock_win_tail_guard`/`_bluff_cap_guard` **292 次调用 0 翻转**。净翻转 13.3%、被改写 ≥2 次 1.9%、打架 1 次（手53）。
+⇒ ① **「层间打架」不是主要风险**：`我加注→对加注→我再加注→我弃牌` 来自**决策层自身**（同街每次轮到我都是独立决策点），**别用它当出口链证据**；② 收敛收益调低（只 2 个死层）；③ `LIMIT` **静默截断** ⇒ **重放前先确认决策点总数**。
+★ **规律（两次踩到）**：**同一条「金额/阈值」规则在出口链上通常有 3~5 个实现点**（10-01 顶两对 4 处、10-11 规则11 4 处）⇒ **只改一处 = diff 报 0 变化**。
 
 ## 对手画像与胜率
-- 【算力 09-30】`MC_ITERATIONS=30000`/`TIME_BUDGET=5.0`/`ALLIN_MC=20000`/`ALLIN_TIME_BUDGET=4.0`/`DECISION_TIMEOUT=40.0`/`EQ_TOTAL_BUDGET=12.0`（各路共用 `_eq_deadline()`）。**播种两处**：`equity._rng` **和全局 `random`**（只播前者一致率 52/60）。env `WB_MC_ITERS`/`WB_MC_BUDGET`。
-- 【精确枚举 09-30】`equity.equity_best()`：河牌/转牌走 `exact_equity`（误差 0）、翻牌及以前回退 MC。河牌 990 组合 **0.05s**；转牌 ≈4.4 万 ≈2.6s；翻牌 ≈214 万超预算。
-- 【★ 软尾巴 09-30】无偏校准发现模型范围**系统性偏窄约 2 倍**（覆盖率 50~67%）→ eq 低估 0.0589；`RANGE_SOFT_TAIL` 修正后与真实底牌差距 **+0.0012**。★ **全下禁用** `ALLIN_SOFT_TAIL=0.0`。工具 `测/range_eval.py`·`tail_impact.py`·`tail_actions.py`。
-- 【★ 软时限陷阱 09-30 修复】`_eq_deadline` 兜底下限**不能无界**（原 `max(limit, now+0.05)` ⇒ 永不主动停 ⇒ 单步 **277.46s** 判负）。已封顶 `决策起点 + EQ_TOTAL_BUDGET + EQ_GRACE`。
+- 【算力 09-30】`MC_ITERATIONS=30000`/`TIME_BUDGET=5.0`/`ALLIN_MC=20000`/`ALLIN_TIME_BUDGET=4.0`/`DECISION_TIMEOUT=40.0`/`EQ_TOTAL_BUDGET=12.0`（共用 `_eq_deadline()`）。**播种两处**：`equity._rng` **和全局 `random`**。env `WB_MC_ITERS`/`WB_MC_BUDGET`。
+- 【09-30 三条结论】① `equity_best()` 河牌/转牌走**精确枚举**（误差 0；河牌 990 组合 0.05s、转牌 ≈4.4 万 2.6s），翻牌及以前 MC；② 无偏校准发现模型范围**系统性偏窄约 2 倍** → eq 低估 0.0589，`RANGE_SOFT_TAIL` 修正后差 **+0.0012**（★**全下禁用** `ALLIN_SOFT_TAIL=0.0`）；③ ★ `_eq_deadline` 兜底下限**不能无界**（原 `max(limit, now+0.05)` ⇒ 永不主动停 ⇒ 单步 **277.46s 判负**），已封顶。工具 `测/range_eval.py`·`tail_impact.py`·`tail_actions.py`。
 - 【规则12 已接线 09-30】`_check_bet_weight()` 融合 `check_fold_rate`（贝叶斯 `w=n/(n+6)`，n ≥ 6）+ `check_raise_rate ≥ 0.20` → 频率 ×0.6。
 - 【翻前尺寸】`OPEN_SIZE_BB=3.5`/`VS_STATION=3.0`/`ISO=4.0`/`STEAL=3.0`；★**只改 `OPEN_SIZE_BB` 无效**（`_learned_size` 用 `bucket_to_frac` 覆盖）。条件化乘 `clamp((0.80−eff_vpip)/0.25,0,1)` × `min(1,hands_seen/8)` ⇒ 实际 [2.5,3.5]，**前 8 手不生效**。
 - 【默认关闭】`BIG_BET_FOLD_A_ON=False`；`WB_FORCE_BIGBET_A=1` 启用。条件化 A（`_future_aggr_factor`）/B（`_open_size_bb`）**早已实现**；实测对 code A 自动退化为中性 ⇒「看不出变化」是预期行为。
@@ -86,25 +84,20 @@
 - ★ **`diff_ab.py --off-env <VAR>` 的列方向**：它把 VAR 设为 1 = **关掉改动** ⇒ 输出**第一列（"旧"）其实是候选臂**。对 `WB_NO_XXX` 这类变量 `--labels` 必须反着命名。
 - ★★ **「只在被逼到落后时才生效」的规则，用内置对手做配对模拟必然假阴性**（`UA_CROSS_CHECK` 对 cloud 跑 3 局**触发 0 次**）⇒ 用 `sim_early.py --selfab`（自对弈镜像配对）。
 - ★★ **跨进程重放自带 ~0.5~1% 噪声下限**（`测/repro_noise.py`）：两臂配置**完全相同**、只换进程，140 点日志差异 1/0/1 点，固定 `PYTHONHASHSEED=0` 无效 ⇒ **凡报「幅度」必须配对照组臂**（净效应 = 实验 − 对照）；**≤1 点不可判读**。「同 seed 连跑两次逐字节一致」**只在同进程内成立**。
-- ★ **`_winning_rule()`/`_candidate_rules` 的规则标签只是「会命中」的分类，不等于真正返回的那一行** —— 定位必须关掉候选规则重跑、或直接行级 `sys.settrace`。
+- ★ **规则标签 ≠ 真凶**：`_winning_rule()`/`_candidate_rules` 只报「该局面会不会命中」，**不等于真正返回的那一行** ⇒ 定位要关掉候选规则重跑，或行级 `sys.settrace`。
+- ★ **自对弈日志双方 owner 都是 `j1331`** ⇒ `mine` 判定会有歧义（脚本取最后一个匹配 = bot_b），报数前先确认座位。
 - 对手 all-in 在 history 里写**真实金额**（写 `-2` 会让 `to_call` 塌缩）；翻后公牌张数要对（3/4/5）。
-- 花色标号**只用于相等比较** ⇒ 任意重标号不影响决策；3 处 docstring 口径不一致（以 `botbattle_log._SUIT` 为唯一权威，属文档瑕疵）。
-- 复盘：界面「底池」常是结果态 → 回到决策前；座位需动态检测。`DecisionLogger`：`decide(debug=False)` 会关日志，分析器需 `enable(True) + _quiet=True`。
-- **★ 行为指纹判座位**（09-30）：日志双方元数据可能完全相同 ⇒ 把同一批决策点喂给两版，一致率高者为该座位版本。工具 `测/_py311/{fingerprint,verify_hands,diag_shove}.py`。
-- **`duel.py` 不可用**（模块级全局/RNG 无法隔离）⇒ 量化只能子进程隔离或真实日志回放。
-- **v50 对拍基线（39 场景）**：翻前 0 差异；翻后主动仅尺寸有别。本版更保守：① `_stability_guard` 翻前也压制（已结案保留）；② 强牌加注偏小（280 vs 500）。v50 ELF 指纹 `547e4a6`；pyc 提取流程见 `代码逐行详解.md`。
+- 复盘：界面「底池」常是结果态 → 回到决策前；`DecisionLogger`：`decide(debug=False)` 会关日志，分析器需 `enable(True)+_quiet=True`。
+- **★ 行为指纹判座位**（09-30）：日志双方元数据可能完全相同 ⇒ 把同一批决策点喂给两版、一致率高者为该座位。工具 `测/_py311/{fingerprint,verify_hands,diag_shove}.py`。
+- **`duel.py` 不可用**（模块级全局/RNG 无法隔离）⇒ 只能子进程隔离或真实日志回放。
+- 花色标号**只用于相等比较** ⇒ 重标号不影响决策（以 `botbattle_log._SUIT` 为权威，docstring 不一致属文档瑕疵）。
+- **v50 对拍（39 场景）**：翻前 0 差异；翻后主动仅尺寸有别；本版更保守（`_stability_guard` 翻前也压制、强牌加注偏小）。v50 ELF 指纹 `547e4a6`。
 
-## 构建发布
-- 单文件 `内容/botzone_submit.py`；Linux ELF 由 GitHub Actions（仓库 `1331-a/-2`，workflow `build-elf`）产出，artifact `poker_bot-linux-x86-64`（~7MB）。本地无 Docker ⇒ Actions 是唯一发布路径。
-- PyInstaller 锁 `<6.22`；【陷阱】artifact 常下成 **22 字节空 zip** ⇒ 解压后核对字节数。
-- **★ 平台资源**：1 核 / 512MiB / `/tmp` 256MiB / 无网络 / 60s 每步 ⇒ **保持纯 Python，不引 numpy**。
-- `测/学习升级版/poker_bot` 是用户下载的 ELF，**不要动**。
-
-## 模块分工
-strategy（决策+安全网）/ game_state（协议）/ opponent（画像+尺寸分桶）/ equity（胜率）/ ranges（169 组合百分位）/ match_ctx（赛制三模块+规则账本）/ evaluator（牌型）/ bot（I/O）。
-
-## 技术判负（09-28）
-43 秒 / 7 手、第 7 手零响应。**`ended_at` 只记最后事件时间，60s 超时不计入** ⇒ 真故障 = 最后一步没响应。已加固 `bot.py`（循环永不中断——进程退出＝立即判负）。**根因未定位。**
+## 构建发布 / 模块 / 判负
+- 单文件 `内容/botzone_submit.py`；Linux ELF 由 GitHub Actions（仓库 `1331-a/-2`，workflow `build-elf`）产出，artifact `poker_bot-linux-x86-64`（~7MB）。本地无 Docker ⇒ Actions 是唯一发布路径。PyInstaller 锁 `<6.22`；【陷阱】artifact 常下成 **22 字节空 zip** ⇒ 解压后核对字节数。
+- **★ 平台资源**：1 核 / 512MiB / `/tmp` 256MiB / 无网络 / 60s 每步 ⇒ **保持纯 Python，不引 numpy**。`测/学习升级版/poker_bot` 是用户下载的 ELF，**不要动**。
+- 模块：strategy（决策+安全网）/ game_state（协议）/ opponent（画像）/ equity（胜率）/ ranges（百分位）/ match_ctx（赛制+规则账本）/ evaluator（牌型）/ bot（I/O）。
+- 【技术判负 09-28】43s / 7 手、第 7 手零响应。**`ended_at` 只记最后事件时间，60s 超时不计入** ⇒ 真故障 = 最后一步没响应。已加固 `bot.py`（循环永不中断）。**根因未定位。**
 
 ## 调参入口
 `UA_ON`·`UA_SLOPE`·`UA_CALL_DAMP`·`UA_CROSS_CHECK`(`WB_NO_CROSS_CHECK=1`)·`UA_SEALED_ALLIN`·`UA_SEALED_MARGIN` / `CROSS_CHECK_STRONG_PASS`(`WB_NO_CROSS_STRONG_PASS=1`) / `BIG_CALL_LIMIT`·`BIG_MONEY_GUARD_ON`·`BIG_MONEY_TOPTWO_ON` / `DOOM_ALLIN_ON`·`DOOM_TOPTWO_CALL_ON` / **`FLUSH_MADE_PASS`·`PAIRED_TRAP_MADE_PASS`·`BIGMONEY_TWOPAIR_PASS`·`FLUSH_MADE_MIN_CAT`·`FLUSH_MADE_NO_ALLIN`** / `GAMBLE_SHOVE_FOLD_MIN(0.45)`·`GAMBLE_LINE_FACTOR(0.95)` / `RANGE_NARROW_*`·`RANGE_SOFT_TAIL` / `STABILITY_LINE_FACTOR(0.70)`·`STABILITY_PREFLOP_ON` / `LEAD_ALLIN_SHIFT` / `RULE_LEARN_ON` / `OPEN_SIZE_BB(3.5)`。
