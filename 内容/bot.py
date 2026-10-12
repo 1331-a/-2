@@ -182,6 +182,25 @@ def _handle_line(obj):
                                 state.dealer_id, list(state.total_win_chips),
                                 len(state.hole or []), len(state.board or []),
                                 len(request.get("history") or [])))
+                        # 【2026-10-12 模型状态自检】★ 必须打出来，否则无法判断
+                        # 「本地重放 ≠ 平台」到底是模型状态差在哪。实测该差异是
+                        # 重放保真度 15~20% 的主因（见 `复盘_20261012_重放保真度.md`）。
+                        # 关注：hands_seen（样本门开关）、eff_vpip（开池尺寸）、
+                        #       arch（原型）、sf_s 样本数与弃牌率（规则19 门槛）。
+                        try:
+                            import strategy as _strat
+                            _bs = model.bet_resp_stats(
+                                model._BUCKET_SF_SMALL, state.hand_num,
+                                _strat.SMALL_BET_MIN_N)
+                            _log("[MODEL] seen=%d vpip=%.3f arch=%s "
+                                 "sfs_n=%s sfs_fold=%s resp_ev=%d"
+                                 % (getattr(model, "hands_seen", -1),
+                                    model.eff_vpip(), model.archetype(),
+                                    (_bs or {}).get("n"),
+                                    (round(_bs["fold_rate"], 3) if _bs else None),
+                                    len(getattr(model, "bet_resp_events", []))))
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 action = decide(state, model, ctx, debug=_dbg)

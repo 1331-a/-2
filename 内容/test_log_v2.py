@@ -1103,8 +1103,12 @@ _st19 = parse_request(dict(
              {"round": 1, "player_id": 1, "action": 0, "action_type": "check"},
              {"round": 1, "player_id": 0, "action": 0, "action_type": "check"}],
     hand=10, max_hand=70, total_win_chips=[0, 0], total_win_games=[0, 0]))
-_m_stop = _m19(["fold", "call", "call", "call", "call"])   # 小注弃牌率 0.20
-_m_fold = _m19(["fold", "fold", "fold", "call", "call"])   # 小注弃牌率 0.60
+_m_stop = _m19(["fold", "call", "call", "call", "call"]   # 小注弃牌率 0.20
+               * max(1, (_S19.SMALL_BET_MIN_N + 5) // 5))
+_m_fold = _m19(["fold", "fold", "fold", "call", "call"]   # 小注弃牌率 0.60
+               * max(1, (_S19.SMALL_BET_MIN_N + 5) // 5))
+# 【2026-10-12】上面的重复次数随 `SMALL_BET_MIN_N` 自适应：门槛 4→10 后，5 个样本
+# 已不足触发规则19，断言会假失败。样本数按门槛补足、且保持原弃牌率不变。
 
 check("0916规则19:小注样本不足 → 不判「吓不走」",
       _small_bet_futile(_st19, _m19(["call", "call"])) is False)

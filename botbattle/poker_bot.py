@@ -1881,6 +1881,20 @@ from itertools import combinations
 # ============ 可调参数（单位见注释） ============
 # ---- 翻前范围（百分位，0~1，越小越紧） ----
 BTN_OPEN_PCT = 0.80        # 庄家开池基准：前 80% 的起手牌（HU 标准宽度）
+# ★★ 2026-10-12 核查发现：对「跟注站」原为硬编码 0.85（比基准更宽）+ 尺寸更小（3.0BB）。
+#   标准剥削是「收紧范围 + 加大尺寸」，且该值在全部复盘/文档里**查不到任何实测依据**
+#   （唯一出处是注释「站点翻后乱跟 → 价值牌多打」）。实测对手 code A = station/VPIP 0.87/
+#   弃牌率 0.34 时，我们 85% 的牌开池 → 对手不弃 → 翻后 fit-or-fold ⇒ 白送。
+#   ⇒ 抽成常量便于 A/B；默认仍 0.85（逐字保持原行为）。
+#   env `WB_OPEN_PCT_STATION=<float>` 可覆盖（探针/回退）。
+OPEN_PCT_VS_STATION = 0.85  # 对跟注站的开池范围
+try:
+    import os as _os6
+    _v = _os6.environ.get("WB_OPEN_PCT_STATION")
+    if _v is not None:
+        OPEN_PCT_VS_STATION = float(_v)
+except Exception:
+    pass
 # 【方案B·2026-09-24 用户规则】开池尺寸 2.5 → 3.5BB。
 # 背景：实测我方翻前中位 300 vs 对手 620~1316 —— 小开池在深筹码下**毫无
 # 隔离效果**，对手便宜跟注后逐步榨取（前 20 手反复小亏的共同上游）。
@@ -1931,6 +1945,22 @@ BLOCKER_BET = 0.33         # 干燥面不利位置小注保护
 CBET = 0.55                # 持续下注 / 半诈唬
 BLUFF = 0.55               # 纯诈唬
 BLOCKER = 0.45             # 中等牌有位置的小注施压
+
+# 【2026-10-12·待验证】纯诈唬缓冲的额外补偿（默认 0.0 = 逐字原行为）。
+# 动机：`breakeven = BLUFF/(1+BLUFF) ≈ 0.355` **只算"这一注的即时期望"**
+#   —— 它假设"被跟之后我们不再投入"。实际上被跟后还要继续打（B 类 72 手
+#   "投入后弃牌" −48,052 就是这笔后续成本），所以真实门槛应更高。
+# 实测（11 场）：B 类里 39/72 手（54%）弃牌时手里是"高牌"，即纯诈唬被反制。
+# 本开关把该后续成本以常数形式计入 buffer，便于 A/B。
+# env `WB_BLUFF_BUFFER_EXTRA=<float>` 覆盖。
+BLUFF_BUFFER_EXTRA = 0.0
+try:
+    import os as _os7
+    _v7 = _os7.environ.get("WB_BLUFF_BUFFER_EXTRA")
+    if _v7 is not None:
+        BLUFF_BUFFER_EXTRA = float(_v7)
+except Exception:
+    pass
 
 # ---- 计算预算 ----
 # 【2026-09-30 大幅上调】平台已确认：本平台（botarena / 原 botbattle）Holdem
@@ -2054,7 +2084,27 @@ GAMBLE_GOOD_PCT = 0.20
 #   还被反打），不如过牌或直接上价值注。
 # 判定：对手面对我方小注的反应样本 ≥SMALL_BET_MIN_N 且弃牌率 <SMALL_BET_FOLD_MIN。
 SMALL_BET_FOLD_MIN = 0.35      # 小注弃牌率低于此值 → 判定「吓不走」
-SMALL_BET_MIN_N = 4            # 至少这么多次小注样本才判（数据不足不改行为）
+SMALL_BET_MIN_N = 10           # 至少这么多次小注样本才判（数据不足不改行为）
+# 【2026-10-12 用户拍板 (b)】4 → 10。两个理由：
+#   ① **重放保真度**：实测门槛 4→10 让「重放 vs 平台」的动作不一致率 20.1% → 11.0%
+#      （新日志）/ 15.6% → 13.6%（旧日志）。4 个样本决定「整类小注是否作废」太脆。
+#   ② **方向与真实结果一致**：A/B 变化 39/1306（2.99%，对照臂 1/1306），全部是
+#      「本来会过牌 → 会小注」；把这 34 个可映射的变化点映射回真实 `settle.deltas`，
+#      整手净变合计 **+6,436**（均 +189）⇒ 这些手的真实走向支持"下小注"。
+#   回退：`WB_SMALL_BET_MIN_N=4`（env 仍可任意覆盖）。详见 `复盘_20261012_重放保真度.md`。
+# 【2026-10-12 重放保真度调查】★ 这个门槛是「本地重放 ≠ 平台」的最大单一来源：
+#   实测把门槛从 4 提到 10，重放与平台的动作不一致率 20.1% → 11.0%（新日志）、
+#   15.6% → 13.6%（旧日志）。原因：线上 bot 的对手模型由平台 data/globaldata
+#   跨步/跨局延续，其样本数与本地从零重建的模型不同；门槛低到 4 ⇒ 极小的状态差
+#   就会翻转「整类小注是否作废」（过牌后小注 / 先手 lead / 阻隔注）。
+#   ⇒ 4 个样本决定一整类动作过于脆弱。故开出环境开关（**默认仍为 4，行为不变**），
+#   便于做 A/B 与线上校验。详见 `复盘_20261012_重放保真度.md`。
+try:
+    import os as _os_sbn
+    if _os_sbn.environ.get("WB_SMALL_BET_MIN_N"):
+        SMALL_BET_MIN_N = int(_os_sbn.environ["WB_SMALL_BET_MIN_N"])
+except Exception:
+    pass
 
 # ── 终局效用仲裁（2026-09-24 用户规则）：弃牌的价值必须在决策里一起算 ──
 # 用户意见（原话）：「不是先决策再改吧？而是在决策时就要同时考量弃牌的价值，
@@ -4912,7 +4962,7 @@ def _button_open(state, model, pct, arch, adj):
     if arch == "rock":
         open_pct = 0.92     # 岩石不惩罚宽开池 → 更激进偷盲
     elif arch == "station":
-        open_pct = 0.85     # 站点翻后乱跟 → 价值牌多打
+        open_pct = OPEN_PCT_VS_STATION   # 站点翻后乱跟 → 价值牌多打（★2026-10-12 抽常量待 A/B）
     elif arch == "maniac":
         open_pct = 0.75     # 疯子爱反加 → 略收紧避免被掀翻
     if adj == "protect":
@@ -6644,6 +6694,8 @@ def _check_side(state, model, eq, category, strong, good, medium, big_draw,
         buffer += 0.15                       # 领先保收益：少诈唬
     elif adj in ("desperate", "doomed"):
         buffer = max(0.0, buffer - 0.12)     # 劣势追分：诈唬门槛大幅放宽
+    # 【2026-10-12·待验证】补偿"被跟后的后续成本"（默认 0 = 原行为）
+    buffer += BLUFF_BUFFER_EXTRA
     # 【延迟施压】双方持续过牌后突然加注 / 对手连续过牌≥2次直接加注：
     # 弃牌率额外加成（所有档位生效，normal 也适用）。
     # 【前置条件 2026-08-23】累计盈亏 > -3000（非深亏）且 对手面对下注弃牌率
@@ -7920,6 +7972,24 @@ def _handle_line(obj):
                                 state.dealer_id, list(state.total_win_chips),
                                 len(state.hole or []), len(state.board or []),
                                 len(request.get("history") or [])))
+                        # 【2026-10-12 模型状态自检】★ 必须打出来，否则无法判断
+                        # 「本地重放 ≠ 平台」到底是模型状态差在哪。实测该差异是
+                        # 重放保真度 15~20% 的主因（见 `复盘_20261012_重放保真度.md`）。
+                        # 关注：hands_seen（样本门开关）、eff_vpip（开池尺寸）、
+                        #       arch（原型）、sf_s 样本数与弃牌率（规则19 门槛）。
+                        try:
+                            _bs = model.bet_resp_stats(
+                                model._BUCKET_SF_SMALL, state.hand_num,
+                                _strat.SMALL_BET_MIN_N)
+                            _log("[MODEL] seen=%d vpip=%.3f arch=%s "
+                                 "sfs_n=%s sfs_fold=%s resp_ev=%d"
+                                 % (getattr(model, "hands_seen", -1),
+                                    model.eff_vpip(), model.archetype(),
+                                    (_bs or {}).get("n"),
+                                    (round(_bs["fold_rate"], 3) if _bs else None),
+                                    len(getattr(model, "bet_resp_events", []))))
+                        except Exception:
+                            pass
                 except Exception:
                     pass
                 action = decide(state, model, ctx, debug=_dbg)
