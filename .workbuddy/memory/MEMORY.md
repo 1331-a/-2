@@ -51,11 +51,18 @@ lead=我方 net−对手 net；筹码损失让 lead 变 2 倍，×2 只用一次
 ★**「提高 eq 权重」方向已试到尽头**（归因：eq 直接决定仅 2.0%；选项B 试点净 0/948，三重封锁）⇒
 **先解出口链再谈 eq**。`BIGBET_THRESH_ON`（选项B，默认关）已实现未打包；`内容/strategy.py` 与
 `botbattle/poker_bot.py` 暂不一致。
-★★ **`EQ_VETO` 已实现（选项②、δ=0.10）**：逐层否决 `_bet_cap_guard`/`_normalize`/`_big_money_guard`/`_cheap_call_guard`
-的"更保守"改写（判据 `eq ≥ eff_req+margin+0.10`，数据来自 `_face_bet` 曝露的 `_LAST_REQ_INFO`）。
-**新增 `EQ_VETO_MAX_RANK`**（最多恢复到哪一档，fold0/check1/call2/raise3/allin4；env `WB_EQ_VETO_MAXRANK`）。
-★ 用户要"默认 True 推上去"，但 `MAX=4`（②原样）**回归 2 项失败**（第32手 恢复成 **弱牌 lk 主动全押** = 规则20 明令禁止；
-两对面对1500 还原成 raise3000）⇒ **已停手未推送**。三档实测：MAX=4 →18 点/11/13；**MAX=3 →16 点/12/13**；
-MAX=2 →5 点/13/13。**推荐 MAX=3**（只用 2 点换掉"弱牌全押"）。
-★ 更正：`_cheap_call_guard` 是**【方案A·2026-09-24 用户规则】**，我此前在范围表里误标成"我方、不碰用户规则"。
-★★ **待用户拍板**：`EQ_VETO` 取 MAX=3 还是 MAX=2（或改 `test_preflop_cap` 断言）。见 `复盘_20261011_EQ_VETO实现与AB.md` §6。
+★★ **`EQ_VETO` 已实装并默认启用**（选项②、δ=0.10、**`MAX_RANK=3`**，提交 `6ec4374` 已 push）：
+逐层否决 `_bet_cap_guard`/`_normalize`/`_big_money_guard`/`_cheap_call_guard` 的"更保守"改写
+（判据 `eq ≥ eff_req+margin+0.10`，数据来自 `_face_bet` 曝露的 `_LAST_REQ_INFO`）。
+`EQ_VETO_MAX_RANK`（fold0/check1/call2/raise3/allin4）：**3 = 可恢复加注、不可恢复全押**
+⇒ 保住"好牌敢加注"、去掉"弱牌 lk 主动推光"。三档实测（对照臂均 0）：MAX=4 →18 点；**MAX=3 →16 点**；MAX=2 →5 点。
+回退 `WB_NO_EQ_VETO=1`。★含义：会**越过规则20 的 3000 上限**（用户批准，`test_preflop_cap` C2 断言已放宽到 ≤3000）。
+★ 更正：`_cheap_call_guard` 是**【方案A·2026-09-24 用户规则】**，我此前误标成"我方、不碰用户规则"。
+★★ **撤回**：「EQ_VETO 导致 test_log_v2 2 项失败」**是错误归因**。真因是**测试时钟缺陷**（见下），
+开/关两臂失败完全相同 ⇒ 与 EQ_VETO 无关。结论记于 `复盘_20261011_EQ_VETO实现与AB.md` §7。
+★★ **测试陷阱·时钟污染**：`_eq_deadline() = min(now+per, _DECISION_STARTED_WALL + EQ_TOTAL_BUDGET[12s])`，
+而 `_DECISION_STARTED_WALL` **只在 `_decide_impl` 入口刷新**。测试若**直接调策略子函数**（不经 `decide`），
+该值停留旧值 ⇒ 文件跑够 12s 后 deadline 恒过期 ⇒ `monte_carlo_equity` 首次查钟即 break、`total==0`
+⇒ **`equity.py` 返回兜底 0.5** ⇒ 阈值比较全失效（表现：AA→fold、K6o→allin 的"方向颠倒"，随机器快慢时有时无）。
+**修法在测试侧**：断言前 `strategy._DECISION_STARTED_WALL = time.time()`（`test_log_v2.py` 的 `_reset_decision_clock()`）。
+**勿在生产代码里自动重置** —— 会破坏一次决策内多路 eq 共享截止时刻的预算约束。
