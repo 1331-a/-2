@@ -119,14 +119,18 @@ a = decide(st, OpponentModel())
 check("牌型门槛:顺子面对1500可大注(raise/allin)",
       a.get("act") in ("raise", "allin"), str(a))
 
-# C2) river 对手下注 1500，我两对（<三条）→ 绝不 raise 超 2000（call/弃）
+# C2) river 对手下注 1500，我两对（<三条）→ 绝不 raise 超 3000（call/弃）
+#     ★ 2026-10-11 放宽 2000 → 3000：EQ_VETO（eq 确信区否决权，用户拍板默认开）
+#       在本点 eq 大幅领先，否决了 `_bet_cap_guard` 的降级，还原成 raise3000。
+#       3000 仍是「翻后 <三条」的注额上限（规则20），只是不再额外压到 2000。
+#       回退验证：env `WB_NO_EQ_VETO=1` ⇒ 本点回到 raise ≤ 2000。
 r = req(my_chips=19500, my_cards=[42, 13], public_cards=[43, 22, 29, 16, 12],
         history=deep_pf + [{"round": 3, "player_id": 1, "action": 1500, "action_type": "raise"}])
 st = parse_request(r)
 a = decide(st, OpponentModel())
-check("牌型门槛:两对面对1500不超限(call/fold)",
+check("牌型门槛:两对面对1500不超限(call/fold/raise≤3000)",
       a.get("act") in ("call", "fold") or
-      (a.get("act") == "raise" and a["num"] <= 2000), str(a))
+      (a.get("act") == "raise" and a["num"] <= 3000), str(a))
 
 # C3) 翻前 2000 封顶（用户规则：每次下注≤2000，翻前无牌面例外）：
 # AKs 4-bet 2760 → 压到 2000；若最小加注已超 2000 → 降级跟注

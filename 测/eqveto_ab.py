@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
 """【2026-10-11】EQ_VETO（eq 确信区否决权，选项②）的三臂 A/B。
 
-  A 现状   : 默认（EQ_VETO_ON=False）→ 逐字等价
-  B EQ_VETO: WB_EQ_VETO=1（只否决 _bet_cap_guard/_normalize/_big_money_guard/_cheap_call_guard 的"更保守"改写）
-  C 对照   : 与 A 同配置（验证噪声底）
+  A 现状(关) : WB_NO_EQ_VETO=1（回到 EQ_VETO 之前的行为）
+  B EQ_VETO  : 默认（EQ_VETO_ON=True）
+  C 对照     : 与 A 同配置（验证噪声底）
 
 用法:
     WB_MC_ITERS=1500 WB_MC_BUDGET=0.3 python 测/eqveto_ab.py
@@ -45,9 +45,11 @@ print(json.dumps(out))
 '''
 
 ARMS = [
-    ("A 现状", {}),
-    ("B EQ_VETO", {"WB_EQ_VETO": "1"}),
-    ("C 对照", {}),
+    ("A 现状(关)", {"WB_NO_EQ_VETO": "1"}),
+    # B 臂的配置可用 AB_B_ENV 覆盖（JSON），例如
+    #   AB_B_ENV='{"WB_EQ_VETO_MAXRANK":"2"}'  → 只救跟注、不恢复加注/全押
+    ("B EQ_VETO", json.loads(os.environ.get("AB_B_ENV") or "{}")),
+    ("C 对照", {"WB_NO_EQ_VETO": "1"}),
 ]
 
 
@@ -104,7 +106,7 @@ for lab in ("B EQ_VETO", "C 对照"):
     n = 0
     rows = []
     for tag, got in res.items():
-        A, X = got["A 现状"], got[lab]
+        A, X = got["A 现状(关)"], got[lab]
         for i in range(min(len(A), len(X))):
             if A[i][1] != X[i][1]:
                 n += 1

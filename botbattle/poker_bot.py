@@ -2476,14 +2476,29 @@ except Exception:
 #     ★ **不含** `_doom_call_upgrade`（规则2 跟注侧 doom —— 用户已裁决两次，不动）。
 #     ★ **不含** `_endgame_arbitrate`（EU 仲裁）/ `_stability_guard`（规则10 求稳）。
 #   · δ = 0.10：实测 0.05 与 0.10 结果完全相同（中间地带为 0），取大者更保守。
-# ★★ 默认 False —— 它会**局部越过规则20（注额上限）**，属用户编号规则，
-#    必须由用户显式启用。env `WB_EQ_VETO=1`。
-EQ_VETO_ON = False
+# ★★ 2026-10-11 用户拍板：**默认 True**（他会拿真实对局验证）。
+#    回退：env `WB_NO_EQ_VETO=1` ⇒ **逐字回到 EQ_VETO 之前**的行为。
+EQ_VETO_ON = True
 EQ_VETO_DELTA = 0.10
+# ★ 否决权**最多恢复到哪一档**（`_ACT_RANK`：fold0/check1/call2/raise3/allin4）。
+#   4 = 允许把"被压低的加注/全押"还原（= 会越过规则20 的注额上限）；
+#   2 = **只救"被弃掉/被压成过牌"的跟注**，绝不恢复加注/全押 ⇒ 规则20 的
+#       「弱牌不许主动推光」完全不受影响。
+#   ★ 2026-10-11 实测三档（对照臂均 0/948）：
+#       MAX=4 → 18 点变化 / 回归 11/13（第32手 恢复成 lk 弱牌主动全押、
+#               两对面对 1500 被还原成 raise3000）—— 两处都是规则20 家族。
+#       MAX=3 → 16 点变化 / 回归 12/13（只剩"注额上限"那条，即用户批准的越界）
+#       MAX=2 →  5 点变化 / 回归 13/13
+#   ★ 用户 2026-10-11 拍板取 **3**：用 2 个点换掉「弱牌 lk 主动全押」
+#     （规则20 明令禁止、且是规则20 存在的理由），保留"好牌敢加注"。
+EQ_VETO_MAX_RANK = 3
 try:
     import os as _os5
-    if _os5.environ.get("WB_EQ_VETO") == "1":
-        EQ_VETO_ON = True
+    if _os5.environ.get("WB_NO_EQ_VETO") == "1":
+        EQ_VETO_ON = False
+    _mr = _os5.environ.get("WB_EQ_VETO_MAXRANK")
+    if _mr is not None:
+        EQ_VETO_MAX_RANK = int(_mr)
 except Exception:
     pass
 
@@ -2520,6 +2535,8 @@ def _eq_veto_keep(state, before, after):
     try:
         rb = _ACT_RANK.get(str((before or {}).get("act")), 9)
         ra = _ACT_RANK.get(str((after or {}).get("act")), 9)
+        if rb > EQ_VETO_MAX_RANK:
+            return after            # 超过"最多可恢复的档位"→ 不救（保护规则20 上限）
         if rb > ra and _eq_confident():
             return before           # 保持改前动作（否决本层的"更保守"改写）
     except Exception:

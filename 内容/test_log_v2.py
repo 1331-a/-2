@@ -690,6 +690,23 @@ check("0914规则15:决策层第 3 次机会不再主动加注",
 from strategy import (_call_allin_relax, _preflop_allin_decide,  # noqa: E402
                       ALLIN_RELAX_CAP, ALLIN_RELAX_HANDS_FULL)
 
+# ★【2026-10-12 测试卫生修复】本段直接调用 `_preflop_allin_decide`（不经 `decide` 入口），
+#   而 `_eq_deadline` 取 `min(now+per, _DECISION_STARTED_WALL+EQ_TOTAL_BUDGET)`。
+#   `_DECISION_STARTED_WALL` 只在 `_decide_impl` 入口刷新；本段不刷新它 ⇒ 一旦本文件
+#   前面跑够 12 秒（EQ_TOTAL_BUDGET），deadline 就恒为过去时刻 ⇒ `monte_carlo_equity`
+#   首次时钟检查即 break、`total==0` ⇒ 返回兜底 **0.5** ⇒ 全部阈值比较失效
+#   （表现为 AA→fold、K6o→allin 的"方向颠倒"，且随机器快慢时有时无）。
+#   修复：调用前把"决策起点"设到当前时刻，忠实模拟一次真实决策的开始。
+
+
+def _reset_decision_clock():
+    import strategy as _S
+    import time as _t
+    _S._DECISION_STARTED_WALL = _t.time()
+
+
+_reset_decision_clock()
+
 
 def _st16(hand, cards=(48, 45), my_chips=19900, twc=(0, 0)):
     return parse_request({"num_players": 2, "dealer_id": 1, "my_id": 0,
@@ -744,14 +761,17 @@ check("0914规则16:叠加放宽不超过上限",
 # D. 决策层：中等牌「早期+对手保守」弃 → 「末期+对手爱 allin」跟
 #    （用 KQs / ATs：实测这两张的翻转最稳健；AQs 恰在阈值边界，MC 噪声大）
 for _nm, _cards in (("KQs", (44, 41)), ("ATs", (48, 33))):
+    _reset_decision_clock()
     _e = _preflop_allin_decide(_st16(10, cards=_cards), _m16_quiet).get("act")
     _l = _preflop_allin_decide(_st16(61, cards=_cards), _m16_aggro).get("act")
     check("0914规则16:%s 早期+保守对手 → fold" % _nm, _e == "fold", str(_e))
     check("0914规则16:%s 末期+爱 allin 对手 → allin(条件放宽)" % _nm,
           _l == "allin", str(_l))
+_reset_decision_clock()
 check("0914规则16:强牌(AA)任何情况都跟",
       _preflop_allin_decide(_st16(10, cards=(48, 49)), _m16_quiet).get("act")
       == "allin")
+_reset_decision_clock()
 check("0914规则16:边缘烂牌(K6o)即使末期+爱 allin 也不跟",
       _preflop_allin_decide(_st16(61, cards=(44, 18)), _m16_aggro).get("act")
       == "fold")

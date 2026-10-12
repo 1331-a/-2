@@ -51,9 +51,11 @@ lead=我方 net−对手 net；筹码损失让 lead 变 2 倍，×2 只用一次
 ★**「提高 eq 权重」方向已试到尽头**（归因：eq 直接决定仅 2.0%；选项B 试点净 0/948，三重封锁）⇒
 **先解出口链再谈 eq**。`BIGBET_THRESH_ON`（选项B，默认关）已实现未打包；`内容/strategy.py` 与
 `botbattle/poker_bot.py` 暂不一致。
-★★ **`EQ_VETO` 已按用户拍板实现（选项②、δ=0.10，默认关 `WB_EQ_VETO=1`）**：逐层否决
-`_bet_cap_guard`/`_normalize`/`_big_money_guard`/`_cheap_call_guard` 的"更保守"改写
-（判据 `eq ≥ eff_req+margin+0.10`，数据由 `_face_bet` 曝露的 `_LAST_REQ_INFO` 提供）。
-实测 **18/948（1.9%）**、对照臂 0、13/13 回归全绿；方向全为更激进（`fold→allin` 两例即 eq0.901/0.896 那两个点）。
-★ 固有含义：7 次 `call→raise` 里 4 次注额 >3000 = **确实越过规则20 上限**（选项②的批准内容）。
-★ 待用户定夺：① 是否 bundle/提交；② `EQ_VETO_ON` 是否改成默认 True。详见 `复盘_20261011_EQ_VETO实现与AB.md`。
+★★ **`EQ_VETO` 已实现（选项②、δ=0.10）**：逐层否决 `_bet_cap_guard`/`_normalize`/`_big_money_guard`/`_cheap_call_guard`
+的"更保守"改写（判据 `eq ≥ eff_req+margin+0.10`，数据来自 `_face_bet` 曝露的 `_LAST_REQ_INFO`）。
+**新增 `EQ_VETO_MAX_RANK`**（最多恢复到哪一档，fold0/check1/call2/raise3/allin4；env `WB_EQ_VETO_MAXRANK`）。
+★ 用户要"默认 True 推上去"，但 `MAX=4`（②原样）**回归 2 项失败**（第32手 恢复成 **弱牌 lk 主动全押** = 规则20 明令禁止；
+两对面对1500 还原成 raise3000）⇒ **已停手未推送**。三档实测：MAX=4 →18 点/11/13；**MAX=3 →16 点/12/13**；
+MAX=2 →5 点/13/13。**推荐 MAX=3**（只用 2 点换掉"弱牌全押"）。
+★ 更正：`_cheap_call_guard` 是**【方案A·2026-09-24 用户规则】**，我此前在范围表里误标成"我方、不碰用户规则"。
+★★ **待用户拍板**：`EQ_VETO` 取 MAX=3 还是 MAX=2（或改 `test_preflop_cap` 断言）。见 `复盘_20261011_EQ_VETO实现与AB.md` §6。
