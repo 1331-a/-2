@@ -406,6 +406,26 @@ GAMBLE_SHOVE_FOLD_MIN = 0.45            # 低于此弃牌率 → 不梭哈
 GAMBLE_SHOVE_FOLD_SAMPLES = 6           # 样本不足时不门控
 GAMBLE_SHOVE_FORCE_HANDS = 8            # 剩 ≤8 手时不门控（没时间靠常规打法磨回来）
 
+# 【方案B·2026-10-15 用户规则】强制推光只在「锁定」时触发。
+#   判据：lead ≤ −DOOM_LOCK_FRAC × 初始筹码（默认半个满栈 = 10,000）。
+#   依据：一次成功的全押最多赢回一个满栈 ⇒ 落后不足半个满栈时**一次就能追回**，
+#         不算锁定 ⇒ 不该提前梭，交回常规打法（用户：「前中期打得好」）。
+#   实测（4 场 vs code A，2026-10-15）：3 次爆仓全在落后 8~13% 筹码时触发
+#   （−1836 / −1602 / −2538，远非锁定）⇒ 每次 −20,000。
+#   落点：`_match_adjust`（doomed 判定）+ `_gamble_zone`（搏命区）。
+#   回退：`WB_NO_DOOM_LOCK=1`；阈值 `WB_DOOM_LOCK_FRAC=`。
+DOOM_LOCK_ON = True
+DOOM_LOCK_FRAC = 0.50          # 落后 ≥ 半个满栈 → 锁定
+DOOM_LOCK_LINE_MULT = 3.0      # 或 落后 ≥ 3×盲注线（末段自动收紧：盲注线→0）
+try:
+    import os as _os_dl
+    if _os_dl.environ.get("WB_NO_DOOM_LOCK") == "1":
+        DOOM_LOCK_ON = False
+    if _os_dl.environ.get("WB_DOOM_LOCK_FRAC"):
+        DOOM_LOCK_FRAC = float(_os_dl.environ.get("WB_DOOM_LOCK_FRAC"))
+except Exception:
+    pass
+
 # 【方向3·2026-09-28】`_opp_range_pct` 的「本街加注收窄」参数。
 # 每次对手在本街加注，范围按 (1 - per) 倍收窄；per 随对手主动下注频率递减
 # （罕出手的对手一旦加注，牌力信号更强 → 收窄更多）。
@@ -472,8 +492,81 @@ except Exception:
 #   `eq`（MC 从对手范围抽牌，天然含同花组合）承担 —— 二值硬弃把这份信息丢了。
 # 处置：三个开关分开，便于逐臂隔离测量。默认 False = 线上行为逐字不变。
 FLUSH_MADE_PASS = False        # ① 已成牌（≥两对）→ 不再被同花威胁硬弃
+# 【2026-10-15 用户反馈·真同花豁免】手里持该花色 **2 张 = 真同花** → 绝不因
+#   「公面同花威胁」硬弃。原来 `_made` 用 `len(my_same) < 2` 把真同花排除在外
+#   （"保留 09-07 原始判据"），实测把 K 高同花弃给了对手的空气大注：
+#     18:52 手36 —— 我 `7s9s`、公面 `4c 8s Js Ks` = **5 张黑桃真同花**，
+#     对手 `2d5c`（K 高），对手下注 7,050(1.85×池) → 被弃、亏 2,159。
+#   理由：对手要有同花需手里也拿 2 张该花色（≈4% 的随机手），且要比我们大。
+#   回退：`WB_NO_FLUSH_REAL_PASS=1`。
+FLUSH_REAL_PASS = True
+try:
+    import os as _os_fr
+    if _os_fr.environ.get("WB_NO_FLUSH_REAL_PASS") == "1":
+        FLUSH_REAL_PASS = False
+except Exception:
+    pass
 PAIRED_TRAP_MADE_PASS = False  # ② 已成牌（≥两对）→ 不再被河牌公对陷阱硬弃
 BIGMONEY_TWOPAIR_PASS = False  # ③ 普通两对 → 允许跟 >3000（09-24 规则的边界）
+
+# 【丙·2026-10-15 用户规则】**优势局按牌力分档**：好牌更敢跟、烂牌更早弃。
+#   背景：用户实测「对手（含空气）超池大注把我们逼走，即使对手牌没我们好」，
+#         且「这种情况一般出在优势局」。⇒ 领先时的跟注边际按牌力两极分化：
+#           · 好牌（≥两对 / 顶对·超对）→ margin **放宽**（更敢跟，不被逼走）
+#           · 烂牌（高牌 / 非顶对）    → margin **抬高**（更早弃，不纠缠）
+#   落在 `_face_bet` 的 `margin`（跟注安全边际），只影响「面对下注」的跟注决策。
+#   回退：`WB_NO_ADV_TIER=1`；幅度 `WB_ADV_STRONG=` / `WB_ADV_WEAK=`。
+ADV_TIER_ON = True
+ADV_TIER_STRONG_RELIEF = 0.06   # 优势局 + 好牌 → margin -= 0.06
+ADV_TIER_WEAK_EXTRA = 0.08      # 优势局 + 烂牌 → margin += 0.08
+try:
+    import os as _os_at
+    if _os_at.environ.get("WB_NO_ADV_TIER") == "1":
+        ADV_TIER_ON = False
+    if _os_at.environ.get("WB_ADV_STRONG"):
+        ADV_TIER_STRONG_RELIEF = float(_os_at.environ.get("WB_ADV_STRONG"))
+    if _os_at.environ.get("WB_ADV_WEAK"):
+        ADV_TIER_WEAK_EXTRA = float(_os_at.environ.get("WB_ADV_WEAK"))
+except Exception:
+    pass
+
+# 【2026-10-15 用户规则】**优势局「不硬弃」豁免（ADV_PASS）**。
+#   用户："有时候对手高牌出大注直接逼回去了，即使对手的牌没有我方好。这种情况
+#          一般出在优势局，那优势局能不能保守点打。" ⇒ 「硬规则是该改了」。
+#   落点：`_face_bet` 里**三条只判纹理/牌型/金额、完全不看赔率的硬弃规则**
+#        （规则11 同花威胁 / 「大注+无坚果」/ 「4 倍突袭」）——
+#        领先时（lead>0）若我方牌力或胜率已经不错，就**不再一刀切弃牌**，
+#        改由 eq 与赔率门槛决定（沿用选项B 的 `_bb_gate` 通路：
+#        **只允许 call/fold，绝不放行加注/全押**；全下点位仍交给规则16/17）。
+#   "已经不错" = 有效牌型 ≥ 两对，或 顶对/超对，或 eq ≥ ADV_PASS_EQ_MIN。
+#   ★ 与 丙（ADV_TIER，调 margin）的关系：丙 实测 0 变化（margin 不是杠杆点），
+#     本开关才是真正接到那三条硬规则上的；两者可独立开关、独立评估。
+#   ★★【2026-10-15 实测结论：默认关闭】A/B 干净（变化 11 / 对照 0），但用**日志里
+#      对手的真实底牌**做精确枚举验证后：**11 个翻转点里 10 个"该弃"**（真实胜率
+#      平均比赔率低 0.118）。我方 eq 平均报 **0.459**、真实只有 **0.175**
+#      ⇒ **eq 在这个人群上平均高估 0.284**。两个最刺眼的：
+#        · 172157 手57 turn：eq 0.8188 → 真实 0.182（对手两对，我们高牌）
+#        · 185239 手29 turn：eq 0.6689 → 真实 0.045（对手三条，我们两对）
+#      ⇒ **三条硬规则不看 eq，反而挡住了被高估的 eq 带进来的负 EV 跟注。**
+#        要真正放开这三条，前提是先把 eq（对手范围）校准。
+#   启用：`WB_ADV_PASS=1`（硬规则豁免）/ `WB_ADV_ODDS_FALLBACK=1`（兜底补赔率）。
+ADV_PASS_ON = False
+ADV_PASS_EQ_MIN = 0.60
+# 「兜底 fold 前补赔率」：`_face_bet` 末尾的兜底 fold 原来**完全不看赔率**
+#   （eq ∈ [赔率门槛, 0.50) 且无听牌时会直接落到它）。
+#   ★ 实测同上（它那 2 个点高估最严重：0.819→0.182、0.669→0.045）⇒ 默认关。
+ADV_ODDS_FALLBACK_ON = False
+try:
+    import os as _os_ap
+    if _os_ap.environ.get("WB_ADV_PASS") == "1":
+        ADV_PASS_ON = True
+    if _os_ap.environ.get("WB_ADV_ODDS_FALLBACK") == "1":
+        ADV_ODDS_FALLBACK_ON = True
+    if _os_ap.environ.get("WB_ADV_PASS_EQ"):
+        ADV_PASS_EQ_MIN = float(_os_ap.environ.get("WB_ADV_PASS_EQ"))
+except Exception:
+    pass
+
 FLUSH_MADE_NO_RAISE = True     # ①生效时：同花威胁下**只跟不推**（防拿两对梭哈）
 # 豁免阈值：≥ 此牌型才算「已成牌」。TWO_PAIR(2)=连顺子/三条一起放行；
 # 抬到 THREE_OF_A_KIND(3) 则只放行三条及以上（更保守，顺子仍会被硬弃）。
@@ -1665,6 +1758,39 @@ def _endgame_arbitrate(state, model, chip_action, eq, adj):
         return chip_action
 
 
+def _locked_loss(state):
+    """【方案B·2026-10-15 用户规则】是否已「锁定败局」= 落后 ≥ 半个满栈。
+
+    用户规则：「强制推光应该只触发在弃牌对面锁赢的情况」——落后不足半个满栈时，
+    一次成功的全押（约赢回一个满栈）就能追回 ⇒ 未锁定 ⇒ 不梭，交回常规打法。
+    一次全押最多把对手的一副筹码赢过来（≈ INIT_CHIPS），故阈值取半栈。
+
+    判据（与 `_doom_risk` 同形，只是阈值从 2×盲注线放大到 半个满栈）：
+        lead − 2×本局已投入 ≤ −DOOM_LOCK_FRAC × INIT_CHIPS
+    额外：最后一手（无追回余地）且落后 → 直接算锁定。
+
+    返回 True = 已锁定（允许强制推光）；`WB_NO_DOOM_LOCK=1` 时恒 True（旧行为）。
+    ★ 与既有 `DOOM_ALLIN_ON` 联动：该开关为 False（`_doom_plan` 回到"无条件全押"
+      的旧行为，测试的"对照臂"就是用这个）时，本门控一并失效。
+    """
+    if not DOOM_LOCK_ON or not DOOM_ALLIN_ON:
+        return True
+    try:
+        from game_state import INIT_CHIPS
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        # 「弃牌后的落后」= −(lead − 2×本局已投入)（与 `_doom_risk` 同形，阈值更大）
+        deficit = -(lead - 2 * _invested(state))
+        hl = _hands_left(state)
+        # 锁定阈 = min(半个满栈, 3×盲注线)：末段盲注线→0 ⇒ 小幅落后也算锁定
+        # （最后一手 blind_line=0 ⇒ 任何落后都锁定）。
+        thr = min(DOOM_LOCK_FRAC * INIT_CHIPS,
+                  DOOM_LOCK_LINE_MULT * _blind_line(state, hl, own=False))
+        return deficit >= thr
+    except Exception:
+        return True          # 取不到就退回旧行为（不额外抑制）
+
+
 def _lock_win_unified(state, model=None):
     """【规则2·2026-09-10 合并】锁胜 / 防锁赢统一决策（优先级 2）。
 
@@ -1745,6 +1871,11 @@ def _doom_plan(state, model=None):
 
     返回动作 dict；**None = 不接管**（交给常规策略，可能是过牌/跟注/弃牌）。
     """
+    # 【方案B·2026-10-15 用户规则】强制推光只在该「锁定」（落后 ≥ 半个满栈）时才做。
+    #   未锁定时一次全押就能追回 ⇒ 提前梭是负 EV ⇒ 不接管，交回常规打法。
+    #   （`WB_NO_DOOM_LOCK=1` 时 `_locked_loss` 恒 True ⇒ 恢复旧行为）
+    if not _locked_loss(state):
+        return None
     try:
         if not DOOM_ALLIN_ON:
             return {"act": "allin", "lk": 1}      # 旧行为（无条件全押）
@@ -1829,6 +1960,10 @@ def _gamble_zone(state):
                 - state.total_win_chips[state.opp_id])
         if lead >= 0:
             return False
+        # 【方案B·2026-10-15 用户规则】未「锁定」（落后 < 半个满栈）→ 不进搏命区，
+        # 交回常规打法（一次全押就能追回，提前梭是负 EV）。
+        if not _locked_loss(state):
+            return False
         line = 2 * _blind_line(state, _hands_left(state), own=False)
         if line <= 0:
             return False
@@ -1850,6 +1985,58 @@ def _pair_is_top(state):
         return top in hole                   # 手里有公面最大点数的那张 → 顶对
     except Exception:
         return False
+
+
+def _adv_tier(state):
+    """【丙·2026-10-15 用户规则】优势局（lead>0）时的牌力分档。
+
+      · "strong" —— 好牌：有效牌型 ≥ 两对，或顶对/超对 → 更敢跟（不被超池逼走）
+      · "weak"   —— 烂牌：高牌，或非顶对的一对         → 更早弃（不纠缠）
+      · None     —— 其余（听牌等）不动
+    未领先（lead ≤ 0）时恒返回 None（本规则只作用优势局）。
+    """
+    if not ADV_TIER_ON:
+        return None
+    try:
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        if lead <= 0:
+            return None
+        cat = _effective_category(state)
+        if cat >= TWO_PAIR or _pair_is_top(state):
+            return "strong"
+        if cat <= ONE_PAIR:
+            return "weak"
+    except Exception:
+        pass
+    return None
+
+
+def _adv_pass(state, eq=None):
+    """【2026-10-15 用户规则】优势局「不硬弃」豁免判据（见 `ADV_PASS_ON` 注释）。
+
+    返回 True ⇔ 领先（lead>0）且我方牌力/胜率已经不错：
+      · 有效牌型 ≥ 两对，或 顶对/超对（`_adv_tier` 的 "strong"）；或
+      · eq ≥ `ADV_PASS_EQ_MIN`（对手范围抽样，天然含"对手有同花/更大牌"的概率）。
+
+    用途：让 `_face_bet` 里三条**不看赔率的硬弃规则**（规则11 / 大注+无坚果 /
+    4 倍突袭）在优势局改由 eq 决定（**只允许 call/fold**）。
+    """
+    if not ADV_PASS_ON:
+        return False
+    try:
+        lead = (state.total_win_chips[state.my_id]
+                - state.total_win_chips[state.opp_id])
+        if lead <= 0:
+            return False
+        cat = _effective_category(state)
+        if cat >= TWO_PAIR or _pair_is_top(state):
+            return True
+        if eq is not None and float(eq) >= ADV_PASS_EQ_MIN:
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def _gamble_hand_good(state):
@@ -2933,6 +3120,8 @@ def _match_adjust(state):
         # 污染后果（实测第 66 手截图）：lead=+134、本手已投 100、剩 4 手 ——
         # 弃牌只损失 100（完全安全），但 ctx 激进偏移 -6BB 把 lead 压成 -466
         # → doom 成立 → 拿 10 高牌（两头顺听牌）无条件 allin 19900。
+        # 【方案B·2026-10-15】`doomed` 状态本身保持不变（仍驱动注额/跟注阈值），
+        #   「强制推光」是否真的执行由 `_doom_plan` 里的 `_locked_loss` 门控。
         if _doom_risk(state, lead_raw, hands_left):
             return "doomed"
 
@@ -4665,14 +4854,18 @@ def _flush_made_guard(state, eq, action):
     仅在 FLUSH_MADE_PASS 打开且 `_flush_threat` 成立且已成两对及以上时生效。
     FLUSH_MADE_NO_RAISE=False（env WB_FLUSH_MADE_RAISE=1）可关掉本护栏，做隔离对照。
     """
-    if not (FLUSH_MADE_PASS and FLUSH_MADE_NO_RAISE):
-        return action
     try:
         if action.get("act") not in ("raise", "allin"):
             return action
         if not _flush_threat(state):
             return action
-        if _effective_category(state) < TWO_PAIR:
+        # 【2026-10-15 用户规则】优势局豁免（`ADV_PASS`）让规则11 在领先时不再硬弃，
+        #   这里必须配套：**同花威胁下不准拿中等牌梭哈** ⇒ 同样降级为 跟注/过牌。
+        _made_ok = (FLUSH_MADE_PASS and FLUSH_MADE_NO_RAISE
+                    and _effective_category(state) >= TWO_PAIR)
+        _adv_ok = _adv_pass(state, eq) and (
+            _effective_category(state) >= TWO_PAIR or _pair_is_top(state))
+        if not (_made_ok or _adv_ok):
             return action
         to_call = int(state.to_call)
         pot = int(state.pot)
@@ -5266,13 +5459,19 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             # 并由调用点的 `_flush_made_guard` 保证**只跟不推**。
             # 持 2 张该花色（真同花）时不豁免 —— 保留 09-07 的原始判据。
             _made = False
+            _real_flush = False
             try:
-                _made = (len(my_same) < 2) and \
+                # 【2026-10-15】手里持该花色 2 张 = **真同花** ⇒ 无条件豁免
+                #（不依赖 FLUSH_MADE_PASS）——交回正常赔率/EU 判据，绝不被硬弃。
+                _real_flush = (len(my_same) >= 2)
+                _made = (not _real_flush) and \
                     (_effective_category(state) >= FLUSH_MADE_MIN_CAT) and \
                     _flush_made_exempt_ok(state)
             except Exception:
-                _made = False
-            if not (FLUSH_MADE_PASS and _made):
+                pass
+            if not ((_real_flush and FLUSH_REAL_PASS) or
+                    (FLUSH_MADE_PASS and _made) or
+                    _adv_pass(state, eq)):
                 return {"act": "fold"}
     # 【规则14·2026-09-14 用户规则】我过牌后对手小注 → 假定诈唬 → 跟注/反加小注。
     # 必须排在下面「大注(>0.6 池)弃牌」之前：否则小底池里的小注会被那条
@@ -5325,7 +5524,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             except Exception:
                 pass
         if _bb_commit > BIG_BET_FOLD_FRAC * pot:
-            if (not BIGBET_THRESH_ON) or _bb_allin_spot:
+            if (not (BIGBET_THRESH_ON or _adv_pass(state, eq))) or _bb_allin_spot:
                 return {"act": "fold"}
             # 【选项B】不硬弃：记下门槛，稍后由 eq 决定（只允许 call/fold，绝不加注）
             _bb_gate = True
@@ -5335,7 +5534,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     if to_call > 0:
         try:
             if _OPP_JUMPED and _board_wet(state) and not _has_nuts_or_strong_draw(state):
-                if (not BIGBET_THRESH_ON) or _bb_allin_spot:
+                if (not (BIGBET_THRESH_ON or _adv_pass(state, eq))) or _bb_allin_spot:
                     return {"act": "fold"}
                 _bb_gate = True
                 _bb_ratio = max(_bb_ratio, 1.0)      # 突袭 → 至少按 1× 池计加价
@@ -5353,7 +5552,7 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     if to_call > 0:
         try:
             if _OPP_JUMPED and _effective_category(state) < THREE_OF_A_KIND:
-                if (not BIGBET_THRESH_ON) or _bb_allin_spot:
+                if (not (BIGBET_THRESH_ON or _adv_pass(state, eq))) or _bb_allin_spot:
                     return {"act": "fold"}
                 _bb_gate = True
                 _bb_ratio = max(_bb_ratio, 1.0)
@@ -5457,6 +5656,13 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         margin += 0.06       # 领先时只打好赔率
     elif adj in ("desperate", "doomed"):
         margin -= 0.06       # 劣势追分：跟注门槛大幅放宽（多看牌搏翻盘）
+    # 【丙·2026-10-15 用户规则】优势局（lead>0）按牌力分档：好牌更敢跟 / 烂牌更早弃。
+    # 放在 protect 之后、`_LAST_REQ_INFO` 之前 ⇒ 与 WB_FACE_LOG 口径一致。
+    _adv = _adv_tier(state)
+    if _adv == "strong":
+        margin -= ADV_TIER_STRONG_RELIEF
+    elif _adv == "weak":
+        margin += ADV_TIER_WEAK_EXTRA
 
     # 【2026-10-11 EQ_VETO】把「决策层用的 eq / 门槛 / 边际」暴露给出口链的
     # 「eq 确信区否决权」。★ 落点必须与下面 `WB_FACE_LOG` **完全一致**
@@ -5649,6 +5855,13 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
                 and adj not in ("desperate", "doomed"):
             return {"act": "fold"}
         return bluff
+    # 【2026-10-15 用户规则】兜底 fold 之前补一次「赔率优先」。
+    #   原实现：eq ∈ [赔率门槛, 0.50) 且无听牌 ⇒ strong/good/medium/draw 全 False
+    #   ⇒ 直接落到这里 **完全不看赔率**（10-12 实测 18 个点：flop、to_call≈1/4 池、
+    #   eq 0.23~0.49、slack 全为正 —— 赔率上明明该跟）。优势局里这正是"被大注逼走"。
+    #   现在：赔率够（eq ≥ eff_req + margin）就跟；不够仍弃。
+    if ADV_ODDS_FALLBACK_ON and eq >= eff_req + margin:
+        return {"act": "call"}
     return {"act": "fold"}
 
 
