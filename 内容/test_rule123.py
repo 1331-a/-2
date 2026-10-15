@@ -48,10 +48,8 @@ def locking_ctx():
 
 # ================= 规则1：确定本局失败对手锁赢 → 无条件 allin =================
 print("===== 规则1 =====")
-# 主动 doomed 基准：my_id=0, lead=-12000, hand=40/max=70 → doom 公式命中。
-# 【2026-10-15 方案B 用户规则】强制推光只在「锁定」（落后 ≥ 半个满栈 = 10,000）
-# 时才做 ⇒ 本组场景的落后必须落在锁定区（lead ≤ -10000），否则规则2 不接管。
-DOOM_PNL = [-6000, 6000]
+# 主动 doomed 基准：my_id=0, lead=-6000, hand=40/max=70 → doom 公式命中
+DOOM_PNL = [-3000, 3000]
 # 1) 主动侧（to_call=0）BTN 任意两张牌（72o）→ 无条件 allin（2026-08-25：
 #    不再主动施压开池，doom 确定即 allin——弃牌=认输，allin 最大化翻盘期望）
 a = decide(parse_request(req(total_win_chips=DOOM_PNL)), OpponentModel())
@@ -414,10 +412,10 @@ check("规则4:小两对上限2000", _bet_limit(st) == SMALL_TWO_PAIR_LIMIT,
       "limit=%s" % _bet_limit(st))
 _S._CTX = None
 
-# 4-14) 行为：主动侧 doom 公式成立（lead=-12000 锁定区）+ 本可锁胜弃牌
+# 4-14) 行为：主动侧 doom 公式成立（lead=-6000 剩25手）+ 本可锁胜弃牌
 #       （fold_out）→ doom 第一优先级：无条件 allin（覆盖 fold_out）
 st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2], hand=45, max_hand=70,
-                       total_win_chips=[-6000, 6000], total_win_games=[20, 25]))
+                       total_win_chips=[-3000, 3000], total_win_games=[20, 25]))
 a = decide(st, OpponentModel())
 check("规则4:主动doomed无条件allin覆盖锁胜弃牌",
       a == {"act": "allin"}, str(a))

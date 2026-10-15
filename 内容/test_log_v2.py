@@ -777,8 +777,7 @@ check("0914规则16:边缘烂牌(K6o)即使末期+爱 allin 也不跟",
       == "fold")
 
 # E. 优先级：防锁赢（doomed）在下层之上——弃牌即送掉比赛时无条件 allin
-# 【2026-10-15 方案B】强制推光要求「锁定」（lead ≤ -10,000）⇒ twc 由 ±3000 加深到 ±5500。
-_doom = _st16(66, cards=(23, 2), my_chips=15000, twc=(-5500, 5500))
+_doom = _st16(66, cards=(23, 2), my_chips=15000, twc=(-3000, 3000))
 check("0914规则16:doomed 状态由规则2 先接管",
       _match_adjust(_doom) == "doomed", _match_adjust(_doom))
 check("0914规则16:doomed 时无条件 allin（不受跟注门槛影响）",
@@ -1003,13 +1002,8 @@ def _st18(mine, cards=_W18, board=(), hist=None, my_id=1, my_chips=19900,
 
 
 # ---- 1. 搏命区触发面 ----
-# 【2026-10-15 方案B 用户规则】搏命区额外要求「锁定」（落后 ≥ 半个满栈 = 10,000）
-# ⇒ 原来的 -3822（lead -7,644）不再触发，改用 lead -11,000。
-check("0916规则18:落后 5,500(lead -11,000 ≥ 锁定阈) → 进搏命区",
-      _gamble_zone(_st18(-5500)) is True)
-# 【2026-10-15 方案B】落后 4,000（lead -8,000 < 锁定阈 10,000）→ 未锁定 ⇒ 不进区
-check("0916规则18:落后 3,822(lead -7,644 未锁定) → 不进区",
-      _gamble_zone(_st18(-3822)) is False)
+check("0916规则18:落后 3822(≈0.96 追平线) → 进搏命区",
+      _gamble_zone(_st18(-3822)) is True)
 check("0916规则18:中等落后(0.5) → 不进区",
       _gamble_zone(_st18(-2000)) is False
       and decide(_st18(-2000), _m16_quiet).get("act") != "allin",
@@ -1017,55 +1011,55 @@ check("0916规则18:中等落后(0.5) → 不进区",
 check("0916规则18:均势 → 不进区", _gamble_zone(_st18(0)) is False)
 check("0916规则18:领先 → 不进区", _gamble_zone(_st18(3000)) is False)
 check("0916规则18:已越线(追不回) → 仍 allin（非太差牌 K8o）",
-      decide(_st18(-5500, cards=[47, 24]), _m16_quiet).get("act") == "allin",
-      str(decide(_st18(-5500, cards=[47, 24]), _m16_quiet)))
+      decide(_st18(-4000, cards=[47, 24]), _m16_quiet).get("act") == "allin",
+      str(decide(_st18(-4000, cards=[47, 24]), _m16_quiet)))
 # 【2026-10-12 用户新规】「太差的牌不推，留几次容错」——_W18 百分位 ≈0.85 > 0.80 ⇒ 不推
 check("1012新规:已越线但牌太差(_W18) → 不推（留容错）",
-      _gamble_hand_trash(_st18(-5500)) is True
-      and decide(_st18(-5500), _m16_quiet).get("act") != "allin",
-      str(decide(_st18(-5500), _m16_quiet)))
+      _gamble_hand_trash(_st18(-4000)) is True
+      and decide(_st18(-4000), _m16_quiet).get("act") != "allin",
+      str(decide(_st18(-4000), _m16_quiet)))
 
 # ---- 2. 牌烂 → 开局 all-in（区内任何街都梭） ----
 # 【2026-10-12 用户新规】原断言用 _W18（百分位 ≈0.85 = 太差）⇒ 已改为「烂但不太差」的 K8o；
 # 太差牌的行为另立断言（不推）。
 check("0916规则18b:烂牌(K8o，百分位 0.36)翻前 → 开局 allin",
-      _gamble_hand_good(_st18(-5500, cards=[47, 24])) is False
-      and decide(_st18(-5500, cards=[47, 24]), _m16_quiet).get("act") == "allin",
-      str(decide(_st18(-5500, cards=[47, 24]), _m16_quiet)))
+      _gamble_hand_good(_st18(-3822, cards=[47, 24])) is False
+      and decide(_st18(-3822, cards=[47, 24]), _m16_quiet).get("act") == "allin",
+      str(decide(_st18(-3822, cards=[47, 24]), _m16_quiet)))
 check("1012新规:太差(_W18)翻前 → 不推（留容错）",
-      _gamble_hand_trash(_st18(-5500)) is True
-      and decide(_st18(-5500), _m16_quiet).get("act") != "allin",
-      str(decide(_st18(-5500), _m16_quiet)))
+      _gamble_hand_trash(_st18(-3822)) is True
+      and decide(_st18(-3822), _m16_quiet).get("act") != "allin",
+      str(decide(_st18(-3822), _m16_quiet)))
 check("0916规则18b:烂牌翻后仍 allin（区内每街可搏）",
-      _gamble_plan(_st18(-5500, board=_B18, hist=_H_FCHK)) == {"act": "allin", "lk": 1}
-      and decide(_st18(-5500, board=_B18, hist=_H_FCHK),
+      _gamble_plan(_st18(-3822, board=_B18, hist=_H_FCHK)) == {"act": "allin", "lk": 1}
+      and decide(_st18(-3822, board=_B18, hist=_H_FCHK),
                  _m16_quiet).get("act") == "allin")
 
 # ---- 3. 牌好 → 多过牌再 all-in ----
 check("0916规则18b:AA 翻前大盲免费 → 过牌慢打",
-      _gamble_hand_good(_st18(-5500, cards=_A18)) is True
-      and decide(_st18(-5500, cards=_A18), _m16_quiet) == {"act": "check"},
-      str(decide(_st18(-5500, cards=_A18), _m16_quiet)))
+      _gamble_hand_good(_st18(-3822, cards=_A18)) is True
+      and decide(_st18(-3822, cards=_A18), _m16_quiet) == {"act": "check"},
+      str(decide(_st18(-3822, cards=_A18), _m16_quiet)))
 check("0916规则18b:AA 翻前需补大盲 → 溜入 call",
-      _gamble_plan(_st18(-5500, cards=_A18, my_id=0, my_chips=19950,
+      _gamble_plan(_st18(-3822, cards=_A18, my_id=0, my_chips=19950,
                          hist=[])) == {"act": "call"})
 check("0916规则18b:AA 翻前遇对手加注 → 收网 allin",
-      decide(_st18(-5500, cards=_A18, hist=_H_RAISE),
+      decide(_st18(-3822, cards=_A18, hist=_H_RAISE),
              _m16_quiet).get("act") == "allin")
 check("0916规则18b:AA 翻牌免费(超对) → 过牌",
-      _gamble_plan(_st18(-5500, cards=_A18, board=_B18, hist=_H_FCHK))
+      _gamble_plan(_st18(-3822, cards=_A18, board=_B18, hist=_H_FCHK))
       == {"act": "check"}
-      and decide(_st18(-5500, cards=_A18, board=_B18, hist=_H_FCHK),
+      and decide(_st18(-3822, cards=_A18, board=_B18, hist=_H_FCHK),
                  _m16_quiet) == {"act": "check"})
 check("0916规则18b:AA 翻牌面对下注 500 → 收网 allin",
-      _gamble_plan(_st18(-5500, cards=_A18, board=_B18, hist=_H_FBET))
+      _gamble_plan(_st18(-3822, cards=_A18, board=_B18, hist=_H_FBET))
       == {"act": "allin", "lk": 1}
-      and decide(_st18(-5500, cards=_A18, board=_B18, hist=_H_FBET),
+      and decide(_st18(-3822, cards=_A18, board=_B18, hist=_H_FBET),
                  _m16_quiet).get("act") == "allin")
 check("0916规则18b:AA 一路免费到河牌 → allin（最后一条街不再等）",
-      _gamble_plan(_st18(-5500, cards=_A18, board=_B18R, hist=_H_RCHK))
+      _gamble_plan(_st18(-3822, cards=_A18, board=_B18R, hist=_H_RCHK))
       == {"act": "allin", "lk": 1}
-      and decide(_st18(-5500, cards=_A18, board=_B18R, hist=_H_RCHK),
+      and decide(_st18(-3822, cards=_A18, board=_B18R, hist=_H_RCHK),
                  _m16_quiet).get("act") == "allin")
 
 # ---- 4. 不在搏命区 → 本规则不接管（交回常规策略） ----
@@ -1387,16 +1381,10 @@ check("0924第21手:三条 → 允许（主动全押保留）",
       _strong_for_big_money(_h20set) is True
       and _big_money_guard(_h20set, {"act": "allin", "lk": 1})
       == {"act": "allin", "lk": 1}, "")
-# 【2026-10-15 方案B 用户规则】强制推光只在「锁定」时做。
-# 本场景 lead -4,436（=2×2218）、已投 2,774 ⇒ 弃牌后 ≈ -9,984 > -10,000 ⇒ **未锁定**
-# ⇒ 规则2 不接管，走常规路径（规则20 弱牌大额 → fold）。
-check("0924第21手:落后 1,109（未锁定）→ 规则2 不强制全押",
-      decide(_st20(lead=-2218), _m16_quiet).get("act") == "fold",
+# 真 doom（落后 1,109 → 弃牌口径成立）→ 入口规则2-A 无条件全押，不受本闸门影响
+check("0924第21手:落后 1,109（真 doom）→ 仍无条件全押",
+      decide(_st20(lead=-2218), _m16_quiet).get("act") == "allin",
       str(decide(_st20(lead=-2218), _m16_quiet)))
-# 锁定版：lead 加深到 -8,000（弃牌后 -13,548 ≤ -10,000）→ 规则2-A 无条件全押
-check("0924第21手:锁定（弃牌后落后 ≥ 半个满栈）→ 仍无条件全押",
-      decide(_st20(lead=-4000), _m16_quiet).get("act") == "allin",
-      str(decide(_st20(lead=-4000), _m16_quiet)))
 # 豁免：应对对手全下（需跟 ≥ 剩余筹码）
 _h20allin = parse_request(dict(
     num_players=2, dealer_id=0, my_id=0, my_chips=17226,

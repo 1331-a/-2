@@ -406,21 +406,25 @@ GAMBLE_SHOVE_FOLD_MIN = 0.45            # 低于此弃牌率 → 不梭哈
 GAMBLE_SHOVE_FOLD_SAMPLES = 6           # 样本不足时不门控
 GAMBLE_SHOVE_FORCE_HANDS = 8            # 剩 ≤8 手时不门控（没时间靠常规打法磨回来）
 
-# 【方案B·2026-10-15 用户规则】强制推光只在「锁定」时触发。
-#   判据：lead ≤ −DOOM_LOCK_FRAC × 初始筹码（默认半个满栈 = 10,000）。
-#   依据：一次成功的全押最多赢回一个满栈 ⇒ 落后不足半个满栈时**一次就能追回**，
-#         不算锁定 ⇒ 不该提前梭，交回常规打法（用户：「前中期打得好」）。
-#   实测（4 场 vs code A，2026-10-15）：3 次爆仓全在落后 8~13% 筹码时触发
-#   （−1836 / −1602 / −2538，远非锁定）⇒ 每次 −20,000。
-#   落点：`_match_adjust`（doomed 判定）+ `_gamble_zone`（搏命区）。
-#   回退：`WB_NO_DOOM_LOCK=1`；阈值 `WB_DOOM_LOCK_FRAC=`。
-DOOM_LOCK_ON = True
-DOOM_LOCK_FRAC = 0.50          # 落后 ≥ 半个满栈 → 锁定
-DOOM_LOCK_LINE_MULT = 3.0      # 或 落后 ≥ 3×盲注线（末段自动收紧：盲注线→0）
+# 【方案B·2026-10-15】强制推光只在「锁定」时触发 —— ★★ **实测被用户否掉，默认关闭**。
+#   原判据：−lead + 2×本局已投入 ≥ min(0.5×满栈, 3×盲注线)。
+#   设计意图：落后不足半个满栈时"一次全押就能追回"⇒ 不算锁定 ⇒ 不提前梭。
+#   ★★ 实战否决（2026-10-15 17:51 那局，用户："这明显 allin 晚了"）：
+#     手32 起 lead −5,294、剩 37 手 ⇒ 原版本 **早已 doomed**、会立即 allin；
+#     但锁定门要求领先落后 ≥ 3×盲注线(=3×75×37≈8,325) ⇒ **不通过 ⇒ 被挡回常规打法**，
+#     于是手 32~42 **连坐 11 手**（日志里是 `raise 300 → fold`），直到手 44 才重新推。
+#     ⇒ **门槛比 doom 自己的线还高 ⇒ 等于把"该梭"推迟到更晚**，与"落后且时间在流逝时
+#       越早梭越好（每手只赚 +100，需要手数才追得回）"相反。
+#   ⇒ **默认关**；代码与开关保留作为记录。启用：`WB_DOOM_LOCK=1`（阈值 `WB_DOOM_LOCK_FRAC=`）。
+#   ★ 真正的教训：一次全押最多赢回**对手的一副筹码**，但"追回"靠的是**剩余手数**，
+#     不是"一次就能追平"—— 用"能不能一次追回"当锁定判据，方向是错的。
+DOOM_LOCK_ON = False
+DOOM_LOCK_FRAC = 0.50
+DOOM_LOCK_LINE_MULT = 3.0
 try:
     import os as _os_dl
-    if _os_dl.environ.get("WB_NO_DOOM_LOCK") == "1":
-        DOOM_LOCK_ON = False
+    if _os_dl.environ.get("WB_DOOM_LOCK") == "1":
+        DOOM_LOCK_ON = True
     if _os_dl.environ.get("WB_DOOM_LOCK_FRAC"):
         DOOM_LOCK_FRAC = float(_os_dl.environ.get("WB_DOOM_LOCK_FRAC"))
 except Exception:
@@ -986,6 +990,40 @@ ALLIN_FLOOR_CONST = 1000      # 全下下限常数（筹码）：投入须 > 总
 #   - 翻前：一律 ≤ PREFLOP_MAX_BET(1000)（手牌最多一对，无牌面支撑大注）。
 # 单次下注金额（含 allin）以上述分级为封顶（例外见 _bet_limit）。
 PREFLOP_MAX_BET = 1000       # 翻牌前总注额上限（10BB，2026-08-24 用户规则）
+
+# 【2026-10-15 用户反馈·翻前大额**跟注**不该被同一个上限否掉】
+#   原实现把「翻前 ≤1000」也用在了**跟注**上（`_over_limit` 同时被 call 与 raise
+#   两条路径调用），于是隐含规定：面对任何翻前加注 >1000，**只有
+#   AA/KK/QQ/JJ/AKs（`_is_super_hand`）能继续，其余一律弃**——包括 AKo。
+#   ★ 实证（2026-10-15 17:51，平台第 28 手 / 日志 hand=27）：
+#     我 `KhAs`（AKo），对手 `Qh Jh`；对手 raise 392 → 我 3-bet 1100 →
+#     对手 4-bet 3802 → to_call 2,702、底池 6,002（**只需胜率 0.310**）。
+#     **用对手真实底牌算的精确胜率 = 0.617** ⇒ 明显该跟；
+#     但决策层想加注 → 被翻前 1000 封顶 → 无法加注 → `_over_limit` True → **弃牌**、
+#     亏 1,100（白丢一个 5.5BB 的开池 + 弃掉 61.7% 胜率的牌）。
+#   全集扫描（非自对弈日志）：此类点（翻前 to_call>1000、非全下、最终 fold）
+#     **只出现 1 次，就是这一手，100% 判错** ⇒ 修它零副作用。
+#   修法：翻前 to_call 超上限时，若起手牌百分位 ≤ `PREFLOP_BIG_CALL_PCT` 或是
+#     `_is_super_hand` ⇒ **允许跟注**。
+#     ★ 阈值取 **0.08**（top 8% ≈ 77+ / AKo / AKs / AQs）—— 只覆盖"接大反加仍然
+#       合理"的档位。KQo(0.092)/AQo(0.086)/AJs(0.098) 仍在门外（面对 20BB+ 反加
+#       这些牌跟注太松）。AKo = 0.068 是唯一被实测证伪的档位 ⇒ 门槛必须 ≥ 0.07。
+#       （判据用**起手牌排名**而非 eq：翻前不走 `_face_bet`，没有 eq 快照。）
+#     ★ 仍然不允许把**我们主动下注的尺寸**抬过 1000（那条用户规则不动）。
+#   落点（4 处，缺一不可）：`_normalize` 跟注支 + `_normalize` 加注被降级支 +
+#     `_big_money_guard` 跟注支（to_call>3000 的翻前大跟注）。**不含**规则20 的
+#     「弱牌不许主动推光」（R2，09-24 用户规则）。
+#   回退：`WB_NO_PREFLOP_BIG_CALL=1`；阈值 `WB_PREFLOP_BIG_CALL_PCT=`。
+PREFLOP_BIG_CALL_ON = True
+PREFLOP_BIG_CALL_PCT = 0.08
+try:
+    import os as _os_pbc
+    if _os_pbc.environ.get("WB_NO_PREFLOP_BIG_CALL") == "1":
+        PREFLOP_BIG_CALL_ON = False
+    if _os_pbc.environ.get("WB_PREFLOP_BIG_CALL_PCT"):
+        PREFLOP_BIG_CALL_PCT = float(_os_pbc.environ.get("WB_PREFLOP_BIG_CALL_PCT"))
+except Exception:
+    pass
 
 HIGH_BET_LIMIT = 3000        # 翻后大两对总注额上限（30BB）
 SMALL_TWO_PAIR_LIMIT = 2000  # 翻后小两对及以下总注额上限（20BB，用户规则）
@@ -1644,6 +1682,10 @@ def _big_money_guard(state, action):
             # 门槛已由决策层的 `_big_call_ramp` 抬过。弱牌不适用，照旧弃。
             if _big_call_ramp_applies(state):
                 return action
+            # 【2026-10-15 用户反馈】翻前大额跟注（to_call > 3000）：牌力够 ⇒ 放行
+            #   （与 `_normalize` 的 1000 上限豁免同源；缺这一处则 >3000 的 4-bet 仍被弃）
+            if _preflop_big_call_ok(state):
+                return action
             return {"act": "fold"}
     except Exception:
         pass
@@ -1759,19 +1801,17 @@ def _endgame_arbitrate(state, model, chip_action, eq, adj):
 
 
 def _locked_loss(state):
-    """【方案B·2026-10-15 用户规则】是否已「锁定败局」= 落后 ≥ 半个满栈。
+    """【方案B·2026-10-15】是否已「锁定败局」—— ★★ **默认关（实测被否）**。
 
-    用户规则：「强制推光应该只触发在弃牌对面锁赢的情况」——落后不足半个满栈时，
-    一次成功的全押（约赢回一个满栈）就能追回 ⇒ 未锁定 ⇒ 不梭，交回常规打法。
-    一次全押最多把对手的一副筹码赢过来（≈ INIT_CHIPS），故阈值取半栈。
+    ★ 历史：曾按用户「强制推光应该只触发在弃牌对面锁赢的情况」实现为
+      `deficit ≥ min(0.5×满栈, 3×盲注线)`，`DOOM_LOCK_ON=True`。
+    ★ 实战否决（2026-10-15 17:51，用户"这明显 allin 晚了"）：该门槛**高于 doom 自己的线**
+      ⇒ 把手 32~42 共 11 手挡回常规打法（`raise 300 → fold`），推迟了本该进行的全押。
+      根因：把"能不能一次追回"当锁定判据 —— 但追回靠的是**剩余手数**（每手 +100），
+      不是"一次追平"。⇒ **默认关**，启用 `WB_DOOM_LOCK=1`。
 
-    判据（与 `_doom_risk` 同形，只是阈值从 2×盲注线放大到 半个满栈）：
-        lead − 2×本局已投入 ≤ −DOOM_LOCK_FRAC × INIT_CHIPS
-    额外：最后一手（无追回余地）且落后 → 直接算锁定。
-
-    返回 True = 已锁定（允许强制推光）；`WB_NO_DOOM_LOCK=1` 时恒 True（旧行为）。
-    ★ 与既有 `DOOM_ALLIN_ON` 联动：该开关为 False（`_doom_plan` 回到"无条件全押"
-      的旧行为，测试的"对照臂"就是用这个）时，本门控一并失效。
+    返回 True = 已锁定（允许强制推光）。`DOOM_LOCK_ON=False`（默认）或
+    `DOOM_ALLIN_ON=False` 时**恒 True ⇒ 不抑制任何东西 = 旧行为**。
     """
     if not DOOM_LOCK_ON or not DOOM_ALLIN_ON:
         return True
@@ -2302,6 +2342,28 @@ def _over_limit(state, amount):
         return amount > PREFLOP_MAX_BET and _match_adjust(state) != "doomed" \
             and not _is_super_hand(state.hole)
     return amount > _bet_limit(state)
+
+
+def _preflop_big_call_ok(state):
+    """【2026-10-15 用户反馈】翻前「大额跟注」是否放行（见 `PREFLOP_BIG_CALL_ON`）。
+
+    背景：翻前 1000 上限被同时用在**跟注**上 ⇒ 面对任何 >1000 的翻前加注，
+    只有 `_is_super_hand`（AA/KK/QQ/JJ/AKs）能继续，AKo 直接弃
+    （17:51 手27 实测：真实胜率 0.617、只需 0.310，却被弃掉、亏 1,100）。
+
+    返回 True ⇔ 翻前 且（`_is_super_hand` 或 起手牌百分位 ≤ `PREFLOP_BIG_CALL_PCT`）。
+    只在「to_call 超上限」的分支里当豁免用；**不改变主动下注 ≤1000** 的规定。
+    """
+    if not PREFLOP_BIG_CALL_ON:
+        return False
+    try:
+        if state.stage != "preflop":
+            return False
+        if _is_super_hand(state.hole):
+            return True
+        return hand_percentile(state.hole) <= PREFLOP_BIG_CALL_PCT
+    except Exception:
+        return False
 
 
 def _bet_cap_guard(state, action):
@@ -6209,6 +6271,9 @@ def _normalize(state, action):
             # 弱牌不适用（`_big_call_ramp_applies` 内含牌型下限），照旧弃。
             if _big_call_ramp_applies(state):
                 return {"act": "call"}
+            # 【2026-10-15 用户反馈】翻前大额跟注：牌力够 ⇒ 放行（见 PREFLOP_BIG_CALL_ON）
+            if _preflop_big_call_ok(state):
+                return {"act": "call"}
             return {"act": "fold"}
         # 保险：万一 _over_limit 的语义将来被改动，这条仍能兜住翻后金额闸门。
         if state.stage != "preflop" and to_call > _bet_limit(state):
@@ -6240,7 +6305,9 @@ def _normalize(state, action):
         if state.stage == "preflop":
             num = min(num, PREFLOP_MAX_BET)
             if num < min_r:
-                if _over_limit(state, to_call):
+                # 【2026-10-15 用户反馈】封顶到「无法加注」时，若牌力够 ⇒ 降级为**跟注**
+                #   （原来只要 to_call 超上限就弃 —— 17:51 手27 的 AK 就是这样被弃的）。
+                if _over_limit(state, to_call) and not _preflop_big_call_ok(state):
                     return {"act": "fold"}
                 return {"act": "call"} if to_call > 0 else {"act": "check"}
         # 【用户规则 2026-08-25】注额分级上限（翻后，_bet_limit）：
