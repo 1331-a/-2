@@ -56,14 +56,24 @@ a = decide(parse_request(req(total_win_chips=DOOM_PNL)), OpponentModel())
 check("规则1:主动doomed BTN 72o 无条件allin",
       a == {"act": "allin"}, str(a))
 
-# 2) 主动侧翻后空气牌 → 同样无条件 allin（不看牌力）
+# 2) 主动侧翻后「太差」空气牌 → 【2026-10-12 用户新规】不再无条件 allin（留容错）
 st2 = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[24, 17],
                         total_win_chips=DOOM_PNL,
                         history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st2, OpponentModel())
-check("规则1:主动doomed翻后空气牌无条件allin", a == {"act": "allin"}, str(a))
+check("1012新规:主动doomed翻后「太差」空气牌 → 不推（留容错）",
+      a != {"act": "allin"}, str(a))
+
+# 2b) 主动侧翻后「烂但不太差」（中了底部一对 3s8c on K-8-3）→ 仍无条件 allin
+st2b = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[7, 24],
+                         total_win_chips=DOOM_PNL,
+                         history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
+                                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                  {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+a2b = decide(st2b, OpponentModel())
+check("规则1:主动doomed翻后(非太差) → 无条件 allin", a2b == {"act": "allin"}, str(a2b))
 
 # 3) 被动侧（对手已下注）→ allin 搏命（弃牌=直接认输，第一优先级）
 st3 = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[24, 17],

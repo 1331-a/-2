@@ -401,7 +401,18 @@ st = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                                 {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                 {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a = decide(st, foldy())
-check("施压档:主动doomed空气牌无条件allin", a == {"act": "allin"}, str(a))
+# 【2026-10-12 用户新规】「太差的牌不推，留几次容错」—— 上面那手空气牌属"太差" ⇒ 不再无条件 allin
+check("1012新规:施压档 主动doomed空气牌(太差) → 不推（留容错）",
+      a != {"act": "allin"}, str(a))
+# 非太差（中了底部一对 3s8c on K-8-3）→ 仍无条件 allin，保留原规则覆盖
+st_nt = parse_request(req(my_id=0, my_chips=19750, my_cards=[7, 24],
+                          public_cards=[46, 22, 5], hand=45, max_hand=70,
+                          total_win_chips=DOOM_PNL,
+                          history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
+                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
+                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
+a_nt = decide(st_nt, foldy())
+check("施压档:主动doomed(非太差) → 无条件allin", a_nt == {"act": "allin"}, str(a_nt))
 # 对照组：正常（lead=0，非防锁赢）→ 同场景空气牌对高弃牌对手会诈唬
 st2 = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                         public_cards=[46, 22, 5], hand=45, max_hand=70,

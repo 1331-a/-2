@@ -73,27 +73,33 @@ print("=" * 78)
 print("② doom + to_call==0（免费过牌）→ 看牌质量")
 print("=" * 78)
 # 翻前：好牌 = 百分位 ≤ GAMBLE_GOOD_PCT（约 top20%）
-for name, cards, good in [("72o 烂", (22, 0), False), ("Q5o 烂", (12, 1), False),
+# 【2026-10-12 用户新规】"太差"（百分位 > GAMBLE_TRASH_PCT=0.80）不再推 → 断言随之更新；
+# 同时保留一个「烂但不太差」的样本，确保「烂牌开局 allin」这条规则本身仍被覆盖。
+for name, cards, good in [("72o 太差", (22, 0), False), ("52o 太差", (12, 1), False),
+                          ("K8o 烂但不太差", (47, 24), False),
                           ("AA 好", (A_S, A_H), True), ("KK 好", (K_S, K_H), True)]:
     st = parse_request(req(H_LIMP, cards, my=19900, twc=DOOM_TWC))
     is_good = S._gamble_hand_good(st)
+    is_trash = S._gamble_hand_trash(st)
     a = S.decide(st, OpponentModel(), None, debug=False)
-    want_allin = not good
+    want_allin = (not good) and not is_trash
     ok = (a.get("act") == "allin") if want_allin else (a.get("act") != "allin")
-    check("doom免费:(%s牌) %s" % ("好" if good else "烂", name), ok,
-          "判定good=%s act=%s" % (is_good, a))
+    check("doom免费:(%s牌) %s" % ("好" if good else ("太差" if is_trash else "烂"), name), ok,
+          "good=%s trash=%s act=%s" % (is_good, is_trash, a))
 
 # 翻后彩虹面 T♠ 8♥ 4♦（无听牌）：高牌 = 烂；顶对/三条 = 好
 PUB_DRY = [40, 33, 18]
-for name, cards, good in [("23o 高牌", (3, 7), False),
+for name, cards, good in [("23o 太差", (3, 7), False),
                           ("KTo 顶对", (T_H, K_S), True),
                           ("TT 三条", (T_H, 41 + 1), True)]:
     st = parse_request(req(H_LIMP, cards, pub=PUB_DRY, my=19900, twc=DOOM_TWC))
+    is_trash = S._gamble_hand_trash(st)
     a = S.decide(st, OpponentModel(), None, debug=False)
-    ok = (a.get("act") == "allin") if not good else (a.get("act") != "allin")
-    check("doom免费翻后:(%s牌) %s" % ("好" if good else "烂", name), ok,
-          "cat=%s good=%s act=%s" % (S._effective_category(st),
-                                     S._gamble_hand_good(st), a))
+    want_allin = (not good) and not is_trash
+    ok = (a.get("act") == "allin") if want_allin else (a.get("act") != "allin")
+    check("doom免费翻后:(%s牌) %s" % ("好" if good else ("太差" if is_trash else "烂"), name), ok,
+          "cat=%s good=%s trash=%s act=%s" % (S._effective_category(st),
+                                              S._gamble_hand_good(st), is_trash, a))
 
 # 河牌例外：最后一街没得「再看」→ 好牌也要收网
 H_RIVER = BL + [{"player_id": 1, "action": 0, "action_type": "call", "amount": 100, "round": 0}] + \

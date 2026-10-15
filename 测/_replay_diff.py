@@ -36,6 +36,10 @@ def main():
         _orig_seed = S._decision_seed
         S._decision_seed = lambda st, _o=_orig_seed, _d=_off: _o(st) + _d
         print("[seed offset = %d]" % _off)
+    _maxh = os.environ.get("WB_MAX_HAND")
+    _maxh = int(_maxh) if _maxh else None
+    if _maxh is not None:
+        print("[只统计 req hand <= %d]" % _maxh)
     o = json.load(io.open(path, encoding="utf-8"))
     m0 = o["match"]
     seat = 0
@@ -50,6 +54,8 @@ def main():
     bad = []
     pair = collections.Counter()
     for req, meta in load_botbattle(path, my_seat=seat):
+        if _maxh is not None and (req.get("hand") or 0) > _maxh:
+            continue
         st = G.parse_request(req)
         try:
             O.build_model_from_history(m, req, st)

@@ -220,7 +220,45 @@ LEAD_ALLIN_SHIFT = {
 #   · 0.95 ≈ 「只剩 5% 的追赶余地」——要靠对手全程弃牌才追回，实战几乎不可能；
 #   · 与规则2 的关系：越线（≥1.0）由 doom 接管（无条件 allin），本规则管
 #     「接近越线」这段灰区。
-GAMBLE_LINE_FACTOR = 0.95
+# 【2026-10-12 用户新规】0.95 → **0.80**：更早进入搏命区。
+#   理由（用户原话）：「只要到 80% 就开始 allin，这样还能留几次牌太差的容错」
+#   —— 越早开始，[0.80, 1.00] 这段余量就越大，可以在牌太差时先跳过、
+#   等到能推的一手再上；等到 0.95 才动手时，基本已被迫"必须推"。
+#   回退：`WB_GAMBLE_LINE=0.95`。
+GAMBLE_LINE_FACTOR = 0.80
+try:
+    import os as _os_glf
+    if _os_glf.environ.get("WB_GAMBLE_LINE"):
+        GAMBLE_LINE_FACTOR = float(_os_glf.environ["WB_GAMBLE_LINE"])
+except Exception:
+    pass
+
+# 【2026-10-12 用户新规】搏命/末日区里「太差」的牌 → **不推**，为后面几手留容错。
+#   ★ 依据（真实对局实测，全部非自对弈日志）：
+#     ① **77 笔「用高牌推 all-in」合计 −32,100（均 −417）**；75 笔对手弃牌每次只赚 +100，
+#        另外 2 笔被跟各 −20,000（垃圾牌被跟的 EV≈−6,000）
+#        ⇒ 弃牌权益（+100）只有被跟代价（−20,000）的 1/200 ⇒ 对手跟注率 > ~1.6% 就是负 EV。
+#     ② **「我方翻前 allin」81 笔按起手牌百分位分档，亏损全部落在最烂的 20%**：
+#          0.00~0.20 → 13 笔 **+21,200**（均 +1,631）
+#          0.20~0.65 → 30 笔 +2,800（均 +93）
+#          0.65~0.80 → 19 笔 +1,900（均 +100）
+#          **0.80~1.00 → 19 笔 −18,200（均 −958）**   ← 唯一的亏损区
+#        ⇒ 门槛取 **0.80**：只拦最烂 20%，中间 60% 那部分「每次 +100 的弃牌权益」全部保留。
+#     对比：同一批日志里 `allin + 口袋对` 7 笔 **+20,600（均 +2,943）** ⇒ 有牌力时推是赚的。
+#   「太差」判准（见 `_gamble_hand_trash`）：翻前 百分位 > GAMBLE_TRASH_PCT；
+#     翻后 无对子 / 无听牌 / **且连一张高张都没有**（完全的死牌）。
+#   回退：`WB_NO_GAMBLE_TRASH=1`（或 `WB_GAMBLE_TRASH_PCT=1.01` 只关翻前那一档）。
+GAMBLE_TRASH_ON = True
+GAMBLE_TRASH_PCT = 0.80        # 翻前：起手牌百分位 > 0.80（后 20%）→ 太差
+GAMBLE_TRASH_OUTS_MAX = 4      # 翻后：无对子且 outs < 4 → 太差（十字以内不算听牌）
+try:
+    import os as _os_gtr
+    if _os_gtr.environ.get("WB_NO_GAMBLE_TRASH") == "1":
+        GAMBLE_TRASH_ON = False
+    if _os_gtr.environ.get("WB_GAMBLE_TRASH_PCT"):
+        GAMBLE_TRASH_PCT = float(_os_gtr.environ["WB_GAMBLE_TRASH_PCT"])
+except Exception:
+    pass
 
 # 【规则18b·2026-09-16 用户规则】搏命打法按牌力分流：
 #   用户规则：「牌好就多过牌再 allin，不好就开局 allin」。
@@ -1718,6 +1756,10 @@ def _doom_plan(state, model=None):
         # ① 能免费过牌 → 看牌质量（「质量不好直接 allin / 质量好再看看」）
         if to_call <= 0:
             if not _gamble_hand_good(state):
+                # 【2026-10-12 用户新规】能免费过牌 + 牌太差 → 不推（过牌即可，零成本），
+                # 把这一手留给下一次；落后加深后会由常规/博命路径再接管。
+                if _gamble_trash_pass(state):
+                    return None
                 if not _shove_fold_ok(state, model):
                     return None                    # 对手会跟 → 烂牌也不硬推
                 return {"act": "allin", "lk": 1}   # 质量不好 → 直接 allin
@@ -1835,6 +1877,59 @@ def _gamble_hand_good(state):
         return False
 
 
+def _gamble_hand_trash(state):
+    """【2026-10-12 用户新规】搏命/末日区里「太差」的牌 —— 不推，给后面几手留容错。
+
+    用户原话：「只要到 80% 就开始 allin，这样还能留几次牌太差的容错，
+    具体什么样的牌算太差你自己决定」。
+
+    判定（确定性，与 `_gamble_hand_good` 同一套口径，避免 MC 抖动）：
+      · 翻前：起手牌百分位 > GAMBLE_TRASH_PCT（默认 0.60 ⇒ 后 40%）；
+      · 翻后：**无对子**（有效牌型 = 高牌）且 **无听牌**（outs < GAMBLE_TRASH_OUTS_MAX）
+              —— 即完全没有摊牌价值、也没有成牌路径。
+
+    ★ 依据：77 笔「高牌 allin」实测 −32,100（均 −417）；弃牌权益 +100 / 被跟 −20,000。
+    与 `_gamble_hand_good`（牌好）三段：牌好 → 慢打；中间 → 推；太差 → 不推。
+    """
+    try:
+        if state.stage == "preflop":
+            return hand_percentile(state.hole) > GAMBLE_TRASH_PCT
+        if _effective_category(state) > HIGH_CARD:
+            return False                       # 有对子及以上 → 不算太差
+        if _has_nuts_or_strong_draw(state):
+            return False
+        if _count_outs(state.hole, state.board) >= GAMBLE_TRASH_OUTS_MAX:
+            return False                       # 有卡顺级及以上的成牌路径
+        # 最后一道：**连一张高张都没有**（两张底牌都 ≤ 公面最大点数）
+        # ⇒ 既无对子、无听牌、又无高张补强 = 完全的死牌，才是「太差」。
+        # ★ 这条必不可少：否则 KdAd 在 Qd2s7h 上（6 个 outs 的 A 高张）也会被判太差，
+        #   而实测那类全押是 +EV（跟注率 3% ≪ 盈亏平衡 ~26%）。
+        try:
+            best_board = max(c // 4 for c in state.board)
+        except ValueError:
+            return False
+        return max(c // 4 for c in state.hole) <= best_board
+    except Exception:
+        return False
+
+
+def _gamble_trash_pass(state):
+    """【2026-10-12 用户新规】太差的牌是否允许「跳过」（留住容错）。
+
+    ★ 关键限定：**剩手太少时不允许跳过** —— 「留几次容错」的前提是还有时间等下一手；
+    剩 ≤ GAMBLE_SHOVE_FORCE_HANDS(8) 手时根本没有下一次机会，必须推。
+    （与 `_shove_fold_ok` 的「剩 ≤8 手不门控」同一口径。）
+    """
+    if not GAMBLE_TRASH_ON:
+        return False
+    try:
+        if int(_hands_left(state)) <= GAMBLE_SHOVE_FORCE_HANDS:
+            return False
+    except Exception:
+        pass
+    return _gamble_hand_trash(state)
+
+
 def _shove_fold_ok(state, model=None):
     """【方向2·2026-09-28】「梭哈靠弃牌权益」是否成立（对手会不会弃牌）。
 
@@ -1881,6 +1976,9 @@ def _gamble_plan(state, model=None):
     if not _gamble_zone(state):
         return None
     if not _gamble_hand_good(state):
+        # 【2026-10-12 用户新规】太差 → 不推，留住容错（[0.80,1.00] 这段余量就是给它的）
+        if _gamble_trash_pass(state):
+            return None
         if not _shove_fold_ok(state, model):
             return None
         return {"act": "allin", "lk": 1}
