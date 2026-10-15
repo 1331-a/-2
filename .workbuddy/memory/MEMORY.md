@@ -72,7 +72,8 @@ lead=我方 net−对手 net；筹码损失让 lead 变 2 倍，×2 只用一次
 ⇒ **11 点里 10 点"该弃"**（真实胜率平均比赔率低 **0.118**），只 1 点该跟。
 **根因：我方 eq 在"对手下注 + 我方领先"人群平均报 0.459、真实只有 0.175 ⇒ 平均高估 0.284**（0.8188→0.182、0.6689→0.045）。
 ⇒ **硬规则不看 eq，恰好挡住了"被高估的 eq 带进来的负 EV 跟注"**；**要放开硬规则必须先校准 eq（对手范围）**。
-⇒ **默认关 ⇒ 线上行为逐字不变**；未 bundle、未提交。详见 `复盘_20261015_优势局硬规则豁免.md`。
+⇒ **默认关 ⇒ 线上行为逐字不变**。**已提交推送 `944b642`**（bundle 8392 行、cmp 一致、13/13 全绿）。
+详见 `复盘_20261015_优势局硬规则豁免.md`。
 
 ## 出口链（★最大结构问题）
 入口短路 `_lock_win_unified`/`_gamble_plan` **实测 33.9%（几乎全是 `_fold_out_active` 锁赢弃牌）**→决策层→出口 10 层：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`→`_cheap_call_guard`→`_doom_call_upgrade`（v50 只有 `_normalize`）。
