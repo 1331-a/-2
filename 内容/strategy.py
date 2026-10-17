@@ -711,6 +711,15 @@ FUTURE_COST_CAP_ON = True      # 总开关
 FUTURE_COST_CAP_MIN_HANDS = 40 # 【样本门控】第几手起封顶才线性达到满强度
 FUTURE_COST_CAP_MIN_RATIO = 0.35  # 「便宜」下限：to_call ≥ 35% 底池 → 算大注，豁免
 
+# 【2026-10-16】底口袋对风险识别的回退开关。默认开启；关闭后恢复旧的
+# “公对 + 手牌配公面单张”判据，便于逐点 A/B，不影响其他公对风险规则。
+BOTTOM_POCKET_RISK_ON = True
+try:
+    if _os.environ.get("WB_NO_BOTTOM_POCKET_RISK") == "1":
+        BOTTOM_POCKET_RISK_ON = False
+except Exception:
+    pass
+
 # 【A 条件化·2026-09-25 用户规则】后续投入折算必须**看对手打不打**：
 # 「跟一手再被赶走」这条付费链的前提是**对手会在后面继续开火**。对手若
 # 被动（下注少），后面根本不会有第二次、第三次下注 —— 此时把 future_cost
@@ -2697,6 +2706,14 @@ def should_avoid_risk(state):
             hand_pair = h
             break
     if hand_pair is None:
+        # 【2026-10-16 修复】公对 + 底口袋对没有“某张手牌配公面单张”的
+        # hand_pair，因此旧逻辑漏掉了 22 on 99T 这类最典型的弱两对。
+        # 这类牌被更高公对、T 两对和暗三条统治，不能走强牌主动加注路线。
+        # 只在恰好两对且口袋对低于公对时触发；三条及以上已在上面豁免。
+        if BOTTOM_POCKET_RISK_ON and hr[0] == hr[1] and hr[0] < pair_rank \
+                and len({c // 4 for c in board}) == len(board) - 1 \
+                and _effective_category(state) == TWO_PAIR:
+            return True
         return False                      # 没有第二对 → 不是两对结构
     if hand_pair >= pair_rank:
         return False                      # 手牌对 ≥ 公对 = 顶两对（强牌，不触发）
@@ -5900,7 +5917,8 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         # 【方案A】便宜跟注封顶（弱听牌最容易被逐街小注掏空）
         if _cheap_call_cap_hit(state, strong):
             return {"act": "fold"}
-        if required <= 0.20 and (eq >= required * 0.9 or adj in ("desperate", "doomed")):
+        if required <= 0.20 and (eq >= required * 0.9 or
+                                 adj in ("desperate", "doomed")):
             return {"act": "call"}
         return {"act": "fold"}
 

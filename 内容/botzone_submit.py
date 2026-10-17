@@ -733,16 +733,25 @@ def monte_carlo_equity(hole, board, iterations=500, opp_range_pct=1.0,
 
 # ---------------- 精确枚举（河牌 / 转牌） ----------------
 def exact_equity(hole, board, opp_range_pct=1.0, opp_weights=None,
-                 deadline=None, soft_tail=None):
-    """河牌 / 转牌的**精确**胜率（含平局折半）。
+                 deadline=None, soft_tail=None, rng=None):
+    """河牌 / 转牌的**精确**胜率（含平局折半）；转牌可带 deadline 提前收尾。
 
     规模（实测 evaluate_7 ≈ 16,884 次/秒）：
       河牌：枚举对手 C(45,2) = 990 组合 → 约 1,000 次评估 ≈ 0.06s
       转牌：枚举对手 C(46,2) = 1,035 × 河牌 44 张 ≈ 4.4 万次评估 ≈ 2.6s
       翻牌：C(47,2) × C(45,2) ≈ 107 万组合 ≈ 63s —— 超过单步预算，不做。
 
-    转牌带 deadline：每处理 4 张河牌检查一次时钟，超时就停止；
-    由于剩余河牌是随机缺失，提前收尾仍是**无偏**估计（只是误差不再为 0）。
+    【2026-10-17 修复·转牌截断偏差】转牌带 deadline 时每处理 4 张河牌检查
+    一次时钟、超时即停。**旧实现按 `full_deck()` 的固定牌序枚举河牌** ⇒
+    截断后只剩牌序前缀，是**有偏**子集：实测同一局面（10-12 日志 hand57）
+    报 0.8188（只算了前 4 张），完整枚举 0.195、真实值 0.182。
+    现改为：带 deadline 时先把河牌序列按 `rng` **确定性洗牌**再枚举
+    （rng 由调用方播种 ⇒ 同一局面必定同一顺序）⇒ 提前收尾成为**无偏**子集，
+    且不引入抽样噪声、不增加评估次数（仍 ≤ 4.4 万次 ≈ 2.45s）。
+      · 为什么不用 MC 替代完整枚举：实测（测/_turn_cost.py）完整枚举
+        2.45s / 误差 0，而 MC30000 要 4.36s / 误差 0.32%（评估次数反而更多：
+        6 万 vs 4.35 万）；且单次转牌占用 2.45s → 4.44s，更容易撞破
+        `strategy.EQ_TOTAL_BUDGET`（12s）⇒ 后续胜率落到 0.5 兜底。
 
     非河牌/转牌返回 None（调用方回退 monte_carlo_equity）。
     """
@@ -751,7 +760,7 @@ def exact_equity(hole, board, opp_range_pct=1.0, opp_weights=None,
         return _exact_river(hole, board, opp_range_pct, opp_weights, soft_tail)
     if nb == 4:
         return _exact_turn(hole, board, opp_range_pct, opp_weights, deadline,
-                           soft_tail)
+                           soft_tail, rng)
     return None
 
 
@@ -778,13 +787,20 @@ def _exact_river(hole, board, opp_range_pct, opp_weights, tail=None):
 
 
 def _exact_turn(hole, board, opp_range_pct, opp_weights, deadline=None,
-                tail=None):
+                tail=None, rng=None):
     deck = [c for c in full_deck() if c not in hole and c not in board]
     combos, weights, _cum, _tot = _build_range(deck, opp_range_pct,
                                                opp_weights, tail)
     bd = list(board)
     hr = list(hole)
     nc = len(combos)
+    # 【2026-10-17】限时转牌：河牌枚举序改为**确定性洗牌序**，使超时截断
+    # 落在随机子集而非 `full_deck()` 的固定前缀（前缀截断是有偏的）。
+    # 无 rng 时用模块级 `_rng`（已播种）保证可复现；deadline=None 不洗牌，
+    # 保持与旧实现逐位一致（完整枚举与顺序无关）。
+    if deadline is not None:
+        deck = list(deck)
+        (rng if rng is not None else _rng).shuffle(deck)
     wins = ties = tot = 0.0
     done = 0
     for r in deck:
@@ -813,12 +829,13 @@ def equity_best(hole, board, iterations=500, opp_range_pct=1.0,
                 rng=None, deadline=None, opp_weights=None, soft_tail=None):
     """**优先精确枚举，否则回退 MC** —— 策略层的统一入口。
 
-    河牌 / 转牌：精确（误差 0）；翻牌及以前：蒙特卡洛（误差见 SE=0.5/√N）。
+    河牌 / 转牌：精确（无 deadline 时误差 0；带 deadline 时按确定性洗牌序
+    提前收尾，是无偏截断）。翻牌及以前：蒙特卡洛（误差见 SE=0.5/√N）。
     """
     if len(board) >= 4:
         try:
             e = exact_equity(list(hole), list(board), opp_range_pct,
-                             opp_weights, deadline, soft_tail)
+                             opp_weights, deadline, soft_tail, rng)
             if e is not None:
                 return e
         except Exception:
@@ -2556,6 +2573,15 @@ FUTURE_COST_CHEAP_MAX = 1500   # 便宜跟注的本手累计投入上限（筹�
 FUTURE_COST_CAP_ON = True      # 总开关
 FUTURE_COST_CAP_MIN_HANDS = 40 # 【样本门控】第几手起封顶才线性达到满强度
 FUTURE_COST_CAP_MIN_RATIO = 0.35  # 「便宜」下限：to_call ≥ 35% 底池 → 算大注，豁免
+
+# 【2026-10-16】底口袋对风险识别的回退开关。默认开启；关闭后恢复旧的
+# “公对 + 手牌配公面单张”判据，便于逐点 A/B，不影响其他公对风险规则。
+BOTTOM_POCKET_RISK_ON = True
+try:
+    if _os.environ.get("WB_NO_BOTTOM_POCKET_RISK") == "1":
+        BOTTOM_POCKET_RISK_ON = False
+except Exception:
+    pass
 
 # 【A 条件化·2026-09-25 用户规则】后续投入折算必须**看对手打不打**：
 # 「跟一手再被赶走」这条付费链的前提是**对手会在后面继续开火**。对手若
@@ -4538,6 +4564,14 @@ def should_avoid_risk(state):
             hand_pair = h
             break
     if hand_pair is None:
+        # 【2026-10-16 修复】公对 + 底口袋对没有“某张手牌配公面单张”的
+        # hand_pair，因此旧逻辑漏掉了 22 on 99T 这类最典型的弱两对。
+        # 这类牌被更高公对、T 两对和暗三条统治，不能走强牌主动加注路线。
+        # 只在恰好两对且口袋对低于公对时触发；三条及以上已在上面豁免。
+        if BOTTOM_POCKET_RISK_ON and hr[0] == hr[1] and hr[0] < pair_rank \
+                and len({c // 4 for c in board}) == len(board) - 1 \
+                and _effective_category(state) == TWO_PAIR:
+            return True
         return False                      # 没有第二对 → 不是两对结构
     if hand_pair >= pair_rank:
         return False                      # 手牌对 ≥ 公对 = 顶两对（强牌，不触发）
@@ -7740,7 +7774,8 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         # 【方案A】便宜跟注封顶（弱听牌最容易被逐街小注掏空）
         if _cheap_call_cap_hit(state, strong):
             return {"act": "fold"}
-        if required <= 0.20 and (eq >= required * 0.9 or adj in ("desperate", "doomed")):
+        if required <= 0.20 and (eq >= required * 0.9 or
+                                 adj in ("desperate", "doomed")):
             return {"act": "call"}
         return {"act": "fold"}
 
