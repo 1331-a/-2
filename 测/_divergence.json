@@ -1,0 +1,659 @@
+[
+ {
+  "m": "20260924154120-ea9c99c4",
+  "hand": 20,
+  "ui": 21,
+  "stage": "turn",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": -20000
+ },
+ {
+  "m": "20260924160802-bdd8f0c1",
+  "hand": 0,
+  "ui": 1,
+  "stage": "turn",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -1210
+ },
+ {
+  "m": "20260924160909-cbdbe3c0",
+  "hand": 4,
+  "ui": 5,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -50
+ },
+ {
+  "m": "20260924160909-cbdbe3c0",
+  "hand": 6,
+  "ui": 7,
+  "stage": "turn",
+  "log": "allin",
+  "cur": "raise",
+  "delta": 20000
+ },
+ {
+  "m": "20261011142425-b1a82568",
+  "hand": 4,
+  "ui": 5,
+  "stage": "river",
+  "log": "fold",
+  "cur": "call/check",
+  "delta": -1584
+ },
+ {
+  "m": "20261011142425-b1a82568",
+  "hand": 5,
+  "ui": 6,
+  "stage": "river",
+  "log": "fold",
+  "cur": "call/check",
+  "delta": -1880
+ },
+ {
+  "m": "20261011142425-b1a82568",
+  "hand": 6,
+  "ui": 7,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 100
+ },
+ {
+  "m": "20261011142425-b1a82568",
+  "hand": 7,
+  "ui": 8,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": -500
+ },
+ {
+  "m": "20261011142425-b1a82568",
+  "hand": 7,
+  "ui": 8,
+  "stage": "flop",
+  "log": "call/check",
+  "cur": "allin",
+  "delta": -500
+ },
+ {
+  "m": "20261011142425-b1a82568",
+  "hand": 7,
+  "ui": 8,
+  "stage": "flop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -500
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 7,
+  "ui": 8,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": -1050
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 8,
+  "ui": 9,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "call/check",
+  "delta": -50
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 11,
+  "ui": 12,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "fold",
+  "delta": 619
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 12,
+  "ui": 13,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -50
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 13,
+  "ui": 14,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 1050
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 14,
+  "ui": 15,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "call/check",
+  "delta": -50
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 18,
+  "ui": 19,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "call/check",
+  "delta": -50
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 22,
+  "ui": 23,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 300
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 25,
+  "ui": 26,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 500
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 28,
+  "ui": 29,
+  "stage": "flop",
+  "log": "call/check",
+  "cur": "raise",
+  "delta": 300
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 28,
+  "ui": 29,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 300
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 37,
+  "ui": 38,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "allin",
+  "delta": -250
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 37,
+  "ui": 38,
+  "stage": "flop",
+  "log": "call/check",
+  "cur": "allin",
+  "delta": -250
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 37,
+  "ui": 38,
+  "stage": "flop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -250
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 43,
+  "ui": 44,
+  "stage": "preflop",
+  "log": "allin",
+  "cur": "call/check",
+  "delta": 100
+ },
+ {
+  "m": "20261012170738-4895b988",
+  "hand": 44,
+  "ui": 45,
+  "stage": "preflop",
+  "log": "allin",
+  "cur": "fold",
+  "delta": -20000
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 7,
+  "ui": 8,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 440
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 16,
+  "ui": 17,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -50
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 22,
+  "ui": 23,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 300
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 23,
+  "ui": 24,
+  "stage": "river",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 209
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 25,
+  "ui": 26,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": -500
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 29,
+  "ui": 30,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 100
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 33,
+  "ui": 34,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 500
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 35,
+  "ui": 36,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": -628
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 35,
+  "ui": 36,
+  "stage": "river",
+  "log": "call/check",
+  "cur": "raise",
+  "delta": -628
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 36,
+  "ui": 37,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 300
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 37,
+  "ui": 38,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 254
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 45,
+  "ui": 46,
+  "stage": "flop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": -2459
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 51,
+  "ui": 52,
+  "stage": "flop",
+  "log": "call/check",
+  "cur": "raise",
+  "delta": -700
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 52,
+  "ui": 53,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -50
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 56,
+  "ui": 57,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 300
+ },
+ {
+  "m": "20261012172157-11de872b",
+  "hand": 57,
+  "ui": 58,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": -346
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 19,
+  "ui": 20,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": 688
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 20,
+  "ui": 21,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -50
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 21,
+  "ui": 22,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": 428
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 25,
+  "ui": 26,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 100
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 27,
+  "ui": 28,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": 415
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 29,
+  "ui": 30,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": -1064
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 35,
+  "ui": 36,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 525
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 36,
+  "ui": 37,
+  "stage": "flop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": -2159
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 36,
+  "ui": 37,
+  "stage": "turn",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -2159
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 37,
+  "ui": 38,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 100
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 39,
+  "ui": 40,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": -712
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 40,
+  "ui": 41,
+  "stage": "turn",
+  "log": "call/check",
+  "cur": "raise",
+  "delta": 300
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 40,
+  "ui": 41,
+  "stage": "river",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 300
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 53,
+  "ui": 54,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": -515
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 53,
+  "ui": 54,
+  "stage": "flop",
+  "log": "fold",
+  "cur": "call/check",
+  "delta": -515
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 58,
+  "ui": 59,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -50
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 61,
+  "ui": 62,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 500
+ },
+ {
+  "m": "20261012185239-b586268f",
+  "hand": 63,
+  "ui": 64,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": -615
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 16,
+  "ui": 17,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "raise",
+  "delta": -50
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 17,
+  "ui": 18,
+  "stage": "turn",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 339
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 21,
+  "ui": 22,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": 500
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 27,
+  "ui": 28,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "call/check",
+  "delta": -1100
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 28,
+  "ui": 29,
+  "stage": "preflop",
+  "log": "call/check",
+  "cur": "fold",
+  "delta": -2902
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 28,
+  "ui": 29,
+  "stage": "flop",
+  "log": "raise",
+  "cur": "call/check",
+  "delta": -2902
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 32,
+  "ui": 33,
+  "stage": "preflop",
+  "log": "raise",
+  "cur": "allin",
+  "delta": -300
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 32,
+  "ui": 33,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -300
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 34,
+  "ui": 35,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -50
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 36,
+  "ui": 37,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -50
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 38,
+  "ui": 39,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -50
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 40,
+  "ui": 41,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -50
+ },
+ {
+  "m": "20261015175104-cef0ad86",
+  "hand": 42,
+  "ui": 43,
+  "stage": "preflop",
+  "log": "fold",
+  "cur": "allin",
+  "delta": -50
+ }
+]
