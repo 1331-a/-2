@@ -52,7 +52,7 @@ def our_actions(obj, seat):
 def main():
     paths = sorted(glob.glob(str(CONTENT / "\u8bb0\u5f55" / "*log.json")))
     paths += sorted(glob.glob(str(Path.home() / "Downloads" / "botbattle*log.json")))
-    tot_req = tot_same = 0
+    tot_req = tot_same = tot_amt = 0
     per_match = []
     hand_div = []      # (match, hand, 日志动作, 当前动作, 本手净额)
     for p in paths:
@@ -66,7 +66,11 @@ def main():
         acts = our_actions(obj, seat)
         model = O.OpponentModel()
         ctx = M.MatchContext.from_dict(model.ctx_dict)
-        reqs = []
+        # ★★ 必须「边更新模型边决策」：早期版本先把整场的 model/ctx 更新完、
+        #    再用最终状态回头决策前面的请求 ⇒ **未来信息泄漏**，保真度被虚高，
+        #    且派生的「当前版本仍照做多少」全部不可信（2026-10-17 修正）。
+        decisions = []
+        n_req = 0
         for req, _meta in load_botbattle(p, my_seat=seat):
             st = G.parse_request(req)
             try:
@@ -77,13 +81,19 @@ def main():
                 ctx.update(st)
             except Exception:
                 pass
-            reqs.append(st)
-        if len(reqs) != len(acts):
+            S._DECISION_STARTED_WALL = time.time()
+            try:
+                a = S.decide(st, model, ctx)
+            except Exception:
+                a = {"act": "fold"}
+            decisions.append((st, a))
+            n_req += 1
+        if len(decisions) != len(acts):
             print("  [warn] %s 请求数 %d ≠ 我方动作数 %d（跳过）"
-                  % (ident, len(reqs), len(acts)))
+                  % (ident, len(decisions), len(acts)))
             continue
         same = 0
-        for st, (lact, lnum, lhand) in zip(reqs, acts):
+        for (st, a), (lact, lnum, lhand) in zip(decisions, acts):
             S._DECISION_STARTED_WALL = time.time()
             try:
                 a = S.decide(st, model, ctx)
@@ -91,7 +101,14 @@ def main():
                 a = {"act": "fold"}
             cand = norm(a.get("act"), a.get("num"))
             real = norm(lact, lnum)
+            # ★ 除动作类别外，还要比**尺寸**：GPT 指出只比类别会把
+            #   「raise 300 vs raise 900」算成一致。容差取底池的 2%（至少 1）。
+            amt_ok = True
+            if cand == "raise" and real == "raise":
+                tol = max(1.0, 0.02 * max(1, int(st.pot)))
+                amt_ok = abs(int(a.get("num") or 0) - int(lnum or 0)) <= tol
             tot_req += 1
+            tot_amt += 1 if amt_ok else 0
             if cand == real:
                 same += 1
                 tot_same += 1
@@ -100,11 +117,14 @@ def main():
                                      ui=int(st.hand_num) + 1, stage=st.stage,
                                      log=real, cur=cand,
                                      delta=deltas.get(int(st.hand_num))))
-        per_match.append((ident, len(reqs), same, deltas))
+        per_match.append((ident, len(decisions), same, deltas))
 
     print("\n" + "=" * 86)
-    print("重放保真度（当前代码 vs 日志真实动作）：%d/%d = %.1f%%"
+    print("重放保真度（当前代码 vs 日志真实动作）")
+    print("  仅动作类别一致：%d/%d = %.1f%%"
           % (tot_same, tot_req, 100.0 * tot_same / max(1, tot_req)))
+    print("  类别+金额一致  ：%d/%d = %.1f%%（raise 容差 = 底池 2%%）"
+          % (tot_amt, tot_req, 100.0 * tot_amt / max(1, tot_req)))
     print("\n%-30s %6s %8s %8s" % ("对局", "决策点", "一致", "净额"))
     for ident, n, same, deltas in per_match:
         print("%-30s %6d %7.1f%% %+8d"

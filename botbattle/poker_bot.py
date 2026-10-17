@@ -7617,14 +7617,13 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     elif _adv == "weak":
         margin += ADV_TIER_WEAK_EXTRA
 
-    # 【2026-10-11 EQ_VETO】把「决策层用的 eq / 门槛 / 边际」暴露给出口链的
-    # 「eq 确信区否决权」。★ 落点必须与下面 `WB_FACE_LOG` **完全一致**
-    # （26 次那个实测就是在这个口径下取的）。
+    # 【2026-10-11 EQ_VETO】快照的实际赋值点见下方「突袭修正之后」。
+    #   ★ 2026-10-17 修正（外部审计指出，已核对成立）：原先在这里就保存
+    #     (eq, eff_req, margin)，但紧接着的 `_OPP_JUMPED` 分支会
+    #     eq −= OPP_JUMP_EQ_PENALTY(0.15)、eff_req += OPP_JUMP_FAC_MARGIN(0.10)
+    #     ⇒ 否决权拿到的是**比决策层乐观 0.25 的余量**，在最该不信任 eq 的
+    #     「对手突袭」场合反而更容易翻案。现统一到「全部修正之后」的最终口径。
     global _LAST_REQ_INFO
-    try:
-        _LAST_REQ_INFO = (float(eq), float(eff_req), float(margin))
-    except Exception:
-        _LAST_REQ_INFO = None
 
     # 【调试钩子·2026-09-26】记录跟注点全景（WB_FACE_DEBUG=1）
     if WB_FACE_DEBUG:
@@ -7660,6 +7659,14 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     if adj not in ("pressure", "desperate", "doomed") and _OPP_JUMPED:
         eff_req += OPP_JUMP_FAC_MARGIN
         eq -= OPP_JUMP_EQ_PENALTY   # 突袭大注=对手范围大幅收紧，eq 高估需打折
+
+    # 【EQ_VETO 快照·2026-10-17 修正落点】必须在**上面突袭修正之后**取，
+    #   否则否决权用的是比决策层乐观 0.25 的余量（eq 少扣 0.15、门槛少抬 0.10）。
+    #   放在 `_bb_gate` 之前 ⇒ 该分支提前 return 时快照也已就位。
+    try:
+        _LAST_REQ_INFO = (float(eq), float(eff_req), float(margin))
+    except Exception:
+        _LAST_REQ_INFO = None
 
     # 【2026-10-11 选项B】「大注+无坚果」交回 eq（只允许 call/fold，绝不加注）。
     # 放在此处 = 用**全部**修正后的 eff_req（未来成本/隐含/原型/街级/ramp/突袭都算过），

@@ -1,118 +1,90 @@
 # -*- coding: utf-8 -*-
-"""【2026-10-11】EQ_VETO（eq 确信区否决权，选项②）的三臂 A/B。
+"""EQ_VETO 三臂 A/B：开 / 关 / 重复开（对照）。
 
-  A 现状(关) : WB_NO_EQ_VETO=1（回到 EQ_VETO 之前的行为）
-  B EQ_VETO  : 默认（EQ_VETO_ON=True）
-  C 对照     : 与 A 同配置（验证噪声底）
+背景（2026-10-17 外部审计指出、已核对成立）：
+  `_LAST_REQ_INFO` 原先在「突袭修正」**之前**取快照，而突袭分支会
+  `eq -= 0.15`、`eff_req += 0.10` ⇒ 否决权比决策层乐观 0.25。
+  已把快照挪到修正之后。本脚本量化「否决权到底改了多少点、其中多少是突袭点」。
 
-用法:
-    WB_MC_ITERS=1500 WB_MC_BUDGET=0.3 python 测/eqveto_ab.py
+用法: WB_MC_ITERS=1500 WB_MC_BUDGET=0.25 python 测/eqveto_ab.py
 """
-import glob
-import io
-import json
 import os
 import subprocess
-import sys
 
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace",
-                              line_buffering=True, write_through=True)
+BASE = r'C:\Users\HP\WorkBuddy\德扑双人机器人测试'
+PYEXE = r'C:\Users\HP\.workbuddy\binaries\python\versions\3.13.12\python.exe'
 
-BASE = r"C:\Users\HP\WorkBuddy\德扑双人机器人测试"
-CONTENT = os.path.join(BASE, "内容")
-
-CHILD = r'''
-import sys, io, json
+SNIP = r'''
+import sys, time, json, glob, os
 sys.path.insert(0, r"C:\Users\HP\WorkBuddy\德扑双人机器人测试\内容")
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace",
-                              line_buffering=True, write_through=True)
 import strategy as S, game_state as G, opponent as O, match_ctx as M
 from botbattle_log import load_botbattle
-p = sys.argv[1]; seat = int(sys.argv[2])
-reqs = load_botbattle(p, my_seat=seat)
-m = O.OpponentModel(); ctx = M.MatchContext.from_dict(m.ctx_dict)
+BASE = r"C:\Users\HP\WorkBuddy\德扑双人机器人测试"
+paths = sorted(set(glob.glob(os.path.join(BASE,"内容","记录","*log.json"))
+                   + glob.glob(r"C:\Users\HP\Downloads\botbattle*log.json")))
 out = []
-for req, meta in reqs:
-    st = G.parse_request(req)
-    try: O.build_model_from_history(m, req, st)
-    except Exception: pass
-    try: ctx.update(st)
-    except Exception: pass
-    a = S.decide(st, m, ctx, debug=False)
-    out.append(["h%s|%s|nb%d|tc%s" % (meta.get("hand"), st.stage, len(st.board), st.to_call),
-                "%s%s" % (a.get("act"), a.get("num") or "")])
-print(json.dumps(out))
-'''
-
-ARMS = [
-    ("A 现状(关)", {"WB_NO_EQ_VETO": "1"}),
-    # B 臂的配置可用 AB_B_ENV 覆盖（JSON），例如
-    #   AB_B_ENV='{"WB_EQ_VETO_MAXRANK":"2"}'  → 只救跟注、不恢复加注/全押
-    ("B EQ_VETO", json.loads(os.environ.get("AB_B_ENV") or "{}")),
-    ("C 对照", {"WB_NO_EQ_VETO": "1"}),
-]
-
-
-def run(path, seat, env):
-    e = dict(os.environ)
-    e.update(env)
-    e.setdefault("WB_MC_ITERS", "1500")
-    e.setdefault("WB_MC_BUDGET", "0.3")
-    r = subprocess.run([sys.executable, "-c", CHILD, path, str(seat)],
-                       capture_output=True, text=True, env=e, cwd=CONTENT)
-    if r.returncode != 0:
-        return None, r.stderr[-400:]
-    return json.loads(r.stdout.strip().splitlines()[-1]), None
-
-
-def mine_seat(path):
+for p in paths:
+    o = json.load(open(p, encoding="utf-8")); m0 = o.get("match") or {}
+    da = str((m0.get("bot_a") or {}).get("owner_display",""))
+    db = str((m0.get("bot_b") or {}).get("owner_display",""))
+    if "j1331" in da and "j1331" in db: continue
+    seat = 0 if "j1331" in da else 1
+    m = O.OpponentModel(); ctx = M.MatchContext.from_dict(m.ctx_dict)
     try:
-        obj = json.load(io.open(path, encoding="utf-8"))
-    except Exception:
-        return 0
-    m0 = obj.get("match") or {}
-    for i, k in ((0, "bot_a"), (1, "bot_b")):
-        if "j1331" in str((m0.get(k) or {}).get("owner_display", "")):
-            return i
-    return 0
+        for req, meta in load_botbattle(p, my_seat=seat):
+            st = G.parse_request(req)
+            try: O.build_model_from_history(m, req, st)
+            except Exception: pass
+            try: ctx.update(st)
+            except Exception: pass
+            S._DECISION_STARTED_WALL = time.time()
+            S._LAST_REQ_INFO = None
+            a = S.decide(st, m, ctx, debug=False)
+            jumped = 1 if S._OPP_JUMPED else 0
+            out.append("%s|%s|%s|%s|%s|%s" % (os.path.basename(p)[18:32],
+                       req.get("hand"), st.stage, a.get("act"),
+                       a.get("num") or "", jumped))
+    except Exception as e:
+        out.append("ERR|%s|%s" % (os.path.basename(p)[18:32], repr(e)[:60]))
+print("\n".join(out))
+'''
+with open(os.path.join(BASE, '测', '_ev_snip.py'), 'w', encoding='utf-8') as f:
+    f.write(SNIP)
 
 
-ALL = sorted(set(glob.glob(os.path.join(CONTENT, "记录", "*botbattle*log.json"))
-                 + glob.glob(r"C:\Users\HP\Downloads\botbattle*log.json")))
-print("日志 %d 份" % len(ALL))
+def arm(env_extra):
+    env = dict(os.environ)
+    env.update(env_extra)
+    r = subprocess.run([PYEXE, os.path.join(BASE, '测', '_ev_snip.py')],
+                       capture_output=True, text=True, env=env)
+    if r.returncode != 0:
+        print("ARM FAILED", r.stderr[-600:])
+    return [x for x in r.stdout.strip().split("\n") if x]
 
-res = {}
-tot = 0
-for p in ALL:
-    tag = os.path.basename(p)[17:31]
-    seat = mine_seat(p)
-    got = {}
-    for lab, env in ARMS:
-        a, err = run(p, seat, env)
-        if a is None:
-            print("ERR", tag, lab, err)
-            continue
-        got[lab] = a
-    if len(got) != len(ARMS):
-        continue
-    res[tag] = got
-    tot += len(got[ARMS[0][0]])
-    print("  ✓ %-15s 决策点 %3d" % (tag, len(got[ARMS[0][0]])))
 
+print("跑 A（当前：快照已修正）...")
+A = arm({})
+print("跑 B（WB_NO_EQ_VETO=1，否决权关）...")
+B = arm({'WB_NO_EQ_VETO': '1'})
+print("跑 C（对照=与A同）...")
+C = arm({})
+print("决策点 A/B/C = %d/%d/%d" % (len(A), len(B), len(C)))
+
+
+def cmp(X, Y, tag):
+    idx = [i for i in range(min(len(X), len(Y)))
+           if X[i].split('|')[:5] != Y[i].split('|')[:5]]
+    jn = sum(1 for i in idx if X[i].split('|')[5] == '1')
+    print("%s 变化 = %d（其中突袭点 %d）" % (tag, len(idx), jn))
+    for i in idx[:40]:
+        pa = X[i].split('|')
+        pb = Y[i].split('|')
+        print("  %-13s hand%-3s %-7s  A=%-16s B=%-16s jumped=%s"
+              % (pa[0], pa[1], pa[2], "%s/%s" % (pa[3], pa[4]),
+                 "%s/%s" % (pb[3], pb[4]), pa[5]))
+    return idx
+
+
+ab = cmp(A, B, "A(开) vs B(关)")
 print()
-print("决策点总数 %d" % tot)
-print()
-for lab in ("B EQ_VETO", "C 对照"):
-    n = 0
-    rows = []
-    for tag, got in res.items():
-        A, X = got["A 现状(关)"], got[lab]
-        for i in range(min(len(A), len(X))):
-            if A[i][1] != X[i][1]:
-                n += 1
-                rows.append((tag, A[i][0], A[i][1], X[i][1]))
-    head = "★ EQ_VETO 相对现状" if lab.startswith("B") else "对照臂（应为 0）"
-    print("=== %s：变化 %d / %d ===" % (head, n, tot))
-    for r in rows:
-        print("   %-15s %-26s %-14s -> %-14s" % r)
-    print()
+ac = cmp(A, C, "A vs C（跨进程噪声）")
