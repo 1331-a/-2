@@ -2357,8 +2357,18 @@ except Exception:
 # ★ 共同缺陷：三条都只判「牌面纹理 / 牌型类别 / 绝对金额」，
 #   **不看「我方已成牌有多强」也不看赔率**；而同花威胁的概率其实已由
 #   `eq`（MC 从对手范围抽牌，天然含同花组合）承担 —— 二值硬弃把这份信息丢了。
-# 处置：三个开关分开，便于逐臂隔离测量。默认 False = 线上行为逐字不变。
-FLUSH_MADE_PASS = False        # ① 已成牌（≥两对）→ 不再被同花威胁硬弃
+# 处置：三个开关分开，便于逐臂隔离测量。
+# 【2026-10-17 用户拍板：三个一起开】理由（两条独立证据）：
+#   a) `测/_fold_truth.py` 用对手真实底牌算：规则11 全场只触发 4 次、**弃错 3 次**；
+#      扣掉已修的真同花，剩 2 次就是手5/手6 —— 需要 0.33、真实 **1.00**、牌型两对。
+#   b) `测/flushmade_ab.py` 四臂：**只开 ①是 0 净效应**（B1 的 1 个变化点是对照臂
+#      也复现的跨进程噪声）；三开关齐开 → 3 个变化点，扣掉 1 个噪声 = **净 2 点**
+#      （手5 fold→call、手6 fold→call），其余 0。
+# ★ 回退（任一条都能单独关，无需改代码）：
+#      WB_NO_FLUSH_MADE=1 / WB_NO_PAIRED_MADE=1 / WB_NO_BIGMONEY_TWOPAIR=1
+# ★ 两道护栏保持：`FLUSH_MADE_NO_RAISE=True`（同花威胁下只跟不推，防拿两对梭哈）、
+#   `FLUSH_MADE_NO_ALLIN=True`（对手全下时不豁免，保留 09-07 规则11 的原始场景）。
+FLUSH_MADE_PASS = True         # ① 已成牌（≥两对）→ 不再被同花威胁硬弃
 # 【2026-10-15 用户反馈·真同花豁免】手里持该花色 **2 张 = 真同花** → 绝不因
 #   「公面同花威胁」硬弃。原来 `_made` 用 `len(my_same) < 2` 把真同花排除在外
 #   （"保留 09-07 原始判据"），实测把 K 高同花弃给了对手的空气大注：
@@ -2373,8 +2383,8 @@ try:
         FLUSH_REAL_PASS = False
 except Exception:
     pass
-PAIRED_TRAP_MADE_PASS = False  # ② 已成牌（≥两对）→ 不再被河牌公对陷阱硬弃
-BIGMONEY_TWOPAIR_PASS = False  # ③ 普通两对 → 允许跟 >3000（09-24 规则的边界）
+PAIRED_TRAP_MADE_PASS = True   # ② 已成牌（≥两对）→ 不再被河牌公对陷阱硬弃
+BIGMONEY_TWOPAIR_PASS = True   # ③ 普通两对 → 允许跟 >3000（09-24 规则的边界）
 
 # 【丙·2026-10-15 用户规则】**优势局按牌力分档**：好牌更敢跟、烂牌更早弃。
 #   背景：用户实测「对手（含空气）超池大注把我们逼走，即使对手牌没我们好」，
@@ -2456,6 +2466,13 @@ try:
         PAIRED_TRAP_MADE_PASS = True
     if _os_fm.environ.get("WB_BIGMONEY_TWOPAIR") == "1":
         BIGMONEY_TWOPAIR_PASS = True
+    # 【2026-10-17 默认改为 True】新增「关」开关，便于线上/离线一键回退与隔离对照。
+    if _os_fm.environ.get("WB_NO_FLUSH_MADE") == "1":
+        FLUSH_MADE_PASS = False
+    if _os_fm.environ.get("WB_NO_PAIRED_MADE") == "1":
+        PAIRED_TRAP_MADE_PASS = False
+    if _os_fm.environ.get("WB_NO_BIGMONEY_TWOPAIR") == "1":
+        BIGMONEY_TWOPAIR_PASS = False
     if _os_fm.environ.get("WB_FLUSH_MADE_RAISE") == "1":
         FLUSH_MADE_NO_RAISE = False
     if _os_fm.environ.get("WB_FLUSH_MADE_CAT") == "3":

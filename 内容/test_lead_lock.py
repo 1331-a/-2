@@ -195,6 +195,23 @@ st_h10 = parse_request(req(**_H10))
 _lead = (int(st_h10.total_win_chips[0]) - int(st_h10.total_win_chips[1]))
 _line = S._blind_line(st_h10, S._hands_left(st_h10), own=False)
 
+# 【2026-10-17 用户拍板 BIGMONEY_TWOPAIR_PASS=True】_H10 的牌型是**两对**
+#   （公面 KKTT6 + 手牌 JQ），已从「规则20 硬弃」改为「按赔率放行 call」。
+#   为保住原契约（弱牌仍弃）的检验强度，另建一个**高牌**夹具：
+#   公面改成 K 6 3 9 2（无对、无三张同花、无顺子），手牌 JQ → 高牌
+#   （cat=0 < 两对 ⇒ 不在豁免范围）。筹码/历史与 _H10 完全相同 ⇒ doom 不变。
+_H10_WEAK = dict(_H10)
+_H10_WEAK["public_cards"] = [44, 17, 14, 29, 3]    # K♣ 6♦ 3♥ 9♦ 2♠（无对）
+st_weak = parse_request(req(**_H10_WEAK))
+check("弱牌夹具:doom 跟注口径仍成立（与 _H10 同筹码）",
+      S._doom_risk(st_weak, include_to_call=True), "")
+check("弱牌夹具:牌型 < 两对（不在豁免范围）",
+      S._effective_category(st_weak) < S.FLUSH_MADE_MIN_CAT,
+      "cat=%s" % S._effective_category(st_weak))
+check("两对夹具:_H10 牌型 = 两对（在豁免范围）",
+      S._effective_category(st_h10) >= S.FLUSH_MADE_MIN_CAT,
+      "cat=%s" % S._effective_category(st_h10))
+
 check("第10手:弃牌口径未 doom（弃了还能翻身）",
       not S._doom_risk(st_h10), "lead-2*inv=%d vs %d"
       % (_lead - 2 * S._invested(st_h10), -2 * _line))
@@ -208,8 +225,8 @@ check("第10手:牌力 < 三条（规则20 不许主动推光）",
       not S._strong_for_big_money(st_h10), "")
 
 a10 = decide(st_h10, OpponentModel())
-check("第10手:修复后不再放行便宜跟注（弱牌 → fold）",
-      a10.get("act") == "fold", str(a10))
+check("第10手:两对按 10-17 新规放行 call（不再被规则20 硬弃）",
+      a10.get("act") == "call", str(a10))
 
 # 反向：把 lead 拉回不 doom 的水平 → 必须保持常规动作（不误介入）
 _h10_ok = dict(_H10)
@@ -221,8 +238,11 @@ check("反向:该规则不改写动作",
       S._doom_call_upgrade(st_ok, {"act": "call"}) == {"act": "call"}, "")
 
 # 契约：只改写 call；fold/check/raise 一律不动
-check("契约:弱牌 call → fold",
-      S._doom_call_upgrade(st_h10, {"act": "call"}) == {"act": "fold"}, "")
+check("契约:两对 call → 放行 call（10-17 豁免）",
+      S._doom_call_upgrade(st_h10, {"act": "call"}) == {"act": "call"}, "")
+check("契约:弱牌(高牌) call → fold",
+      S._doom_call_upgrade(st_weak, {"act": "call"}) == {"act": "fold"},
+      str(S._doom_call_upgrade(st_weak, {"act": "call"})))
 check("契约:fold 不被翻案",
       S._doom_call_upgrade(st_h10, {"act": "fold"}) == {"act": "fold"}, "")
 check("契约:check 不被翻案",
@@ -250,8 +270,8 @@ S.DOOM_CALL_UPGRADE_ON = True
 
 # 模式开关：无视牌力的「无条件 all-in」（用户原话「改为 allin」的字面实现）
 S.DOOM_UPGRADE_FORCE_ALLIN = False
-check("模式:默认尊重规则20 → 弱牌落点为 fold",
-      S._doom_call_upgrade(st_h10, {"act": "call"}) == {"act": "fold"}, "")
+check("模式:默认尊重规则20 → 弱牌(高牌)落点为 fold",
+      S._doom_call_upgrade(st_weak, {"act": "call"}) == {"act": "fold"}, "")
 S.DOOM_UPGRADE_FORCE_ALLIN = True
 check("模式:FORCE_ALLIN → 弱牌也升级 allin（带 lk）",
       S._doom_call_upgrade(st_h10, {"act": "call"}) == {"act": "allin", "lk": 1},
