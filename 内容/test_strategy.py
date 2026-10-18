@@ -386,13 +386,14 @@ from match_ctx import MatchContext   # noqa: E402
 
 # 主动 doomed 基准：my_id=0, lead=-6000, hand=45/max=70 → doom 公式命中
 DOOM_PNL = [-3000, 3000]
-# 庄家位任何牌（含 72o）→ 无条件 allin（不再主动施压开池——弃牌=认输，
-# allin 最大化本局翻盘期望）
+# 庄家位任何牌（含 72o）→ 不再弃牌（弃牌=认输）
+# 【P2·2026-10-18】此夹具 `to_call=50 > 0`（小盲补大盲），属「对手已投入」⇒
+#   仍一律 all-in（用户 09-28 硬规则未变）；「开局不推」只作用于 to_call ≤ 0。
 st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2],
                        hand=45, max_hand=70, total_win_chips=DOOM_PNL))
 a = decide(st, OpponentModel())
-check("施压档:主动doomed庄家72o无条件allin",
-      a == {"act": "allin"}, str(a))
+check("施压档:主动doomed + 需补大盲(to_call>0) → 一律 allin",
+      a.get("act") == "allin", str(a))
 # 空气牌翻后同样无条件 allin（不看牌力）
 st = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                        public_cards=[46, 22, 5], hand=45, max_hand=70,
@@ -412,7 +413,10 @@ st_nt = parse_request(req(my_id=0, my_chips=19750, my_cards=[7, 24],
                                    {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                    {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a_nt = decide(st_nt, foldy())
-check("施压档:主动doomed(非太差) → 无条件allin", a_nt == {"act": "allin"}, str(a_nt))
+# 【P2·2026-10-18】此夹具翻牌 `to_call=0`（对手 check）⇒ 改为过牌埋伏。
+#   原断言「无条件 allin」在「无人下注」场景已被用户新规则取代。
+check("施压档:主动doomed(非太差) + 翻牌无人下注 → 过牌埋伏",
+      a_nt == {"act": "check"}, str(a_nt))
 # 对照组：正常（lead=0，非防锁赢）→ 同场景空气牌对高弃牌对手会诈唬
 st2 = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                         public_cards=[46, 22, 5], hand=45, max_hand=70,
@@ -881,8 +885,11 @@ doom68 = parse_request(req(dealer_id=1, my_id=0, my_chips=19750,
                           hand=68, max_hand=70,
                           total_win_chips=[-192, 192]))
 a = decide(doom68, OpponentModel())
-check("规则7:第68手落后-384剩2手→doom allin(非弃牌)",
-      a.get("act") == "allin", str(a))
+# 【P2·2026-10-18】无人下注时改为过牌埋伏（原断言 allin）。本用例的核心是
+#   「不能弃牌 —— 弃牌等于让对手锁赢」，check 满足该意图；all-in 留给
+#   「对手已投入」的时刻（用户：「必须等对面加注之后再全压」）。
+check("规则7:第68手落后-384剩2手→doom 不弃牌（无人下注时过牌埋伏）",
+      a.get("act") == "check", str(a))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)

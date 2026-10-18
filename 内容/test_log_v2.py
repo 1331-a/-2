@@ -1010,8 +1010,10 @@ check("0916规则18:中等落后(0.5) → 不进区",
       str(decide(_st18(-2000), _m16_quiet)))
 check("0916规则18:均势 → 不进区", _gamble_zone(_st18(0)) is False)
 check("0916规则18:领先 → 不进区", _gamble_zone(_st18(3000)) is False)
-check("0916规则18:已越线(追不回) → 仍 allin（非太差牌 K8o）",
-      decide(_st18(-4000, cards=[47, 24]), _m16_quiet).get("act") == "allin",
+# 【P2·2026-10-18 用户规则】搏命区在「无人下注」时不再 open shove，改为过牌埋伏：
+#   用户原话「大劣开局就全压一辈子出不去，必须等对面加注之后再全压」。
+check("P2:已越线(追不回) + 无人下注 → 过牌埋伏（规则18 仍接管）",
+      decide(_st18(-4000, cards=[47, 24]), _m16_quiet).get("act") == "check",
       str(decide(_st18(-4000, cards=[47, 24]), _m16_quiet)))
 # 【2026-10-12 用户新规】「太差的牌不推，留几次容错」——_W18 百分位 ≈0.85 > 0.80 ⇒ 不推
 check("1012新规:已越线但牌太差(_W18) → 不推（留容错）",
@@ -1019,21 +1021,26 @@ check("1012新规:已越线但牌太差(_W18) → 不推（留容错）",
       and decide(_st18(-4000), _m16_quiet).get("act") != "allin",
       str(decide(_st18(-4000), _m16_quiet)))
 
-# ---- 2. 牌烂 → 开局 all-in（区内任何街都梭） ----
-# 【2026-10-12 用户新规】原断言用 _W18（百分位 ≈0.85 = 太差）⇒ 已改为「烂但不太差」的 K8o；
-# 太差牌的行为另立断言（不推）。
-check("0916规则18b:烂牌(K8o，百分位 0.36)翻前 → 开局 allin",
+# ---- 2. 牌烂 → 无人下注过牌埋伏 / 对手下注后 all-in ----
+# 【2026-10-12 用户新规】用「烂但不太差」的 K8o（太差牌另立断言）。
+# 【P2·2026-10-18】无人下注一律过牌；all-in 只在对手已投入时发生。
+check("P2:烂牌(K8o，百分位 0.36)翻前无人下注 → 过牌埋伏",
       _gamble_hand_good(_st18(-3822, cards=[47, 24])) is False
-      and decide(_st18(-3822, cards=[47, 24]), _m16_quiet).get("act") == "allin",
+      and decide(_st18(-3822, cards=[47, 24]), _m16_quiet).get("act") == "check",
       str(decide(_st18(-3822, cards=[47, 24]), _m16_quiet)))
 check("1012新规:太差(_W18)翻前 → 不推（留容错）",
       _gamble_hand_trash(_st18(-3822)) is True
       and decide(_st18(-3822), _m16_quiet).get("act") != "allin",
       str(decide(_st18(-3822), _m16_quiet)))
-check("0916规则18b:烂牌翻后仍 allin（区内每街可搏）",
-      _gamble_plan(_st18(-3822, board=_B18, hist=_H_FCHK)) == {"act": "allin", "lk": 1}
+check("P2:烂牌翻后无人下注 → 过牌埋伏（区内每街都不 open shove）",
+      _gamble_plan(_st18(-3822, board=_B18, hist=_H_FCHK)) == {"act": "check"}
       and decide(_st18(-3822, board=_B18, hist=_H_FCHK),
-                 _m16_quiet).get("act") == "allin")
+                 _m16_quiet).get("act") == "check")
+# 保住「烂牌仍会 all-in」这条规则的覆盖：**对手下注后**（to_call>0）必须 all-in
+check("P2:烂牌翻后对手下注 → all-in（收网，to_call>0 硬规则未变）",
+      _gamble_plan(_st18(-3822, cards=[47, 24], board=_B18, hist=_H_FBET))
+      == {"act": "allin", "lk": 1},
+      str(_gamble_plan(_st18(-3822, cards=[47, 24], board=_B18, hist=_H_FBET))))
 
 # ---- 3. 牌好 → 多过牌再 all-in ----
 check("0916规则18b:AA 翻前大盲免费 → 过牌慢打",
@@ -1056,11 +1063,14 @@ check("0916规则18b:AA 翻牌面对下注 500 → 收网 allin",
       == {"act": "allin", "lk": 1}
       and decide(_st18(-3822, cards=_A18, board=_B18, hist=_H_FBET),
                  _m16_quiet).get("act") == "allin")
-check("0916规则18b:AA 一路免费到河牌 → allin（最后一条街不再等）",
+# 【P2·2026-10-18 用户规则】河牌也不再 open shove（「大劣开局就全压一辈子出不去」）：
+#   check 后对手下注仍可全押（赢「底池+对手投入」）；双方都过牌就摊牌，
+#   AA 超对摊牌不亏，且避免了「只赢一个底池」。
+check("0916规则18b:AA 一路免费到河牌 → 过牌埋伏（不再 openshove）",
       _gamble_plan(_st18(-3822, cards=_A18, board=_B18R, hist=_H_RCHK))
-      == {"act": "allin", "lk": 1}
+      == {"act": "check"}
       and decide(_st18(-3822, cards=_A18, board=_B18R, hist=_H_RCHK),
-                 _m16_quiet).get("act") == "allin")
+                 _m16_quiet) == {"act": "check"})
 
 # ---- 4. 不在搏命区 → 本规则不接管（交回常规策略） ----
 check("0916规则18:均势/领先 → 本规则不接管",

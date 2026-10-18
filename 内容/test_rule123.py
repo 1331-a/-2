@@ -66,14 +66,17 @@ a = decide(st2, OpponentModel())
 check("1012新规:主动doomed翻后「太差」空气牌 → 不推（留容错）",
       a != {"act": "allin"}, str(a))
 
-# 2b) 主动侧翻后「烂但不太差」（中了底部一对 3s8c on K-8-3）→ 仍无条件 allin
+# 2b) 主动侧翻后「烂但不太差」（中了底部一对 3s8c on K-8-3）
+# 【P2·2026-10-18 用户规则】无人下注（to_call==0）时**不再 open shove**，改为过牌埋伏：
+#   用户原话「大劣开局就全压一辈子出不去，必须等对面加注之后再全压」。
+#   实测 open shove 只赢盲注（+300/次），「对手已下注后再推」是 +398/次。
 st2b = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[7, 24],
                          total_win_chips=DOOM_PNL,
                          history=[{"round": 0, "player_id": 0, "action": 250, "action_type": "raise"},
                                   {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
                                   {"round": 1, "player_id": 1, "action": 0, "action_type": "check"}]))
 a2b = decide(st2b, OpponentModel())
-check("规则1:主动doomed翻后(非太差) → 无条件 allin", a2b == {"act": "allin"}, str(a2b))
+check("P2:doomed翻后(非太差)且无人下注 → 过牌埋伏", a2b == {"act": "check"}, str(a2b))
 
 # 3) 被动侧（对手已下注）→ allin 搏命（弃牌=直接认输，第一优先级）
 st3 = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[24, 17],

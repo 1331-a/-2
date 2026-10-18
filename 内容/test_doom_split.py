@@ -82,9 +82,14 @@ for name, cards, good in [("72o 太差", (22, 0), False), ("52o 太差", (12, 1)
     is_good = S._gamble_hand_good(st)
     is_trash = S._gamble_hand_trash(st)
     a = S.decide(st, OpponentModel(), None, debug=False)
-    want_allin = (not good) and not is_trash
-    ok = (a.get("act") == "allin") if want_allin else (a.get("act") != "allin")
-    check("doom免费:(%s牌) %s" % ("好" if good else ("太差" if is_trash else "烂"), name), ok,
+    # 【P2·2026-10-18 用户规则】doom + 无人下注 → **过牌埋伏**，不再 open shove。
+    #   用户原话「大劣开局就全压一辈子出不去，必须等对面加注之后再全压」；
+    #   实测 open shove 只赢盲注（+300/次），「对手已下注后再推」是 +398/次。
+    #   牌太差仍走 `_gamble_trash_pass` → 交常规策略（可能是 check 或 fold）。
+    ok = (a.get("act") != "allin")
+    if not is_trash:
+        ok = ok and a.get("act") == "check"
+    check("doom免费:(%s牌) %s → 过牌埋伏" % ("好" if good else ("太差" if is_trash else "烂"), name), ok,
           "good=%s trash=%s act=%s" % (is_good, is_trash, a))
 
 # 翻后彩虹面 T♠ 8♥ 4♦（无听牌）：高牌 = 烂；顶对/三条 = 好
@@ -95,20 +100,32 @@ for name, cards, good in [("23o 太差", (3, 7), False),
     st = parse_request(req(H_LIMP, cards, pub=PUB_DRY, my=19900, twc=DOOM_TWC))
     is_trash = S._gamble_hand_trash(st)
     a = S.decide(st, OpponentModel(), None, debug=False)
-    want_allin = (not good) and not is_trash
-    ok = (a.get("act") == "allin") if want_allin else (a.get("act") != "allin")
-    check("doom免费翻后:(%s牌) %s" % ("好" if good else ("太差" if is_trash else "烂"), name), ok,
+    ok = (a.get("act") != "allin")
+    if not is_trash:
+        ok = ok and a.get("act") == "check"
+    check("doom免费翻后:(%s牌) %s → 过牌埋伏" % ("好" if good else ("太差" if is_trash else "烂"), name), ok,
           "cat=%s good=%s trash=%s act=%s" % (S._effective_category(st),
                                               S._gamble_hand_good(st), is_trash, a))
 
-# 河牌例外：最后一街没得「再看」→ 好牌也要收网
+# 【P2·2026-10-18】河牌同样不再 open shove：check 后对手若下注仍可全押；
+#   若双方都过牌就摊牌（牌好时摊牌不亏，好过「只赢一个底池」）。
 H_RIVER = BL + [{"player_id": 1, "action": 0, "action_type": "call", "amount": 100, "round": 0}] + \
     [{"player_id": 1, "action": 0, "action_type": "check", "round": r} for r in (1, 2, 3)] + \
     [{"player_id": 0, "action": 0, "action_type": "check", "round": r} for r in (1, 2)]
 st = parse_request(req(H_RIVER, (T_H, K_S), pub=PUB_DRY + [30, 22], my=19900, twc=DOOM_TWC))
 a = S.decide(st, OpponentModel(), None, debug=False)
-check("doom免费河牌:顶对 → 收网 allin", a.get("act") == "allin",
+check("doom免费河牌:顶对 → 过牌埋伏（不再收网 allin）", a.get("act") == "check",
       "stage=%s to_call=%s act=%s" % (st.stage, st.to_call, a))
+
+# 回退开关：关掉 P2 后逐字恢复「烂牌 open shove」
+_saved_wait = S.DOOM_WAIT_RAISE_ON
+try:
+    S.DOOM_WAIT_RAISE_ON = False
+    st = parse_request(req(H_LIMP, (47, 24), my=19900, twc=DOOM_TWC))
+    a = S.decide(st, OpponentModel(), None, debug=False)
+    check("回退开关关闭 → 烂牌恢复 open shove", a.get("act") == "allin", str(a))
+finally:
+    S.DOOM_WAIT_RAISE_ON = _saved_wait
 
 print()
 print("=" * 78)

@@ -206,6 +206,11 @@ a = decide(parse_request(r), OpponentModel())
 check("全下:两对面对全下按赔率弃牌(注额上限已废止)", a == {"act": "fold"}, str(a))
 
 # F2) 翻后顺子（牌面≥三条）→ 允许 allin
+# 【P2·2026-10-18 夹具调整】该夹具 `my_chips=8000` ⇒ `invested=12000`，
+#   必然落入 doom；而新的 doom 规则在「无人下注」时一律过牌埋伏
+#   （用户 10-18：「大劣开局就全压一辈子出不去」），断言 allin 不再成立。
+#   本用例要保护的是「顺子能否越过 3000 上限」⇒ 改成「对手下注后」的
+#   doom 场景（`to_call>0` → 弃牌即立死 → 一律 allin，这条硬规则未变）。
 r = req(my_cards=[36, 32], my_chips=8000, public_cards=[44, 30, 29, 16, 12],
         history=[{"round": 0, "player_id": 0, "action": 6000, "action_type": "raise"},
                  {"round": 0, "player_id": 1, "action": 0, "action_type": "call"},
@@ -213,7 +218,7 @@ r = req(my_cards=[36, 32], my_chips=8000, public_cards=[44, 30, 29, 16, 12],
                  {"round": 1, "player_id": 0, "action": 0, "action_type": "check"},
                  {"round": 2, "player_id": 1, "action": 0, "action_type": "check"},
                  {"round": 2, "player_id": 0, "action": 0, "action_type": "check"},
-                 {"round": 3, "player_id": 1, "action": 0, "action_type": "check"}])
+                 {"round": 3, "player_id": 1, "action": 500, "action_type": "raise"}])
 a = decide(parse_request(r), OpponentModel())
 check("allin上限:顺子允许allin", a == {"act": "allin"}, str(a))
 
