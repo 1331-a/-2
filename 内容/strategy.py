@@ -829,6 +829,36 @@ try:
 except Exception:
     pass
 
+# ── 【P0-2·2026-10-18】超对在大注 / 4 倍突袭下的「硬弃豁免」（按牌面危险度分层）──
+# 实测（10-18 场1 手56）：QQ（翻前百分位 0.015，超对）在 `3h 3c 4h` 加注 1068，
+# 被对手 27o（百分位 0.973）全押 19,262 逼走 —— 需要 0.45、**真实胜率 0.96**。
+# 触发器是两道串联锁：「大注 + 无坚果」+「4 倍突袭 + 牌型 < 三条」，而
+# `_has_nuts_or_strong_draw` 把「一对（含超对）」一律判为「无坚果」。
+#
+# ★ 但「超对永不弃牌」是错的。超对真正的弱点是：
+#   · 公面成对/三条 → 被压成普通一对（且对手三条/葫芦都在范围里）；
+#   · 公面 ≥3 连 → 被任何顺子统治；
+#   · 公面 ≥4 张同花 → 可能已成同花。
+#   这三类是**高危面，继续硬弃**。
+# · 3 张同花 / 公面出现 Q-K（对手更高口袋对成三条、KQ 类两对在范围内）→ **中危**：
+#   豁免但额外抬门槛；
+# · 其余（干燥面）→ **低危**：豁免，直接交回 eq 门槛（只允许 call/fold）。
+#
+# 豁免后走 `_bb_gate`（选项B 通道）：`eff_req + margin + bump` 由 eq 裁决，
+# 输出**只有 call / fold**，不会因此主动加注或全押（与 `FLUSH_MADE_NO_RAISE` 同构）。
+# 另加对手侧门控：对手几乎不弃牌（`eff_fold_to_bet < 0.25`，样本 ≥6）时，
+# 其全押多为价值 → 不豁免（对应外部审计「要求对手范围模型不极端偏强」）。
+OVERP_VS_BIGBET_ON = True
+OVERP_WET_BUMP = 0.06            # 中危面（3 张同花 / 公面出现 Q-K）额外门槛
+OVERP_OPP_STRONG_FOLD = 0.25     # 对手弃牌率低于此 ⇒ 全押范围偏强 ⇒ 不豁免
+OVERP_OPP_MIN_SAMPLES = 6        # 判定对手「不弃牌」所需的最小样本
+try:
+    import os as _os_op
+    if _os_op.environ.get("WB_NO_OVERP") == "1":
+        OVERP_VS_BIGBET_ON = False
+except Exception:
+    pass
+
 # 【2026-10-11 选项B试点】「大注+无坚果」由**硬弃**改为**抬高门槛后交回 eq**。
 # 现状：`to_call > 0.6×池` 且 无坚果/强听牌（判据 = `_effective_category < 两对`）
 #       → **直接 fold，完全不咨询 eq**。实测（`测/owner_probe.py`，948 点）：
@@ -1801,6 +1831,17 @@ def _endgame_arbitrate(state, model, chip_action, eq, adj):
     """
     if not UA_ON:
         return chip_action
+    # 【P0-2·2026-10-18】超对豁免点：`_face_bet` 已按 eq 门槛决出 call/fold，
+    # 出口仲裁**不得**再把它升级成全押（外部审计要求：只允许 call/fold）。
+    #   实测 10-18 场1 手56：QQ 在 `3 3 4` 面、lead +2180、真实胜率 0.96，
+    #   `_face_bet` 已给出 call；但 `UA_SEALED_ALLIN`（跟注即锁赢）会把它改成
+    #   allin 19,262 —— 比原来的硬弃更糟。此处置为「只放行 call/fold」。
+    try:
+        if chip_action.get("act") in ("call", "fold") and \
+                _overpair_bigbet_pass(state, model)[0]:
+            return chip_action
+    except Exception:
+        pass
     try:
         # ① 用户硬规则（09-15 方案B）：有免费过牌 + 本次投入会让 doom 成立 → 过牌
         #    【2026-09-28】`lk` 标记（锁赢/搏命硬规则）豁免本条——那些场景的语义
@@ -4178,6 +4219,79 @@ def _has_nuts_or_strong_draw(state):
         return False
 
 
+def _overpair_rank(state):
+    """我方是**超对**（口袋对且高于公面所有牌）时返回该 rank，否则 None。
+
+    ★ 公面**成对**时仍算超对（如 `QQ` on `3 3 4` = 两对 QQ33，牌力很强）；
+    只有「公面三条」（同 rank ≥3 次）才排除 —— 那时我方已被压成葫芦以下的弱两对。
+    公面那对的 rank ≥ 我方口袋对时（如 `QQ` on `K K 4`）由 `hr[0] <= max(br)` 天然拒绝。
+    rank 口径：内部编码 = 平台 + 8，故 `(c - 8) >> 2` 才是平台 rank（0=2 … 12=A）。
+    """
+    try:
+        if len(state.board) < 3:
+            return None
+        hr = [(c - 8) >> 2 for c in state.hole]
+        if len(hr) != 2 or hr[0] != hr[1]:
+            return None
+        br = [(c - 8) >> 2 for c in state.board]
+        cnt = {}
+        for r in br:
+            cnt[r] = cnt.get(r, 0) + 1
+        if max(cnt.values()) >= 3:
+            return None                      # 公面三条
+        if hr[0] <= max(br):
+            return None                      # 不是超对（被公面盖过）
+        return hr[0]
+    except Exception:
+        return None
+
+
+def _overpair_bigbet_pass(state, model=None):
+    """超对能否从「大注 / 4 倍突袭 → 硬弃」里豁免。返回 `(允许, 档位)`。
+
+    档位：`clean`=低危面 / `wet`=中危面（需额外门槛）/ 其余为拒绝原因。
+    高危面（公面成对、≥3 连、≥4 同花）一律**不豁免** —— 那几类里超对确实该弃。
+    """
+    if not OVERP_VS_BIGBET_ON:
+        return False, "off"
+    try:
+        if _overpair_rank(state) is None:
+            return False, "not_overpair"
+        br = [(c - 8) >> 2 for c in state.board]
+        # 高危①：公面 3 连以上（任何顺子都在对手范围里）
+        rs = sorted(set(br))
+        run = best = 1
+        for i in range(1, len(rs)):
+            run = run + 1 if rs[i] == rs[i - 1] + 1 else 1
+            best = max(best, run)
+        if best >= 3:
+            return False, "straight_board"
+        # 高危②：公面 ≥4 张同花（可能已成同花）
+        suits = {}
+        for c in state.board:
+            s = c & 3
+            suits[s] = suits.get(s, 0) + 1
+        max_suit = max(suits.values()) if suits else 0
+        if max_suit >= 4:
+            return False, "flush_made"
+        # 对手侧门控：几乎不弃牌的对手，全押多为价值 → 不豁免
+        if model is not None:
+            try:
+                n = getattr(model, "faces_bet", None)
+                if n is not None and int(n) >= OVERP_OPP_MIN_SAMPLES:
+                    if float(model.eff_fold_to_bet()) < OVERP_OPP_STRONG_FOLD:
+                        return False, "opp_strong"
+            except Exception:
+                pass
+        # 中危：公面 3 张同花（听花密集）/ 公面出现 Q 或 K（对手更高口袋对成三条、
+        #   或 KQ 类两对都在范围里）。★ 公面的 A 不可能与超对共存 —— 超对要求
+        #   高于公面所有牌，A 一旦在公面就不可能是超对，故只有 10/11 两档。
+        wet = (max_suit == 3) or (max(br) >= 10)
+        return True, ("wet" if wet else "clean")
+    except Exception:
+        return False, "err"
+
+
 _BET_JITTER = 0.15   # 尺寸抖动幅度（防 read：同 EV 区间随机 ±15%）
 
 
@@ -5671,6 +5785,16 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     #   全是 pot≈to_call≈20000 的全下对拼（eq 只赢 0.02 边际）—— 那不是本意。
     _bb_allin_spot = (bool(getattr(state, "opp_is_allin", False))
                       or to_call >= state.my_left)
+    # 【P0-2·2026-10-18】超对豁免：只有「超对 + 非高危面」才允许把硬弃改走 eq 门槛。
+    #   `_bb_hold_base` = 原有的选项B 放行条件（默认关 ⇒ False，线上行为不变）。
+    _overp_ok, _overp_tier = _overpair_bigbet_pass(state, model)
+    _bb_hold_base = (bool(BIGBET_THRESH_ON or _adv_pass(state, eq))
+                     and not _bb_allin_spot)
+
+    def _bb_hold():
+        """大注 / 4 倍突袭规则命中时的落点：True = 改走 eq 门槛，False = 硬弃。"""
+        return bool(_overp_ok or _bb_hold_base)
+
     if to_call > 0 and not _has_nuts_or_strong_draw(state):
         _bb_commit = to_call
         if FUTURE_COST_ON and BIG_BET_FOLD_A_ON:
@@ -5682,20 +5806,22 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
             except Exception:
                 pass
         if _bb_commit > BIG_BET_FOLD_FRAC * pot:
-            if (not (BIGBET_THRESH_ON or _adv_pass(state, eq))) or _bb_allin_spot:
+            if _bb_hold():
+                # 不硬弃：记下门槛，稍后由 eq 决定（只允许 call/fold，绝不加注）
+                _bb_gate = True
+                _bb_ratio = (_bb_commit / pot) if pot > 0 else 99.0
+            else:
                 return {"act": "fold"}
-            # 【选项B】不硬弃：记下门槛，稍后由 eq 决定（只允许 call/fold，绝不加注）
-            _bb_gate = True
-            _bb_ratio = (_bb_commit / pot) if pot > 0 else 99.0
     # 【用户规则 2026-08-30】4 倍突袭 + wet 公面 + 无坚果 → 直接弃
     # 截图4：turn 4 倍加注 + 公面 4♣ 听花密集 + 自己无坚果 → 弃
     if to_call > 0:
         try:
             if _OPP_JUMPED and _board_wet(state) and not _has_nuts_or_strong_draw(state):
-                if (not (BIGBET_THRESH_ON or _adv_pass(state, eq))) or _bb_allin_spot:
+                if _bb_hold():
+                    _bb_gate = True
+                    _bb_ratio = max(_bb_ratio, 1.0)  # 突袭 → 至少按 1× 池计加价
+                else:
                     return {"act": "fold"}
-                _bb_gate = True
-                _bb_ratio = max(_bb_ratio, 1.0)      # 突袭 → 至少按 1× 池计加价
         except Exception:
             pass
 
@@ -5710,10 +5836,11 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
     if to_call > 0:
         try:
             if _OPP_JUMPED and _effective_category(state) < THREE_OF_A_KIND:
-                if (not (BIGBET_THRESH_ON or _adv_pass(state, eq))) or _bb_allin_spot:
+                if _bb_hold():
+                    _bb_gate = True
+                    _bb_ratio = max(_bb_ratio, 1.0)
+                else:
                     return {"act": "fold"}
-                _bb_gate = True
-                _bb_ratio = max(_bb_ratio, 1.0)
         except Exception:
             pass
 
@@ -5880,6 +6007,9 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
         _bb_bump = BIGBET_REQ_BUMP_BASE + BIGBET_REQ_BUMP_SLOPE * max(
             _bb_ratio - BIG_BET_FOLD_FRAC, 0.0)
         _bb_bump = min(_bb_bump, BIGBET_REQ_BUMP_MAX)
+        # 【P0-2】中危面（3 同花 / 公面有 A）的超对豁免要更严：额外抬 bump
+        if _overp_ok and _overp_tier == "wet":
+            _bb_bump += OVERP_WET_BUMP
         _bb_thr = eff_req + margin + _bb_bump
         _bb_out = ({"act": "call"} if eq >= _bb_thr else {"act": "fold"})
         if WB_FACE_DEBUG:

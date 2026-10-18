@@ -67,10 +67,11 @@ check("领先3000:不再受 1000 注码上限（改由牌型上限 ≤3000）",
 check("领先3000:超强牌(AA)不再被强制弃牌", a.get("act") != "fold", str(a))
 
 # ---------- 2. 领先时面对全下：不再无条件禁止 allin ----------
-# 领先 3000 + 对手全下 + 一对 A（<三条）。
-# 【2026-09-14 用户规则】不再由「牌型注额上限」拦下（该限制已废止：面对
-# 对手 all-in 的定向决策说了算）→ 此处弃牌是决策层按赔率判定（跟注额巨大
-# → required 很高，一对的 eq 不够）。金额写真实值，避免 to_call 失真。
+# 领先 3000 + 对手全下 + 一对 A（超对）。
+# 【2026-09-14 用户规则】不再由「牌型注额上限」拦下。
+# 【2026-10-18 P0-2 契约更新】AA 在 `K 3 2`（干燥面：无对子 / 无 3 连 / 无 3 同花）
+# 属**超对**，落入「超对硬弃豁免」⇒ 不再直接弃，交回 eq 裁决；eq 明显够
+# ⇒ 跟注（跟注额 = 全部剩余，平台等价编码为 allin）。旧契约「一对一律弃」作废。
 st2 = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
                         my_chips=18500,
                         history=[{"round": 0, "player_id": 0, "action": 500,
@@ -80,8 +81,22 @@ st2 = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
                                  {"round": 1, "player_id": 1, "action": 18500,
                                   "action_type": "allin"}]))
 a = decide(st2, OpponentModel())
-check("领先3000:一对面对全下按赔率弃牌(注额上限已废止)",
-      a == {"act": "fold"}, str(a))
+check("领先3000:超对AA在干燥面按 eq 跟注全下(P0-2 豁免)",
+      a.get("act") == "allin", str(a))
+
+# 【保住旧契约的检验强度】另建「顶对但不是超对」的夹具：
+#   公面同为 `K 3 2`，手牌 KQ ⇒ 一对 K 顶对，**不是口袋对** ⇒ 不豁免 ⇒ 仍弃。
+st2b = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
+                         my_chips=18500, my_cards=[44, 41],
+                         history=[{"round": 0, "player_id": 0, "action": 500,
+                                   "action_type": "raise"},
+                                  {"round": 0, "player_id": 1, "action": 0,
+                                   "action_type": "call"},
+                                  {"round": 1, "player_id": 1, "action": 18500,
+                                   "action_type": "allin"}]))
+ab = decide(st2b, OpponentModel())
+check("领先3000:顶对(非超对)面对全下仍按赔率弃牌",
+      ab == {"act": "fold"}, str(ab))
 
 # 同样领先，但手牌 ≥三条 → 不再被优势锁定阻拦（全下门槛判定）
 st3 = parse_request(req(total_win_chips=[1500, -1500], public_cards=[46, 6, 1],
