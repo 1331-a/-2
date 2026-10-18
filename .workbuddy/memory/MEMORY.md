@@ -20,6 +20,10 @@ lead=我方 net−对手 net。追回线≈75×剩余手数（固定 SB50/BB100�
 ## 规则清单（生效顺序，除注明外默认开）
 1. 规则2 `_lock_win_unified`（入口，短路 33.9%）→ `_doom_plan`。
 2. 规则18 搏命区 `_gamble_plan`：`lead≤−0.80×2×追回线`→牌烂(非太差) allin、牌好慢打；过 `_shove_fold_ok`。`GAMBLE_TRASH_PCT=0.80`，剩 ≤8 手不允许跳过。
+   ★ **10-18 P2：`to_call≤0`（无人下注）一律 `check` 埋伏**，全押只在对手已投入后发生
+   （`DOOM_WAIT_RAISE_ON`，回退 `WB_NO_DOOM_WAIT=1`）。`_doom_plan` 同样。
+   依据：open shove 只赢盲注（+300/次）vs 对手下注后再推（+398/次）；缺口 3 万量级
+   ⇒ 「大劣开局就全压一辈子出不去」（用户原话）。**`to_call>0` 的「一律 allin」逐字不变**。
 3. `should_avoid_risk`→`_risk_avoid_route`（公对弱两对；pnl>0 时**不看 eq**：check/小注 call/否则 fold）。
 4. `_preflop_decide` / `_postflop_decide`（含 `_face_bet`）。
 5. 出口链 10 层：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`(规则10)→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`(规则20)→`_cheap_call_guard`→`_doom_call_upgrade`。
@@ -27,7 +31,8 @@ lead=我方 net−对手 net。追回线≈75×剩余手数（固定 SB50/BB100�
 ★默认关的开关：`ADV_PASS_ON`/`ADV_ODDS_FALLBACK_ON`/`BIGBET_THRESH_ON`/`DOOM_LOCK_ON`/`BIG_BET_FOLD_A_ON`；
 默认开：`FLUSH_REAL_PASS`/`ADV_TIER_ON`/`EQ_VETO_ON`(MAX_RANK=3)/`FUTURE_COST_ON`/`BOTTOM_POCKET_RISK_ON`
 / **`FLUSH_MADE_PASS`/`PAIRED_TRAP_MADE_PASS`/`BIGMONEY_TWOPAIR_PASS`（10-17 拍板）**
-/ **`OVERP_VS_BIGBET_ON`（10-18 P0-2）** / `PREFLOP_BIG_CALL_ON` / `SHOVE_BY_ODDS_ON`。
+/ **`OVERP_VS_BIGBET_ON`（10-18 P0-2）** / **`DOOM_WAIT_RAISE_ON`（10-18 P2）**
+/ `PREFLOP_BIG_CALL_ON` / `SHOVE_BY_ODDS_ON`。
 7. **P0-2 超对豁免**（10-18）：`_face_bet` 三道「大注 / 4 倍突袭」锁命中时，若
    `_overpair_bigbet_pass` 放行则改走 `_bb_gate`（**只 call/fold**）。分层：clean 直接豁免 /
    wet（3 同花 或 公面 Q-K）门槛 +0.06 / 公面 3 连·≥4 同花·三条 **不豁免** /
