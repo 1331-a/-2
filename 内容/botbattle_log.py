@@ -111,10 +111,16 @@ def load_botbattle(path, my_seat=0, use_hand=None):
             board = []
             actions = []
             street = "preflop"
-            # 【2026-09-10 修正】hand_start.chips 是「盲注已扣」后的筹码，
-            # 因此本手后续投入从 0 起算（若再计盲注会双重扣减，导致
-            # invested 偏大、锁赢门槛虚高、判定失真）。
+            # 【2026-10-18 修正】street_bet 统一表示「本街累计总注额（含盲注）」：
+            #   · raise/allin 的 amount 就是 street total ⇒ 直接赋值；
+            #   · **call 的 amount 是增量** ⇒ 必须 `+=`（旧实现直接赋值，少算一手）；
+            #   · 翻前起点 = 盲注，故这里要用盲注初始化（旧实现从 [0,0] 起）。
+            #   配合下面 `my_chips` 的 `- _blind0`（chips 已扣盲注），
+            #   才能复现平台真实筹码。偏差 1 个盲注会让 doom/锁赢在临界点翻面
+            #   （实测 2026-10-18 手60：旧值 invested=292，真实 392）。
             street_bet = [0, 0]
+            street_bet[dealer] = 50
+            street_bet[1 - dealer] = 100
             hand_invested = 0
         elif t == "deal_hole":
             holes = ev.get("holes")
@@ -160,12 +166,20 @@ def load_botbattle(path, my_seat=0, use_hand=None):
                                       "actual": _actual,
                                       "hole": list((holes or [[], []])[my_seat]),
                                       "board": list(board)}))
-                # amount = **本街**累计总注额（raise-to / 跟到）→ 记到本街该玩家
-                # 名下；换街时才由 deal_board 并入 hand_invested。
+                # street_bet 恒为「本街累计总注额（含盲注）」：
+                #   raise/allin 的 amount 是 raise-to ⇒ 直接赋值；
+                #   **call 的 amount 是本次增量** ⇒ 累加（2026-10-18 修正）。
+                # 换街时才由 deal_board 并入 hand_invested。
                 amt = int(ev.get("amount", 0) or 0)
                 _p = int(ev.get("player", -1))
                 if _p in (0, 1):
-                    street_bet[_p] = amt
+                    _a = str(ev.get("action", "")).lower()
+                    if _a == "call":
+                        street_bet[_p] += amt
+                    elif _a in ("raise", "bet", "allin"):
+                        street_bet[_p] = amt
+                    # ★ check / fold 不改 street_bet（旧实现 else 分支会把 check 清零，
+                    #   导致本街累计丢失 → 后面几街的 my_chips 少算，2026-10-18 修）
             actions.append((ev, street))
         elif t == "settle":
             # 【2026-09-10 修正】必须用 deltas（本手筹码变化）累加——

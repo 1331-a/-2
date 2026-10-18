@@ -2269,6 +2269,35 @@ GAMBLE_SHOVE_FOLD_MIN = 0.45            # 低于此弃牌率 → 不梭哈
 GAMBLE_SHOVE_FOLD_SAMPLES = 6           # 样本不足时不门控
 GAMBLE_SHOVE_FORCE_HANDS = 8            # 剩 ≤8 手时不门控（没时间靠常规打法磨回来）
 
+# ── 【P0-1·2026-10-18】doom 免费过牌分支的全押，改为**按赔率**算所需弃牌率 ──
+# 起因（两场 10-18 各输一手，都是 −20,000）：
+#   场1 手60 —— 翻牌免费过牌、底池只有 584，我方却推了 19,608。
+#   所需弃牌率 = 19,608/(19,608+584) = **97.1%**，而旧门槛只问「对手弃牌率 ≥ 0.45」，
+#   对手实测 76~83% ⇒ 这是一次明显负 EV 的全押。
+# 正确口径（含被跟后的摊牌胜率 e）：
+#       f* = (R − e·(P+2R)) / (R + P − e·(P+2R))      （e=0 时 = R/(R+P)）
+#   其中 R = 本次全押投入（我方剩余筹码），P = 当前底池。
+# ★ 只作用于 `_doom_plan` 的「to_call ≤ 0（免费过牌）」分支；
+#   规则18 搏命区（`_gamble_plan`）与 `to_call > 0` 的 doom 分支**不变**
+#   —— 那两处比的是「不推也会输」，不是弃牌权益，套本公式会推翻用户 09-28/10-12 的规则。
+SHOVE_BY_ODDS_ON = True        # 总开关（回退：WB_NO_SHOVE_BY_ODDS=1）
+SHOVE_FOLD_MARGIN = 0.05       # 达到 f* 之后还要多出的安全垫
+SHOVE_FREE_CHECK_EXTRA = 0.10  # 免费过牌：不推的代价是 0 ⇒ 门槛再加严
+SHOVE_FOLD_PRIOR = 0.35        # 样本不足时的保守先验弃牌率（**不再默认放行**）
+SHOVE_REQ_CAP = 0.95           # 门槛封顶（≥ 此值等于禁止这种尺寸的全押）
+try:
+    import os as _os_sbo
+    if _os_sbo.environ.get("WB_NO_SHOVE_BY_ODDS") == "1":
+        SHOVE_BY_ODDS_ON = False
+    _v = _os_sbo.environ.get("WB_SHOVE_FOLD_MARGIN")
+    if _v is not None:
+        SHOVE_FOLD_MARGIN = float(_v)
+    _v = _os_sbo.environ.get("WB_SHOVE_FREE_EXTRA")
+    if _v is not None:
+        SHOVE_FREE_CHECK_EXTRA = float(_v)
+except Exception:
+    pass
+
 # 【方案B·2026-10-15】强制推光只在「锁定」时触发 —— ★★ **实测被用户否掉，默认关闭**。
 #   原判据：−lead + 2×本局已投入 ≥ min(0.5×满栈, 3×盲注线)。
 #   设计意图：落后不足半个满栈时"一次全押就能追回"⇒ 不算锁定 ⇒ 不提前梭。
@@ -3817,8 +3846,10 @@ def _doom_plan(state, model=None):
                 # 把这一手留给下一次；落后加深后会由常规/博命路径再接管。
                 if _gamble_trash_pass(state):
                     return None
-                if not _shove_fold_ok(state, model):
-                    return None                    # 对手会跟 → 烂牌也不硬推
+                # 【P0-1·2026-10-18】免费过牌时按**赔率**算所需弃牌率：
+                # 推 19,608 赢 584 需要 97%，不能只问"对手会不会弃 45%"。
+                if not _shove_fold_ok(state, model, odds=True):
+                    return None                    # 弃牌权益不够 → 不硬推
                 return {"act": "allin", "lk": 1}   # 质量不好 → 直接 allin
             # 质量好 → 再看看；但**河牌是最后一街，没有「再看」的余地**
             # （与 `_gamble_plan` 好牌路径的「最后一街不再等」一致）→ 收网 allin
@@ -4042,16 +4073,27 @@ def _gamble_trash_pass(state):
     return _gamble_hand_trash(state)
 
 
-def _shove_fold_ok(state, model=None):
+def _shove_fold_ok(state, model=None, odds=False, eq=0.0):
     """【方向2·2026-09-28】「梭哈靠弃牌权益」是否成立（对手会不会弃牌）。
 
     牌烂时梭哈的唯一收益 = 弃牌权益。对手「会跟」时该收益≈0，
     用整副筹码打 coin flip 只会加速出局（局2/3 各一次 −20,000）。
-    门控条件（全部满足才放行梭哈）：
-      · 无 model（离线/单测）→ 放行；
-      · 对手已把我们逼到必须全下（to_call ≥ 我方剩余）→ 放行（没有别的选择）；
-      · 样本不足（< GAMBLE_SHOVE_FOLD_SAMPLES）→ 放行（不用先验乱拦）；
-      · eff_fold_to_bet ≥ GAMBLE_SHOVE_FOLD_MIN → 放行。
+
+    【P0-1·2026-10-18 用户批准·外部审计建议】`odds=True` 时改为**按赔率算门槛**。
+    旧实现在任何尺寸下都只问「对手弃牌率 ≥ 0.45」，与本次下注相对底池的大小无关：
+    实测 2026-10-18 手60 —— 免费过牌、底池 584，却推 19,608，
+    **所需弃牌率 = 19,608/(19,608+584) = 97.1%**，而门槛只问 45%，对手实测 76~83% ⇒ 负 EV 全押。
+    正确口径（含被跟后的摊牌胜率 e）：
+        EV(f) = f·P + (1−f)·[e·(P+2R) − R]
+        f*    = (R − e·(P+2R)) / (R + P − e·(P+2R))     （e=0 时退化为 R/(R+P)）
+    其中 R = 本次全押投入（= 我方剩余筹码）、P = 当前底池。
+      · `to_call ≤ 0`（免费过牌）时**不推的代价是 0** ⇒ 门槛再加 `SHOVE_FREE_CHECK_EXTRA`；
+      · 样本不足时**不再默认放行**，改用保守先验 `SHOVE_FOLD_PRIOR`；
+      · 门槛封顶 `SHOVE_REQ_CAP`（超过即等于禁止在这种尺寸下全押）。
+    回退：`WB_NO_SHOVE_BY_ODDS=1` → 逐字回到旧行为。
+
+    `odds=False`（默认，规则18 搏命区用）保持旧口径不变 ——
+    搏命区比的是「不推也会输」，不是弃牌权益，故不套用本公式。
     """
     try:
         if model is None:
@@ -4065,9 +4107,29 @@ def _shove_fold_ok(state, model=None):
         _n = getattr(model, "faces_bet", None)           # eff_fold_to_bet 的样本数
         if _n is None:
             _n = getattr(model, "fold_to_bet_samples", None)
-        if _n is not None and int(_n) < GAMBLE_SHOVE_FOLD_SAMPLES:
-            return True
-        return float(model.eff_fold_to_bet()) >= GAMBLE_SHOVE_FOLD_MIN
+        _fold = float(model.eff_fold_to_bet())
+        if not odds:
+            if _n is not None and int(_n) < GAMBLE_SHOVE_FOLD_SAMPLES:
+                return True
+            return _fold >= GAMBLE_SHOVE_FOLD_MIN
+        # ---- 按赔率算门槛（P0-1） ----
+        if not SHOVE_BY_ODDS_ON:
+            if _n is not None and int(_n) < GAMBLE_SHOVE_FOLD_SAMPLES:
+                return True
+            return _fold >= GAMBLE_SHOVE_FOLD_MIN
+        R = float(int(state.my_chips))
+        P = float(max(1, int(state.pot)))
+        e = _clamp(float(eq or 0.0), 0.0, 0.90)
+        core = e * (P + 2.0 * R)
+        num = R - core
+        den = R + P - core
+        req = num / den if den > 1e-9 else 1.0
+        if int(state.to_call) <= 0:
+            req += SHOVE_FREE_CHECK_EXTRA          # 免费过牌：不推代价为 0 ⇒ 更严
+        req = _clamp(req, 0.0, SHOVE_REQ_CAP)
+        if _n is None or int(_n) < GAMBLE_SHOVE_FOLD_SAMPLES:
+            _fold = min(_fold, SHOVE_FOLD_PRIOR)   # 小样本 → 保守先验，不默认放行
+        return _fold >= req + SHOVE_FOLD_MARGIN
     except Exception:
         return True
 
