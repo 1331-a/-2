@@ -24,7 +24,19 @@ lead=我方 net−对手 net。追回线≈75×剩余手数（固定 SB50/BB100�
 4. `_preflop_decide` / `_postflop_decide`（含 `_face_bet`）。
 5. 出口链 10 层：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`(规则10)→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`(规则20)→`_cheap_call_guard`→`_doom_call_upgrade`。
 6. 注额上限：翻前≤1000（**主动**；跟注有 `_preflop_big_call_ok` 豁免，百分位≤0.08）；翻后<三条≤3000；≥三条不限。
-★默认关的开关：`ADV_PASS_ON`/`ADV_ODDS_FALLBACK_ON`/`FLUSH_MADE_PASS`/`PAIRED_TRAP_MADE_PASS`/`BIGMONEY_TWOPAIR_PASS`/`BIGBET_THRESH_ON`/`DOOM_LOCK_ON`；默认开：`FLUSH_REAL_PASS`/`ADV_TIER_ON`/`EQ_VETO_ON`(MAX_RANK=3)/`FUTURE_COST_ON`/`BOTTOM_POCKET_RISK_ON`。
+★默认关的开关：`ADV_PASS_ON`/`ADV_ODDS_FALLBACK_ON`/`BIGBET_THRESH_ON`/`DOOM_LOCK_ON`/`BIG_BET_FOLD_A_ON`；
+默认开：`FLUSH_REAL_PASS`/`ADV_TIER_ON`/`EQ_VETO_ON`(MAX_RANK=3)/`FUTURE_COST_ON`/`BOTTOM_POCKET_RISK_ON`
+/ **`FLUSH_MADE_PASS`/`PAIRED_TRAP_MADE_PASS`/`BIGMONEY_TWOPAIR_PASS`（10-17 拍板）**
+/ **`OVERP_VS_BIGBET_ON`（10-18 P0-2）** / `PREFLOP_BIG_CALL_ON` / `SHOVE_BY_ODDS_ON`。
+7. **P0-2 超对豁免**（10-18）：`_face_bet` 三道「大注 / 4 倍突袭」锁命中时，若
+   `_overpair_bigbet_pass` 放行则改走 `_bb_gate`（**只 call/fold**）。分层：clean 直接豁免 /
+   wet（3 同花 或 公面 Q-K）门槛 +0.06 / 公面 3 连·≥4 同花·三条 **不豁免** /
+   对手弃牌率<0.25 且样本≥6 **不豁免**。★ **公面成对仍算超对**（QQ on 334 = 两对 QQ33）；
+   ★ **公面有 A 不可能与超对共存** ⇒ 中危只按 Q/K 判。`_endgame_arbitrate` 入口对豁免点的
+   call/fold 直接返回（否则 `UA_SEALED_ALLIN` 会改回 allin）。回退 `WB_NO_OVERP=1`。
+★ **P0-1 全押弃牌权益按赔率算**（10-18）：`_shove_fold_ok(odds=True)`，
+   `f*=(R−e(P+2R))/(R+P−e(P+2R))`，`to_call≤0` 再加 0.10，封顶 0.95，样本不足用先验 0.35；
+   **只用于 `_doom_plan` 的 to_call≤0 分支**（规则18 与 to_call>0 的 doom 不动）。回退 `WB_NO_SHOVE_BY_ODDS=1`。
 
 ## ★★ 当前第一瓶颈：eq（对手范围）系统性高估
 - 10-15 旧口径：我方 eq 平均 0.459 / 真实 0.175 ⇒ 高估 0.284（n=11）。
