@@ -24,6 +24,10 @@ lead=我方 net−对手 net。追回线≈75×剩余手数（固定 SB50/BB100�
    （`DOOM_WAIT_RAISE_ON`，回退 `WB_NO_DOOM_WAIT=1`）。`_doom_plan` 同样。
    依据：open shove 只赢盲注（+300/次）vs 对手下注后再推（+398/次）；缺口 3 万量级
    ⇒ 「大劣开局就全压一辈子出不去」（用户原话）。**`to_call>0` 的「一律 allin」逐字不变**。
+   ★★ **10-19 P2b：「开局」= `to_call≤0` **或** 翻前 `to_call≤BB`**（补盲注不算对手投入）。
+   P2 只判 `to_call≤0` ⇒ **在 SB 位置完全失效**（翻前 SB 的 to_call=50=BB），
+   实测人机对局 10 次 open shove 全在 SB（+750 vs 坑 20,289）。命中后翻前返回 **`call`（limp）**。
+   修后本场全押 10→2 次；A/B 净 **72** 点（对照 1）。契约变更 4 项。
 3. `should_avoid_risk`→`_risk_avoid_route`（公对弱两对；pnl>0 时**不看 eq**：check/小注 call/否则 fold）。
 4. `_preflop_decide` / `_postflop_decide`（含 `_face_bet`）。
 5. 出口链 10 层：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`(规则10)→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`(规则20)→`_cheap_call_guard`→`_doom_call_upgrade`。
