@@ -11,8 +11,16 @@ for p in paths:
     o = json.load(open(p, encoding="utf-8")); m0 = o.get("match") or {}
     da = str((m0.get("bot_a") or {}).get("owner_display",""))
     db = str((m0.get("bot_b") or {}).get("owner_display",""))
-    if "j1331" in da and "j1331" in db: continue
-    seat = 0 if "j1331" in da else 1
+    _owners = [da, db]
+    _hits = [i for i, v in enumerate(_owners) if "j1331" in v]
+    if len(_hits) == 1:
+        seat = _hits[0]
+    else:
+        # 人机对局：双方 owner 都可能是 j1331，用 human_seat 反推 bot 座位
+        _hs = m0.get("human_seat")
+        if _hs is None:
+            continue
+        seat = 1 - int(_hs)
     m = O.OpponentModel(); ctx = M.MatchContext.from_dict(m.ctx_dict)
     try:
         for req, meta in load_botbattle(p, my_seat=seat):

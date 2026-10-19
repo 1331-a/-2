@@ -49,7 +49,10 @@ lead=我方 net−对手 net。追回线≈75×剩余手数（固定 SB50/BB100�
 / `PREFLOP_BIG_CALL_ON` / `SHOVE_BY_ODDS_ON` / `CHEAP_CALL_ODDS_ON`（10-19）
 / **`AGGR_FOLD_ON`（10-19：对手连开≥2 街 + 我方≤一对 + req>0.25 → 只把 `call` 改 `fold`，
   raise/allin 不动；回退 `WB_NO_AGGR_FOLD=1`；A/B 净 2 点）**
-/ **`RANGE_NARROW_CUMULATIVE`（10-19：范围收窄改「整手翻后累计」；回退 `WB_NO_RANGE_CUM=1`）**。
+/ **`RANGE_NARROW_CUMULATIVE`（10-19：范围收窄改「整手翻后累计」；回退 `WB_NO_RANGE_CUM=1`）**
+/ **`STEAL_GUARD_ON`（10-19：对手加注率≥0.60 + 我方≤一对 + 无听牌 + 下注≤0.5池 → 改 check；
+  回退 `WB_NO_STEAL_GUARD=1`；阈值 `WB_STEAL_RAISE_MIN`。★阈值 = 真值 EV 扫出来的，
+  0.30 会误伤 28 个盈利点；A/B 净 2 点）**。
 7. **P0-2 超对豁免**（10-18）：`_face_bet` 三道「大注 / 4 倍突袭」锁命中时，若
    `_overpair_bigbet_pass` 放行则改走 `_bb_gate`（**只 call/fold**）。分层：clean 直接豁免 /
    wet（3 同花 或 公面 Q-K）门槛 +0.06 / 公面 3 连·≥4 同花·三条 **不豁免** /

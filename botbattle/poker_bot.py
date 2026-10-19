@@ -2502,6 +2502,31 @@ try:
         AGGR_FOLD_ON = False
 except Exception:
     pass
+
+# ── 【2026-10-19】「小注偷」侧：对手爱加注时，弱牌小注改成过牌（默认开）──
+# 背景：人机对局 12 手翻后小注（≤0.5 池）净 −22,898，其中 **9 手（75%）被加注**；
+#   被加注的 9 手里 8 手一对、1 手高牌 —— 小注既没有弃牌权益，还主动送钱让对手加注。
+# 判据：我方 ≤一对 且无听牌（没有摊牌价值需要保护）+ 对手「面对我下注 → 加注」比率高
+#   ⇒ 这次小注的期望比不上直接过牌。
+# ★ 不压强牌、不压大注、不压有听牌的半诈唬 —— 只针对「纯小注偷」这一种形态。
+STEAL_GUARD_ON = True
+STEAL_GUARD_MAX_FRAC = 0.50     # 只压 ≤0.5 池的小注
+STEAL_GUARD_RAISE_MIN = 0.60    # 对手加注率 ≥60% ⇒ 小注偷没有意义
+# 阈值来源（测/_steal_thresh.py，162 个可评估的弱牌小注点，用真值算 EV）：
+#   0.30 → 命中 45 点，**误伤 28 个本来盈利的点**（净 −1,613）
+#   0.45 → 命中 14 点，净 −389（仍偏宽）
+#   0.60 → 命中 9 点，下注 EV +323 vs 过牌 +2,182 ⇒ **省 1,858**，误伤 2
+#   ＊ 标定（测/_raise_calib.py）：模型说 0.30~0.45 时真实加注只有 16%、弃牌 55%
+#     ⇒ 中低档不可信，只在「反复被加注」的高档才敢压。
+STEAL_GUARD_MIN_N = 4           # 最少观测数（尺寸桶）/ 5（check_raise 口径）
+try:
+    import os as _os_sg
+    if _os_sg.environ.get("WB_NO_STEAL_GUARD") == "1":
+        STEAL_GUARD_ON = False
+    if _os_sg.environ.get("WB_STEAL_RAISE_MIN"):
+        STEAL_GUARD_RAISE_MIN = float(_os_sg.environ["WB_STEAL_RAISE_MIN"])
+except Exception:
+    pass
 try:
     import os as _os_ap
     if _os_ap.environ.get("WB_ADV_PASS") == "1":
@@ -7111,13 +7136,87 @@ def _postflop_decide(state, model):
                 return _check_side_stable(state, model, eq, category, strong,
                                           good, medium, big_draw, draw, tex,
                                           arch, adj, is_river, i_aggressor)
-        return _check_side(state, model, eq, category, strong, good, medium,
-                           big_draw, draw, tex, arch, adj, is_river,
-                           i_aggressor)
+        return _steal_guard(state, model,
+                            _check_side(state, model, eq, category, strong, good,
+                                        medium, big_draw, draw, tex, arch, adj,
+                                        is_river, i_aggressor),
+                            category, big_draw, draw)
     # 面对下注时求稳模式 → 只跟不 raise（除非强牌）由 _face_bet 内部处理
     _fb = _face_bet(state, model, eq, category, strong, good, medium,
                     big_draw, draw, arch, adj, is_river, i_aggressor)
     return _aggr_fold_guard(state, _flush_made_guard(state, eq, _fb), category)
+
+
+def _opp_raise_vs_bet(model, state):
+    """对手「面对我方下注 → 加注」的实测比率，返回 (rate, n) 或 None。
+
+    两个口径，优先尺寸桶（更贴近当前下注量），样本不足退回 check_raise：
+      ① bet_resp_stats(bucket)：`我方下注该尺寸后对手加注` 的次数 / 总次数；
+      ② check_raise_rate()：`对手过牌 → 我下注 → 他加注`（规则12 的同场景），
+         带贝叶斯收缩（先验 0.10），只在 check_faces >= 5 时采用。
+    返回 None 表示样本不足 —— 调用方必须按原行为处理，不许猜。
+    """
+    if model is None:
+        return None
+    try:
+        probe = int(state.curbet[state.my_id] + max(state.pot, 1) * 0.35)
+        b = model._bet_size_bucket(False, probe, state.big_blind, state.pot)
+        st = model.bet_resp_stats(b, cur_hand=state.hand_num,
+                                  min_samples=STEAL_GUARD_MIN_N)
+        if st is not None and st.get("n", 0) >= STEAL_GUARD_MIN_N:
+            return float(st["raise_rate"]), int(st["n"])
+    except Exception:
+        pass
+    try:
+        n = int(getattr(model, "check_faces", 0) or 0)
+        if n >= max(STEAL_GUARD_MIN_N, 5):
+            return float(model.check_raise_rate()), n
+    except Exception:
+        pass
+    return None
+
+
+def _steal_guard(state, model, action, category, big_draw=False, draw=False):
+    """【2026-10-19】对手爱加注时，把「弱牌小注偷」改成过牌。
+
+    依据：人机对局 12 手翻后小注净 −22,898，其中 9 手（75%）被加注；
+    被加注的 9 手里 8 手一对、1 手高牌 —— 我方既没有弃牌权益（对手不弃），
+    又主动把筹码投进一个会被加注的池子。而对手的加注率在模型里已经统计了
+    （check_raise_rate / bet_resp_stats），只是此前没接进主动侧。
+
+    触发条件（全部满足）：
+      · 动作是下注/加注且当前无需跟注（主动侧）；
+      · 我方牌型 <= 一对、无听牌（有摊牌价值或半诈唬权益时不压）；
+      · 下注尺寸 <= 0.5x底池（只压「小注偷」，大注不动）；
+      · 对手加注率 >= 30%（样本不足 → 不动）。
+    回退：WB_NO_STEAL_GUARD=1。
+    """
+    if not STEAL_GUARD_ON:
+        return action
+    try:
+        if str(action.get("act")) != "raise":
+            return action
+        if int(state.to_call) > 0:
+            return action
+        if int(category) > AGGR_FOLD_MAX_CAT:
+            return action
+        if big_draw or draw:
+            return action
+        num = action.get("num")
+        if num is None:
+            return action
+        size = int(num) - int(state.curbet[state.my_id])
+        pot = float(state.pot)
+        if size <= 0 or pot <= 0 or size > STEAL_GUARD_MAX_FRAC * pot:
+            return action
+        info = _opp_raise_vs_bet(model, state)
+        if info is None:
+            return action
+        if float(info[0]) >= STEAL_GUARD_RAISE_MIN:
+            return {"act": "check"}
+    except Exception:
+        pass
+    return action
 
 
 def _aggr_fold_guard(state, action, category):
