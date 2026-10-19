@@ -1255,9 +1255,11 @@ _eu_pair = _endgame_eu(_st51(hole=(50, 17)), _m16_quiet, 0.9,
 check("0924第51手:两对时「继续」的 EU 明显高于弃牌",
       _eu_pair["call"] > _eu_pair["fold"] + 0.1,
       str({k: round(v, 3) for k, v in _eu_pair.items()}))
-# 真 doom（弃牌口径成立：已投 17,000）→ 规则2-A 无条件全押，不豁免
-check("0924:真 doom（筹码只剩 3000）→ 无条件 allin",
-      decide(_st51(chips=3000), _m16_quiet).get("act") == "allin",
+# 真 doom（弃牌口径成立：已投 17,000）→ 规则2-A「不弃牌」；本夹具对手下注很小
+# 【P2c·2026-10-19 用户规则】doom 下「不弃牌」≠「必须推满」：对手下注 < 500 时
+# 改为跟注继续（全押只会把他赶走、只赢小池）；≥500 才 all-in 收网。
+check("0924:真 doom（筹码只剩 3000，对手小额下注）→ 跟注继续，不弃牌",
+      decide(_st51(chips=3000), _m16_quiet).get("act") != "fold",
       str(decide(_st51(chips=3000), _m16_quiet)))
 
 # ============ 2026-09-24 防锁赢全押：越线 → 无条件 allin（用户规则） ============

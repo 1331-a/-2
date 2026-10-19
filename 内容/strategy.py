@@ -878,6 +878,23 @@ try:
 except Exception:
     pass
 
+# ── 【2026-10-19 用户规则】doom 时「不弃牌」≠「必须推满」──
+# 用户原话：「也不是说对面一加注就全押，主要是把弃牌转为全押，
+#            在对手下注超过 500 时一律全押收网（仅参考）」。
+# 语义：doom 下**永不弃牌**（弃牌 = 立刻锁输）不变；但对手只是小额下注时，
+#   全押会把他赶走、只赢一个小池（与 P2 的 open shove 同一个毛病）⇒ 改为**跟注**，
+#   继续看牌、保留翻盘机会，成本远低于整副筹码。
+#   对手下注够大（≥ 本值）时底池已值得搏 ⇒ all-in 收网。
+# 口径 `max(to_call, opp_round_bet)`：兼顾「他要我付多少」与「他本街已投多少」。
+DOOM_SHOVE_MIN = 500          # 阈值（用户给的是「参考值」，可调）
+DOOM_SHOVE_MIN_ON = True      # 回退：WB_NO_DOOM_SHOVE_MIN=1 → 恢复「一律 allin」
+try:
+    import os as _os_ds
+    if _os_ds.environ.get("WB_NO_DOOM_SHOVE_MIN") == "1":
+        DOOM_SHOVE_MIN_ON = False
+except Exception:
+    pass
+
 # 【2026-10-11 选项B试点】「大注+无坚果」由**硬弃**改为**抬高门槛后交回 eq**。
 # 现状：`to_call > 0.6×池` 且 无坚果/强听牌（判据 = `_effective_category < 两对`）
 #       → **直接 fold，完全不咨询 eq**。实测（`测/owner_probe.py`，948 点）：
@@ -2069,14 +2086,20 @@ def _doom_plan(state, model=None):
             if state.stage == "river":
                 return {"act": "allin", "lk": 1}
             return None                            # 质量好 → 再看看（留下注/过牌给常规策略）
-        # ② 弃牌 = 立死 → **一律 allin**（用户 2026-09-28 原话：
-        #    「既然已经越线了还投入就应该 allin，因为如果输了也是全局的」）。
-        # 【2026-09-30 修正】原先此处有一条「牌好且翻前只需补大盲 → call
-        # 溜入慢打」的例外，实测与 v50 对拍暴露它是保守 bug：
-        #   落后 18000（doom 成立、AKo、to_call=50）→ 本版 call 溜入，
-        #   而 v50 直接全押。doom 的语义是「这手输了就全局输」，此时必须
-        #   立即把整副筹码压上去决胜负；溜入 50 只能赢小池，根本追不回
-        #   缺口（追回线 4400 vs 落后 18000）。该例外已删除。
+        # ② 对手已投入 → 按「对手本街投入规模」决定**收网全押**还是**继续跟注**
+        # 【2026-10-19 用户规则】原话：「也不是说对面一加注就全押，主要是把弃牌
+        #   转为全押，在对手下注超过 500 时一律全押收网（仅参考）」。
+        #   语义要点：
+        #     · doom 下**不能弃牌**（弃牌 = 立刻锁输）—— 这一条不变；
+        #     · 但「不弃牌」不等于「必须推满」：对手只是小额下注时，全押会把他
+        #       赶走、只赢一个小池（与 P2 的 open shove 同一个毛病）；
+        #       跟注能继续看牌、保留翻盘机会，且成本远低于 20,000。
+        #     · 对手下注够大（≥ DOOM_SHOVE_MIN）时，底池已经值得搏 → all-in 收网。
+        #   口径用 `max(to_call, opp_round_bet)`：既覆盖「他要我付多少」，
+        #   也覆盖「他本街已经投了多少」（我方先下注、被他反加的场合）。
+        _opp_in = int(getattr(state, "opp_round_bet", 0) or 0)
+        if DOOM_SHOVE_MIN_ON and max(to_call, _opp_in) < DOOM_SHOVE_MIN:
+            return {"act": "call"}                 # 小额：跟注继续，不弃也不推
         return {"act": "allin", "lk": 1}
     except Exception:
         return {"act": "allin", "lk": 1}           # 异常兜底：维持旧行为
