@@ -28,6 +28,11 @@ lead=我方 net−对手 net。追回线≈75×剩余手数（固定 SB50/BB100�
    P2 只判 `to_call≤0` ⇒ **在 SB 位置完全失效**（翻前 SB 的 to_call=50=BB），
    实测人机对局 10 次 open shove 全在 SB（+750 vs 坑 20,289）。命中后翻前返回 **`call`（limp）**。
    修后本场全押 10→2 次；A/B 净 **72** 点（对照 1）。契约变更 4 项。
+   ★★ **10-19 P2c：doom 的 `to_call>0` 分支不再是「一律 allin」**
+   —— 「不弃牌」≠「必须推满」。`_opp_in = max(to_call, opp_round_bet)`：
+   **< `DOOM_SHOVE_MIN`(500) → `call`**（跟注继续，不弃也不推）；**≥500 → all-in 收网**。
+   用户原话：「主要是把弃牌转为全押，在对手下注超过 500 时一律全押收网（仅参考）」。
+   回退 `WB_NO_DOOM_SHOVE_MIN=1`；阈值可调。A/B 净 3 点（触发面窄，多数 doom 的 to_call 本就 >500）。
 3. `should_avoid_risk`→`_risk_avoid_route`（公对弱两对；pnl>0 时**不看 eq**：check/小注 call/否则 fold）。
 4. `_preflop_decide` / `_postflop_decide`（含 `_face_bet`）。
 5. 出口链 10 层：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`(规则10)→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`(规则20)→`_cheap_call_guard`→`_doom_call_upgrade`。
