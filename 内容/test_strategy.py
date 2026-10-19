@@ -392,8 +392,10 @@ DOOM_PNL = [-3000, 3000]
 st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2],
                        hand=45, max_hand=70, total_win_chips=DOOM_PNL))
 a = decide(st, OpponentModel())
-check("施压档:主动doomed + 需补大盲(to_call>0) → 一律 allin",
-      a.get("act") == "allin", str(a))
+# 【P2b·2026-10-19 契约更新】`to_call=50 == BB` 只是补盲注 ⇒ 归入「开局」→ 溜入，
+#   全押留到对手真正加注之后。用户 10-18：「大劣开局就全压一辈子出不去」。
+check("施压档:主动doomed + 需补大盲(to_call==BB) → 溜入 call",
+      a.get("act") == "call", str(a))
 # 空气牌翻后同样无条件 allin（不看牌力）
 st = parse_request(req(my_id=0, my_chips=19750, my_cards=[24, 17],
                        public_cards=[46, 22, 5], hand=45, max_hand=70,

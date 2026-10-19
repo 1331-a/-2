@@ -175,8 +175,10 @@ check("despair删除:弃牌-3500不再强制allin", a.get("act") != "allin", str
 # 强制 allin），但 doom 才是正确的锁胜锁-追回数学，不应回退。
 r = req(my_cards=[23, 2], my_chips=19500, total_win_chips=[-5000, 5000])
 a = decide(parse_request(r), OpponentModel())
-check("E2:doom数学成立→allin(不弃,数学正确)",
-      a.get("act") == "allin", str(a))
+# 【P2b·2026-10-19 契约更新】该夹具 `my_chips=19500`、翻前只需补盲注（to_call<=BB）
+# ⇒ 归入「开局」⇒ 溜入 call；核心意图「不能弃牌（弃牌=锁输）」不变。
+check("E2:doom数学成立→不弃牌（补盲注时溜入）",
+      a.get("act") != "fold", str(a))
 
 # E3) 对照组：pnl=-1000 + 已投1500 → 弃牌后-2500 未超线 → 不触发（正常决策）
 r = req(my_cards=[23, 2], my_chips=18500, total_win_chips=[-1000, 1000])

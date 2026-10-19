@@ -3899,14 +3899,21 @@ def _doom_plan(state, model=None):
             # 最后一手：已经没有追回线（不会再有下一手）→ 只能搏
             return {"act": "allin", "lk": 1}
         to_call = int(state.to_call)
-        # ① 能免费过牌 → 看牌质量（「质量不好直接 allin / 质量好再看看」）
-        if to_call <= 0:
-            # 【P2·2026-10-18 用户规则】无人下注时**不主动全押**，改为过牌埋伏：
+        # ① 「开局」→ 埋伏，不主动全押
+        # 【P2b·2026-10-19】「开局」不只是 `to_call<=0`：**翻前小盲补大盲（to_call==BB）**
+        #   也属于「无人主动下注」—— 对手那 100 是盲注，不是他选择投入的。
+        #   实测（10-19 人机对局 hand=50/52/54…，`to_call=50`、`bb=100`）：
+        #   P2 只判 `to_call<=0` ⇒ **在 SB 位置完全失效**，doom 时仍 open shove 20,000；
+        #   那 10 次全押合计只赢 +750，而坑是 20,289。
+        _bb = int(getattr(state, "big_blind", 100) or 100)
+        _open_like = (to_call <= 0) or (state.stage == "preflop" and to_call <= _bb)
+        if _open_like:
+            # 【P2·2026-10-18 用户规则】无人下注时**不主动全押**，改为过牌/溜入埋伏：
             #   open shove 只能赢盲注（实测 +300/次），追不回 3 万量级的缺口；
             #   过牌后对手一旦下注，就落到下面的 ② 分支全押（赢「盲注+对手投入」）。
-            #   ★ 包括河牌：河牌 open shove 同上，check 后对手下注仍可全押。
+            #   ★ 包括河牌；翻前补盲注用 call（limp，合法且等价于「等对手加注」）。
             if DOOM_WAIT_RAISE_ON:
-                return {"act": "check"}
+                return {"act": "check"} if to_call <= 0 else {"act": "call"}
             if not _gamble_hand_good(state):
                 # 【2026-10-12 用户新规】能免费过牌 + 牌太差 → 不推（过牌即可，零成本），
                 # 把这一手留给下一次；落后加深后会由常规/博命路径再接管。
@@ -4219,6 +4226,11 @@ def _gamble_plan(state, model=None):
         _tc0 = int(state.to_call)
     except Exception:
         _tc0 = 0
+    _bb0 = int(getattr(state, "big_blind", 100) or 100)
+    # 【P2b·2026-10-19】翻前小盲补大盲（to_call==BB）与「无人下注」等价
+    #   —— 对手那 100 是盲注，不是他选择投入的。P2 只判 `_tc0<=0` 时，
+    #   在 SB 位置完全失效（实测 10-19 人机对局连续 10 次 open shove）。
+    _open0 = (_tc0 <= 0) or (state.stage == "preflop" and _tc0 <= _bb0)
     if not _gamble_hand_good(state):
         # 【2026-10-12 用户新规】太差 → 不推，留住容错（[0.80,1.00] 这段余量就是给它的）
         if _gamble_trash_pass(state):
@@ -4227,8 +4239,8 @@ def _gamble_plan(state, model=None):
         #   规则18 原文是「开局 allin：逼对手用整副筹码接 50/50」，但实测
         #   open shove 的对手弃牌率接近 100%（68 次里 59 次只赢 +100），
         #   追回速度远低于缺口 ⇒ 改为等对手投入后再推（下面 to_call>0 收网）。
-        if DOOM_WAIT_RAISE_ON and _tc0 <= 0:
-            return {"act": "check"}
+        if DOOM_WAIT_RAISE_ON and _open0:
+            return {"act": "check"} if _tc0 <= 0 else {"act": "call"}
         if not _shove_fold_ok(state, model):
             return None
         return {"act": "allin", "lk": 1}

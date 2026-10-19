@@ -50,11 +50,14 @@ def locking_ctx():
 print("===== 规则1 =====")
 # 主动 doomed 基准：my_id=0, lead=-6000, hand=40/max=70 → doom 公式命中
 DOOM_PNL = [-3000, 3000]
-# 1) 主动侧（to_call=0）BTN 任意两张牌（72o）→ 无条件 allin（2026-08-25：
-#    不再主动施压开池，doom 确定即 allin——弃牌=认输，allin 最大化翻盘期望）
+# 1) 主动侧 doom（72o）—— 【P2b·2026-10-19 契约更新】
+#    该夹具 `my_chips=19950` ⇒ 小盲已投 50，`to_call=50 == BB`：
+#    对手那 100 是**盲注**、不是主动下注 ⇒ 归入「开局」⇒ 溜入 call（limp），
+#    把全押留到对手真正加注之后（用户 10-18：「等对面加注之后再全压」）。
+#    ★ 实测 10-19 人机对局：doom 时 SB 位置仍 open shove，10 次只赢 +750。
 a = decide(parse_request(req(total_win_chips=DOOM_PNL)), OpponentModel())
-check("规则1:主动doomed BTN 72o 无条件allin",
-      a == {"act": "allin"}, str(a))
+check("规则1:主动doomed 需补大盲(to_call==BB) → 溜入 call（P2b）",
+      a == {"act": "call"}, str(a))
 
 # 2) 主动侧翻后「太差」空气牌 → 【2026-10-12 用户新规】不再无条件 allin（留容错）
 st2 = parse_request(req(my_chips=19750, public_cards=[46, 22, 5], my_cards=[24, 17],
@@ -420,8 +423,8 @@ _S._CTX = None
 st = parse_request(req(my_id=0, my_chips=19950, my_cards=[23, 2], hand=45, max_hand=70,
                        total_win_chips=[-3000, 3000], total_win_games=[20, 25]))
 a = decide(st, OpponentModel())
-check("规则4:主动doomed无条件allin覆盖锁胜弃牌",
-      a == {"act": "allin"}, str(a))
+check("规则4:主动doomed 覆盖锁胜弃牌（不弃牌；补盲注时溜入）",
+      a.get("act") != "fold", str(a))
 
 print("\n%s" % ("全部通过 ✅" if fails == 0 else "有 %d 项失败 ❌" % fails))
 sys.exit(1 if fails else 0)
