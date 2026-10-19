@@ -599,6 +599,21 @@ ADV_PASS_EQ_MIN = 0.60
 #   （eq ∈ [赔率门槛, 0.50) 且无听牌时会直接落到它）。
 #   ★ 实测同上（它那 2 个点高估最严重：0.819→0.182、0.669→0.045）⇒ 默认关。
 ADV_ODDS_FALLBACK_ON = False
+# ── 【2026-10-19·外部审计②】极便宜跟注保底（默认开）──
+# `_face_bet` 末尾的兜底 fold 完全不看赔率；上面的 `ADV_ODDS_FALLBACK_ON` 是**全局**打开
+# （门槛高时也信 eq），之前被验证为负而关闭。本条只在**极便宜**时启用：
+#   `required ≤ 0.20`（跟注额 ≤ 1/4 池）且 `eq ≥ required + 0.15`。
+# 依据：10-19 人机对局 26 次「小注被加注后弃牌」里有 6 次弃错，全部是不足 1/4 池的跟注，
+#   真实胜率 0.77~0.86，而当时模型 eq 也已够（0.31 / 0.42 vs req 0.14）。
+#   req 极低时，即使 eq 高估 0.15 也不改变结论 —— 这正是与全局开关的区别。
+CHEAP_CALL_ODDS_ON = True
+CHEAP_CALL_ODDS_BUF = 0.15
+try:
+    import os as _os_cc
+    if _os_cc.environ.get("WB_NO_CHEAP_ODDS") == "1":
+        CHEAP_CALL_ODDS_ON = False
+except Exception:
+    pass
 try:
     import os as _os_ap
     if _os_ap.environ.get("WB_ADV_PASS") == "1":
@@ -6223,6 +6238,15 @@ def _face_bet(state, model, eq, category, strong, good, medium, big_draw, draw,
                 and adj not in ("desperate", "doomed"):
             return {"act": "fold"}
         return bluff
+    # ── 【2026-10-19·外部审计②】极便宜跟注保底（**只在兜底 fold 之前**，不抢 raise）──
+    # 依据：10-19 人机对局「我方小注 → 对手加注 → 我方弃牌」26 次里有 **6 次弃错（23%）**，
+    #   全部是 `required ≤ 0.20`（有时只要 14%）、真实胜率 0.77~0.86；而**当时模型 eq
+    #   也已经够**（0.314 / 0.421 vs req 0.14）⇒ 不是 eq 判断错，是兜底 fold 不看赔率。
+    # 判据：`required ≤ 0.20`（跟注额 ≤ 1/4 池）且 `eq ≥ required + 0.15`（缓冲抵消 eq 高估）。
+    # ★ 位置**必须**在这里（价值/加注分支之后）：一开始放在函数最前面，
+    #   把「强牌面对小额下注该加注」也抢成了 call（8 项回归失败）。
+    if CHEAP_CALL_ODDS_ON and required <= 0.20 and eq >= required + CHEAP_CALL_ODDS_BUF:
+        return {"act": "call"}
     # 【2026-10-15 用户规则】兜底 fold 之前补一次「赔率优先」。
     #   原实现：eq ∈ [赔率门槛, 0.50) 且无听牌 ⇒ strong/good/medium/draw 全 False
     #   ⇒ 直接落到这里 **完全不看赔率**（10-12 实测 18 个点：flop、to_call≈1/4 池、
