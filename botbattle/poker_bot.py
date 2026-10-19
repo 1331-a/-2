@@ -2330,6 +2330,17 @@ RANGE_NARROW_BASE = 0.45        # per = BASE - AGG × 对手主动下注频率
 RANGE_NARROW_AGG = 0.30
 RANGE_NARROW_MIN = 0.20         # 爱开火的对手每次仍收窄 20%
 RANGE_NARROW_MAX = 0.40         # 罕出手的对手每次最多收窄 40%
+# 【2026-10-19 用户反馈「小注偷被加注还硬跟」】收窄口径从「只看本街」改为
+# 「整手翻后累计」。旧口径下「对手翻牌下注 + 转牌继续下注」与「只在转牌下注一次」
+# 得到**完全相同**的范围宽度 ⇒ 转牌 eq 偏差最大（实测 +0.286，翻牌 +0.10~0.15）。
+# 这是一处**口径修正**（漏了跨街信息），不是又加一个保守常数。
+RANGE_NARROW_CUMULATIVE = True      # 回退：WB_NO_RANGE_CUM=1
+try:
+    import os as _os_rng
+    if _os_rng.environ.get("WB_NO_RANGE_CUM") == "1":
+        RANGE_NARROW_CUMULATIVE = False
+except Exception:
+    pass
 try:
     import os as _os5
     if _os5.environ.get("DBG_NO_DOOM_ALLIN") == "1":
@@ -2475,6 +2486,20 @@ try:
     import os as _os_cc
     if _os_cc.environ.get("WB_NO_CHEAP_ODDS") == "1":
         CHEAP_CALL_ODDS_ON = False
+except Exception:
+    pass
+
+# ── 【2026-10-19】「对手连开两街 + 我方≤一对 + 不是极便宜」→ 弃（默认开）──
+# 离线 EV 评估（测/_call_policy_eval.py）：命中 4 点全部 EV<0、零误杀、净 +8,886。
+# 宽口径（≤一对 且 req>0.33）误杀 33 个正 EV 点 ⇒ 刻意只做窄口径。
+AGGR_FOLD_ON = True
+AGGR_FOLD_MIN_AGGR = 2          # 对手翻后累计下注/加注次数（跨街）
+AGGR_FOLD_MAX_CAT = ONE_PAIR    # 只压「一对及更差」
+AGGR_FOLD_MIN_REQ = 0.25        # 比这更便宜的跟注仍放行（与 CHEAP_CALL 同口径）
+try:
+    import os as _os_af
+    if _os_af.environ.get("WB_NO_AGGR_FOLD") == "1":
+        AGGR_FOLD_ON = False
 except Exception:
     pass
 try:
@@ -5033,7 +5058,8 @@ def _risk_avoid_route(state, model):
         eq = equity_best(
             state.hole, state.board, iterations=MC_ITERATIONS,
             opp_range_pct=_opp_range_pct(model, _opp_raised_preflop(state),
-                                        _opp_street_raises(state)),
+                                        _opp_street_raises(state),
+                                        _opp_hand_raises(state)),
             deadline=_eq_deadline())
         if to_call <= 0:
             return {"act": "check"}
@@ -6970,14 +6996,49 @@ def _opp_street_raises(state):
         return 0
 
 
-def _opp_range_pct(model, opp_raised_preflop, street_raises=0):
+def _opp_hand_raises(state):
+    """对手**整手翻后**（round>=1）的加注 / 下注 / 全下累计次数。
+
+    【2026-10-19】`_opp_street_raises` 只看本街 ⇒ 对手「翻牌下注 + 转牌继续下注」
+    与「只在转牌下注一次」在模型里完全等价，跨街强度信息被丢掉。
+    实测翻后面对下注的 88 个可算真值点：翻牌偏差 +0.10~0.15，**转牌 +0.286**，
+    缺口正好来自这里。翻前的加注已由 `opp_raised_preflop` 单独处理，故只数 round>=1。
+    """
+    try:
+        hist = (getattr(state, "request", None) or {}).get("history") or []
+        opp = state.opp_id
+        n = 0
+        for r in hist:
+            if int(r.get("round", 0)) < 1:
+                continue
+            if r.get("player_id") != opp:
+                continue
+            if str(r.get("action_type")) in ("raise", "allin", "bet"):
+                n += 1
+        return n
+    except Exception:
+        return 0
+
+
+def _opp_range_pct(model, opp_raised_preflop, street_raises=0, cum_raises=None):
     """对手当前范围宽度估计（0~1），驱动蒙特卡洛对手抽样。
 
     【方向3·2026-09-28】新增 `street_raises`：对手在本街的加注次数。
     每次加注按「对手平时爱不爱主动下注」收窄范围——罕出手的对手一旦加注，
     牌力信号更强（收窄更多）；本来就爱开火的对手收窄较少。
     这是修复「造池后被大注赶走 / 弱牌连下三街被跟到底」的公共根因。
+
+    【2026-10-19】新增 `cum_raises`：整手**翻后**累计的加注/下注次数。
+    旧口径只看本街 ⇒ 对手「翻牌下注 + 转牌继续下注」与「只在转牌下注一次」
+    得到完全相同的范围宽度，跨街的强度信号被丢掉。实测转牌 eq 偏差 +0.286
+    （翻牌仅 +0.10~0.15），正是这个缺口。
+    `RANGE_NARROW_CUMULATIVE=False` 时保持旧口径（逐字回退）。
     """
+    if RANGE_NARROW_CUMULATIVE and cum_raises is not None:
+        try:
+            street_raises = max(int(street_raises), int(cum_raises))
+        except Exception:
+            pass
     vpip = model.eff_vpip()
     if opp_raised_preflop:
         base = 0.22 * (0.7 + vpip)      # 主动加注者：范围收紧
@@ -7010,7 +7071,8 @@ def _postflop_decide(state, model):
     i_aggressor = (last_raiser == state.my_id)
     # 【方向3·2026-09-28】本街对手加注次数 → 收窄范围（修复 eq 高估）
     range_pct = _opp_range_pct(model, opp_raised,
-                               _opp_street_raises(state))
+                               _opp_street_raises(state),
+                               _opp_hand_raises(state))
     eq = equity_best(
         state.hole, state.board, iterations=MC_ITERATIONS,
         opp_range_pct=range_pct,
@@ -7055,7 +7117,35 @@ def _postflop_decide(state, model):
     # 面对下注时求稳模式 → 只跟不 raise（除非强牌）由 _face_bet 内部处理
     _fb = _face_bet(state, model, eq, category, strong, good, medium,
                     big_draw, draw, arch, adj, is_river, i_aggressor)
-    return _flush_made_guard(state, eq, _fb)
+    return _aggr_fold_guard(state, _flush_made_guard(state, eq, _fb), category)
+
+
+def _aggr_fold_guard(state, action, category):
+    """【2026-10-19 用户反馈】对手连开≥2 街 + 我方≤一对 + 不是极便宜 → 把**跟注**改弃。
+
+    离线真值评估（`测/_call_policy_eval.py`，138 个「面对下注仍跟注」的可算真值点）：
+      · 本规则命中 4 个点，**全部 EV<0，零误杀**，净 +8,886 筹码；
+      · 宽口径「≤一对 且 req>0.33」命中 47 个点、误杀 33 个正 EV 点（净 −1,801）⇒ 不上宽口径。
+
+    ★ **只压 call，不压 raise/allin**：实测有一手 KQ（顶对好起脚，实际领先）
+      会从 `raise` 被压成 `fold` —— 那是把「太激进」修成「太消极」，方向过冲。
+      用户反馈的原话是「硬跟」，所以作用域只到跟注。
+    """
+    if not AGGR_FOLD_ON:
+        return action
+    try:
+        if str(action.get("act")) != "call":
+            return action
+        to_call = float(state.to_call)
+        pot = float(state.pot)
+        req = to_call / (pot + to_call) if (pot + to_call) > 0 else 1.0
+        if (int(_opp_hand_raises(state)) >= AGGR_FOLD_MIN_AGGR
+                and int(category) <= AGGR_FOLD_MAX_CAT
+                and req > AGGR_FOLD_MIN_REQ):
+            return {"act": "fold"}
+    except Exception:
+        pass
+    return action
 
 
 def _flush_made_guard(state, eq, action):
