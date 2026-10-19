@@ -33,6 +33,11 @@ lead=我方 net−对手 net。追回线≈75×剩余手数（固定 SB50/BB100�
    **< `DOOM_SHOVE_MIN`(500) → `call`**（跟注继续，不弃也不推）；**≥500 → all-in 收网**。
    用户原话：「主要是把弃牌转为全押，在对手下注超过 500 时一律全押收网（仅参考）」。
    回退 `WB_NO_DOOM_SHOVE_MIN=1`；阈值可调。A/B 净 3 点（触发面窄，多数 doom 的 to_call 本就 >500）。
+   ★★ **10-19 审计②：极便宜跟注保底**（`_face_bet` **兜底 fold 之前**，不能在价值/加注分支前）：
+   `required ≤ 0.20` 且 `eq ≥ required + 0.15` → `call`。修「兜底 fold 不看赔率」的空洞
+   （26 次小注被加注后弃牌里 6 次弃错，全部 req=0.14、真实 0.77~0.86，而当时模型 eq 也已够）。
+   回退 `WB_NO_CHEAP_ODDS=1`。A/B 在 10 份历史日志 **0 触发**（零回归风险）。
+   ★ **放宽跟注的补丁绝不能放在函数最前面** —— 会把「强牌该加注」抢成 call（实测 8 项回归失败）。
 3. `should_avoid_risk`→`_risk_avoid_route`（公对弱两对；pnl>0 时**不看 eq**：check/小注 call/否则 fold）。
 4. `_preflop_decide` / `_postflop_decide`（含 `_face_bet`）。
 5. 出口链 10 层：`_lock_win_tail_guard`→`_bet_cap_guard`→`_aggressive_strong_bet`→`_bluff_cap_guard`→`_stability_guard`(规则10)→`_normalize`→`_endgame_arbitrate`→`_big_money_guard`(规则20)→`_cheap_call_guard`→`_doom_call_upgrade`。
